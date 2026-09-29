@@ -34,3 +34,4 @@ Format: **timestamp · what · why · how to undo · verified?**
 - 2026-09-29 09:08 · model-library research: read-only Hugging Face API/model-card queries and HTTP range reads of GGUF headers (first 4–48 MB) + config.json for 72 candidate repos via scripts/catalog/build.py · verified library · n/a · verified: 69 variants written, 3 dropped (repos absent)
 - 2026-09-29 09:08 · temporary UI preview server (python http.server, 127.0.0.1:8765, pid 11937) for visual checks in the built-in browser, then stopped · verify the library UI without screen access · n/a · verified: port 8765 free
 - 2026-09-29 09:08 · rebuilt LLMario.app with the model library and replaced /Applications/LLMario.app (app not running) · ship the feature · rebuild previous commit and re-copy · verified: codesign strict valid
+- 2026-09-29 09:25 · temporary local website server (127.0.0.1:8766, pid 14221) for layout checks, then stopped · verify website · n/a · verified: stopped

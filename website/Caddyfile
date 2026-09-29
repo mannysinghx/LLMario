@@ -1,0 +1,16 @@
+# Static site for Railway. Railway provides $PORT.
+:{$PORT:8080} {
+	root * /srv
+	encode zstd gzip
+	file_server
+	header {
+		Content-Security-Policy "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'none'"
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		Strict-Transport-Security "max-age=31536000"
+		-Server
+	}
+	@static path *.css *.js *.png
+	header @static Cache-Control "public, max-age=3600"
+}

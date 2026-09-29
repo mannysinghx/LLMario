@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>LLMario — run open AI models privately on your Mac</title>
+    <meta name="description" content="LLMario is a free, open-source app for running open AI models on your own computer. It picks the right engine, checks memory before loading, and keeps everything private." />
+    <meta property="og:title" content="LLMario — run open AI models privately on your Mac" />
+    <meta property="og:description" content="Download, configure and chat with open models locally. Free and open source." />
+    <meta property="og:image" content="icon.png" />
+    <link rel="icon" href="icon.png" />
+    <link rel="stylesheet" href="styles.css" />
+    <script src="script.js" defer></script>
+  </head>
+  <body>
+    <header class="nav">
+      <a class="brand" href="#top"><img src="icon.png" alt="" width="30" height="30" /> LLMario</a>
+      <nav aria-label="Sections">
+        <a href="#how">How it works</a>
+        <a href="#start">Get started</a>
+        <a href="#models">Models</a>
+        <a href="#configure">Configure</a>
+        <a href="#api">For developers</a>
+        <a href="#faq">FAQ</a>
+      </nav>
+      <a class="btn small ghost" href="https://github.com/mannysinghx/LLMario">GitHub</a>
+    </header>
+
+    <main id="top">
+      <section class="hero">
+        <img class="hero-icon" src="icon.png" alt="LLMario app icon" width="96" height="96" />
+        <h1>Run open AI models privately on your Mac</h1>
+        <p class="lead">LLMario is a free, open-source app for chatting with open models like Qwen, Gemma, Llama and gpt-oss on your own computer. It picks the right engine for your hardware, checks the model fits in memory before loading it, and never sends your messages anywhere.</p>
+        <div class="cta">
+          <a class="btn primary" href="#start">Get started in 3 steps</a>
+          <a class="btn" href="https://github.com/mannysinghx/LLMario/releases/latest">Download for macOS</a>
+        </div>
+        <p class="fine">Free · Apache-2.0 · macOS 13+ · Apple Silicon (Intel via llama.cpp) · command line and local API included</p>
+      </section>
+
+      <section id="how" class="section">
+        <h2>How it works</h2>
+        <p class="section-lead">LLMario doesn't reinvent AI engines. It runs proven open-source engines for you, correctly configured for your machine.</p>
+        <div class="flow" role="list">
+          <div class="flow-step" role="listitem">
+            <div class="flow-num">1</div>
+            <h3>You ask</h3>
+            <p>Chat in the LLMario window, use the <code>llmario</code> command, or connect your own apps through the built-in local API.</p>
+          </div>
+          <div class="flow-arrow" aria-hidden="true">→</div>
+          <div class="flow-step" role="listitem">
+            <div class="flow-num">2</div>
+            <h3>LLMario plans</h3>
+            <p>It detects your chip and memory, estimates what the model needs, and refuses with a clear reason if it won't fit, instead of freezing your Mac.</p>
+          </div>
+          <div class="flow-arrow" aria-hidden="true">→</div>
+          <div class="flow-step" role="listitem">
+            <div class="flow-num">3</div>
+            <h3>The right engine runs it</h3>
+            <p><strong>MLX</strong> (Apple's engine, usually fastest on Apple Silicon) or <strong>llama.cpp</strong> (runs everywhere). LLMario starts, watches and stops it for you.</p>
+          </div>
+          <div class="flow-arrow" aria-hidden="true">→</div>
+          <div class="flow-step" role="listitem">
+            <div class="flow-num">4</div>
+            <h3>Answers stay on your Mac</h3>
+            <p>Replies stream back as the model writes them. No accounts, no cloud, no telemetry. Your messages are never logged.</p>
+          </div>
+        </div>
+      </section>
+
+      <section id="start" class="section">
+        <h2>Get started in 3 steps</h2>
+        <ol class="steps">
+          <li class="step">
+            <div class="step-head"><span class="step-num">1</span><h3>Install an engine</h3></div>
+            <p>Engines do the actual AI work. Install one (or both):</p>
+            <div class="tabs" data-tabs>
+              <div class="tab-list" role="tablist">
+                <button role="tab" aria-selected="true" data-tab="as">Apple Silicon (M1–M5)</button>
+                <button role="tab" aria-selected="false" data-tab="intel">Intel Mac</button>
+              </div>
+              <div class="tab-panel" data-panel="as">
+                <p>Recommended: install both. MLX is usually fastest; llama.cpp runs the widest range of models.</p>
+                <div class="code"><pre><code>brew install llama.cpp</code></pre><button class="copy" type="button">Copy</button></div>
+                <div class="code"><pre><code>pip3 install mlx-lm</code></pre><button class="copy" type="button">Copy</button></div>
+              </div>
+              <div class="tab-panel" data-panel="intel" hidden>
+                <p>Intel Macs use llama.cpp. MLX needs Apple Silicon.</p>
+                <div class="code"><pre><code>brew install llama.cpp</code></pre><button class="copy" type="button">Copy</button></div>
+              </div>
+            </div>
+            <p class="note">No Homebrew? Get it at <a href="https://brew.sh">brew.sh</a>.</p>
+          </li>
+          <li class="step">
+            <div class="step-head"><span class="step-num">2</span><h3>Install LLMario</h3></div>
+            <div class="tabs" data-tabs>
+              <div class="tab-list" role="tablist">
+                <button role="tab" aria-selected="true" data-tab="dmg">Download the app</button>
+                <button role="tab" aria-selected="false" data-tab="source">Install from source</button>
+              </div>
+              <div class="tab-panel" data-panel="dmg">
+                <p>Download the latest <strong>LLMario .dmg</strong>, open it, and drag LLMario into Applications. Releases are signed and notarized by Apple.</p>
+                <a class="btn primary" href="https://github.com/mannysinghx/LLMario/releases/latest">Download from GitHub Releases</a>
+                <p class="note">No release listed yet? Use "Install from source". It takes one command.</p>
+              </div>
+              <div class="tab-panel" data-panel="source" hidden>
+                <p>Builds and installs <code>LLMario.app</code> and the <code>llmario</code> command. Needs <a href="https://rustup.rs">Rust</a> and Xcode Command Line Tools (<code>xcode-select --install</code>). The script checks both first.</p>
+                <div class="code"><pre><code>git clone https://github.com/mannysinghx/LLMario.git &amp;&amp; cd LLMario &amp;&amp; ./scripts/install-macos.sh</code></pre><button class="copy" type="button">Copy</button></div>
+                <p class="note">Just the command-line tool: add <code>--cli-only</code>. Check prerequisites without installing: <code>--check</code>.</p>
+              </div>
+            </div>
+          </li>
+          <li class="step">
+            <div class="step-head"><span class="step-num">3</span><h3>Pick a model and chat</h3></div>
+            <ol class="howto">
+              <li>Open <strong>LLMario</strong> from Launchpad or Spotlight.</li>
+              <li>Click <strong>Models</strong> → <strong>Library</strong>. Every model shows what it's good at, its size, and whether it fits your Mac.</li>
+              <li>Click <strong>Download</strong> on one marked <span class="pill ok">recommended</span>. A small model like <em>Qwen3.5 4B</em> or <em>Gemma 4 E4B</em> is a good first choice.</li>
+              <li>Select it in the top bar and start typing. The first message loads the model, which takes a few seconds.</li>
+            </ol>
+            <p class="note">Already have a model file? Drag a <code>.gguf</code> file or an MLX model folder onto the window. It's used where it is, never copied.</p>
+          </li>
+        </ol>
+      </section>
+
+      <section class="section">
+        <h2>What you get</h2>
+        <div class="grid">
+          <div class="card"><h3>🧭 Model library</h3><p>37 current open-model families with exact Hugging Face names. Search by task (chat, reasoning, coding, agents, multilingual, long context, small) and see what fits <em>your</em> Mac before downloading.</p></div>
+          <div class="card"><h3>🧠 Memory check first</h3><p>LLMario estimates weights plus conversation memory before loading and explains the limit, with a smaller setting that would fit.</p></div>
+          <div class="card"><h3>⚙️ Right engine, automatically</h3><p>MLX on Apple Silicon, llama.cpp elsewhere. LLMario also knows which model types your installed engine version can load.</p></div>
+          <div class="card"><h3>🔒 Private by default</h3><p>Runs offline once a model is downloaded. Local-only network access, no accounts, no telemetry, and messages are never written to logs.</p></div>
+          <div class="card"><h3>✅ Verified downloads</h3><p>Every file is checked against Hugging Face checksums and pinned to an exact version. Models already on your Mac are reused.</p></div>
+          <div class="card"><h3>🔌 Works with your apps</h3><p>An OpenAI-compatible API on your Mac, so tools and scripts that speak OpenAI can use local models instead.</p></div>
+        </div>
+      </section>
+
+      <section id="models" class="section">
+        <h2>Models you can run</h2>
+        <p class="section-lead">A curated library of current open models, verified against Hugging Face. The app shows the full list with sizes and licenses.</p>
+        <div class="model-table">
+          <div class="mrow head"><span>Good for</span><span>Try</span></div>
+          <div class="mrow"><span>Everyday chat &amp; writing</span><span>Qwen3.5 9B · Gemma 4 12B / 26B-A4B · Mistral Small 3.2 · Llama 3.1 8B</span></div>
+          <div class="mrow"><span>Reasoning &amp; math</span><span>gpt-oss 20B · GLM-4.7 Flash · Qwen3.8 27B · Phi-4</span></div>
+          <div class="mrow"><span>Coding &amp; agents</span><span>Qwen3 Coder 30B-A3B · Devstral Small 2 · gpt-oss 20B</span></div>
+          <div class="mrow"><span>Small &amp; fast (8 GB Macs)</span><span>Qwen3.5 0.8B–4B · Gemma 4 E2B/E4B · LFM2.5 · SmolLM3 3B · Llama 3.2</span></div>
+          <div class="mrow"><span>Long documents</span><span>Gemma 4 (256K) · Qwen3.x (256K) · Nemotron 3.5 Lightning (up to 1M)</span></div>
+        </div>
+        <p class="note">Full list with exact file names: <a href="https://github.com/mannysinghx/LLMario/blob/main/docs/MODELS.md">docs/MODELS.md</a>. Check each model's license before commercial use.</p>
+      </section>
+
+      <section id="configure" class="section">
+        <h2>Configure</h2>
+        <div class="two">
+          <div>
+            <h3>In the app: Settings</h3>
+            <table class="t">
+              <thead><tr><th>Setting</th><th>What it does</th></tr></thead>
+              <tbody>
+                <tr><td>Performance profile</td><td><strong>Latency</strong>: one chat, fastest replies (default). <strong>Balanced</strong>: up to 4 requests at once, e.g. your chat plus other apps. <strong>Throughput</strong>: many parallel requests.</td></tr>
+                <tr><td>Context length</td><td>How much conversation the model remembers. Longer uses more memory.</td></tr>
+                <tr><td>Max reply length</td><td>Upper limit on tokens per answer. Raise it for "thinking" models.</td></tr>
+                <tr><td>Temperature</td><td>0 = predictable, higher = more creative.</td></tr>
+                <tr><td>System prompt</td><td>Instructions applied to every chat.</td></tr>
+                <tr><td>Chat history</td><td>Stored only on your Mac. Turn it off or clear it anytime.</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div>
+            <h3>Advanced: config file</h3>
+            <p>Optional. Lives at <code>~/.llmario/config.toml</code> and applies to the app, the command line and the API.</p>
+            <div class="code"><pre><code>[server]
+port = 11500              # local API port
+
+[runtime]
+profile = "latency"       # latency | balanced | throughput
+context = 16384           # tokens per conversation
+memory_limit_gb = 24      # cap LLMario's memory use
+
+[backends]
+prefer = "mlx"            # mlx | llamacpp</code></pre><button class="copy" type="button">Copy</button></div>
+            <p class="note">See the effective settings with <code>llmario config</code>. Models are stored in <code>~/.llmario/models</code>.</p>
+          </div>
+        </div>
+      </section>
+
+      <section id="api" class="section">
+        <h2>For developers</h2>
+        <div class="two">
+          <div>
+            <h3>Command line</h3>
+            <div class="code"><pre><code>llmario doctor                    # your hardware, engines, what fits
+llmario model catalog coding      # browse the library
+llmario model pull qwen3.5-9b     # best version for your Mac
+llmario run qwen3.5-9b "Hello!"   # chat in the terminal
+llmario serve                     # start the local API
+llmario bench -m qwen3.5-9b       # measure speed and memory</code></pre><button class="copy" type="button">Copy</button></div>
+          </div>
+          <div>
+            <h3>OpenAI-compatible API</h3>
+            <p><code>llmario serve</code> listens on <code>http://127.0.0.1:11500/v1</code>, on your Mac only unless you enable remote access with an API key.</p>
+            <div class="code"><pre><code>from openai import OpenAI
+client = OpenAI(base_url="http://127.0.0.1:11500/v1", api_key="local")
+r = client.chat.completions.create(
+    model="qwen3.5-9b",
+    messages=[{"role": "user", "content": "Hello!"}])
+print(r.choices[0].message.content)</code></pre><button class="copy" type="button">Copy</button></div>
+          </div>
+        </div>
+      </section>
+
+      <section id="faq" class="section">
+        <h2>Questions</h2>
+        <details><summary>Is it really private?</summary><p>Yes. Models run on your Mac. After a model is downloaded, LLMario works offline. The API listens only on your computer by default, messages are never logged, and there is no telemetry.</p></details>
+        <details><summary>Which Macs work?</summary><p>macOS 13 or later. Apple Silicon (M1 and newer) is fastest and can use both engines. Intel Macs use llama.cpp. Memory decides model size: 8 GB suits small models (1–4B), 16 GB mid-size (up to ~9B), and 32 GB+ larger ones. The app shows exactly what fits.</p></details>
+        <details><summary>A model says "too large" or "needs a newer engine"</summary><p><strong>Too large</strong>: pick a smaller model, or lower the context length in Settings. <strong>Needs a newer engine</strong>: the model uses a new architecture your installed engine doesn't support yet. Update it with <code>brew upgrade llama.cpp</code> or <code>pip3 install -U mlx-lm</code>, or choose the model's other engine version.</p></details>
+        <details><summary>"Engine not installed" / nothing happens when I chat</summary><p>Install an engine (step 1), then reopen LLMario. <strong>Models → Engines</strong> shows what LLMario found. <code>llmario doctor</code> gives full details.</p></details>
+        <details><summary>macOS says the app can't be opened</summary><p>Official releases are notarized by Apple and open normally. If you received a build from someone else, prefer the GitHub release or install from source.</p></details>
+        <details><summary>Does it use Ollama or send data to a server?</summary><p>No. LLMario runs the open-source engines llama.cpp and MLX directly. It only goes online to download a model you choose from Hugging Face.</p></details>
+        <details><summary>How do I remove it?</summary><p>Delete LLMario from Applications. Models and settings are in <code>~/.llmario</code>; delete that folder to free the space. Remove the command-line tool with <code>cargo uninstall llmario</code>.</p></details>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <div><img src="icon.png" alt="" width="22" height="22" /> <strong>LLMario</strong> — open source under the Apache License 2.0.</div>
+      <div class="footer-links">
+        <a href="https://github.com/mannysinghx/LLMario">Source code</a>
+        <a href="https://github.com/mannysinghx/LLMario/blob/main/docs/MODELS.md">Model library</a>
+        <a href="https://github.com/mannysinghx/LLMario/blob/main/docs/TROUBLESHOOTING.md">Troubleshooting</a>
+        <a href="https://github.com/mannysinghx/LLMario/issues">Report an issue</a>
+      </div>
+      <p class="fine">Built on llama.cpp and MLX. Model names belong to their publishers; each model has its own license.</p>
+    </footer>
+  </body>
+</html>
