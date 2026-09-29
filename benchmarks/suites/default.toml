@@ -1,0 +1,44 @@
+# Default benchmark suite. Prompts are original/synthetic text (no copyrighted material).
+# Placeholders expanded deterministically by the harness:
+#   {{records:N}} → N lines "Record i: the access code for locker i is C(i)."
+#   {{log:N}}     → N synthetic service log lines
+#   {{code:K}}    → the access code for locker K (for quality checks)
+
+name = "default"
+version = 1
+
+# Performance cases: fixed output budget, measured at every concurrency level.
+[[perf]]
+id = "short"
+max_tokens = 128
+prompt = "Write a detailed, vivid short story about a lighthouse keeper who discovers a message in a bottle. Use at least five paragraphs."
+
+[[perf]]
+id = "medium"
+max_tokens = 128
+prompt = "Here is an excerpt from a service log:\n\n{{log:40}}\n\nExplain in detail what happened, which components were involved, and what an operator should check next."
+
+[[perf]]
+id = "long"
+max_tokens = 128
+prompt = "The following table lists lockers and their access codes.\n\n{{records:220}}\n\nDescribe the structure of this table and summarise any patterns you notice in the codes."
+
+# Quality cases: run once at concurrency 1 with temperature 0. Checks ignore <think> blocks
+# and reasoning fields, and pass if any expected string appears as a whole word in the answer.
+[[quality]]
+id = "arithmetic"
+max_tokens = 1024
+prompt = "What is 17 + 25? Reply with only the number."
+expect_any = ["42"]
+
+[[quality]]
+id = "capital"
+max_tokens = 1024
+prompt = "What is the capital city of France? Reply with one word."
+expect_any = ["Paris"]
+
+[[quality]]
+id = "long-retrieval"
+max_tokens = 1024
+prompt = "The following table lists lockers and their access codes.\n\n{{records:220}}\n\nWhat is the access code for locker 137? Reply with only the code."
+expect_any = ["{{code:137}}"]

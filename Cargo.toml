@@ -1,0 +1,51 @@
+[workspace]
+resolver = "2"
+members = ["crates/core", "crates/hardware", "crates/model_registry", "crates/supervisor", "crates/adapter_llamacpp", "crates/adapter_mlx", "crates/adapter_mock", "crates/api", "crates/benchmark", "crates/cli"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/your-org/llmario"
+rust-version = "1.80"
+
+[workspace.dependencies]
+llmario-core = { path = "crates/core" }
+llmario-hardware = { path = "crates/hardware" }
+llmario-registry = { path = "crates/model_registry" }
+llmario-supervisor = { path = "crates/supervisor" }
+llmario-adapter-llamacpp = { path = "crates/adapter_llamacpp" }
+llmario-adapter-mlx = { path = "crates/adapter_mlx" }
+llmario-adapter-mock = { path = "crates/adapter_mock" }
+llmario-api = { path = "crates/api" }
+llmario-benchmark = { path = "crates/benchmark" }
+
+anyhow = "1"
+async-trait = "0.1"
+axum = "0.8"
+bytes = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
+clap = { version = "4", features = ["derive", "env"] }
+dirs = "6"
+futures = "0.3"
+hex = "0.4"
+indicatif = "0.18"
+libc = "0.2"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha1 = "0.10"
+sha2 = "0.10"
+sysinfo = { version = "0.37", default-features = false, features = ["system"] }
+tempfile = "3"
+thiserror = "2"
+tokio = { version = "1", features = ["full"] }
+tokio-stream = "0.1"
+toml = "0.9"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true

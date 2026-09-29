@@ -1,0 +1,7 @@
+/target
+# Model weights and engine artifacts never belong in the repository.
+*.gguf
+*.safetensors
+*.bin
+*.npz
+.DS_Store

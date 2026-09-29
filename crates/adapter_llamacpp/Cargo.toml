@@ -1,0 +1,12 @@
+[package]
+name = "llmario-adapter-llamacpp"
+description = "llama.cpp (llama-server) backend adapter for llmario"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+llmario-core.workspace = true
+llmario-hardware.workspace = true
+llmario-registry.workspace = true
+llmario-supervisor.workspace = true

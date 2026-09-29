@@ -1,0 +1,85 @@
+//! Backend adapter contract (IPC contract v1).
+//!
+//! An adapter is a pure description of one inference engine: how to detect it, which model
+//! formats it accepts, and the exact command line that serves a model with a given profile.
+//! The launched process must expose, on `127.0.0.1:<port>`:
+//! - `GET <health_path>` → 200 once the model is loaded;
+//! - `POST /v1/chat/completions` → OpenAI-compatible, with SSE streaming and
+//!   `stream_options.include_usage` support.
+//!
+//! Process management is shared code in [`crate::engine`].
+
+use crate::memory::MemoryPlan;
+use llmario_core::{BackendKind, Config, ModelFormat, ResolvedProfile, RuntimeError};
+use llmario_hardware::HardwareReport;
+use llmario_registry::ModelEntry;
+use serde::Serialize;
+use std::path::PathBuf;
+
+pub const CONTRACT_VERSION: u32 = 1;
+
+#[derive(Serialize, Clone, Debug)]
+pub struct BackendStatus {
+    pub kind: BackendKind,
+    pub available: bool,
+    /// Executable / interpreter that will be launched.
+    pub path: Option<PathBuf>,
+    pub version: Option<String>,
+    /// Version this adapter was tested against.
+    pub tested_version: String,
+    /// Human explanation (why unavailable, or what was found).
+    pub detail: String,
+}
+
+pub struct LaunchContext<'a> {
+    pub model: &'a ModelEntry,
+    pub profile: &'a ResolvedProfile,
+    pub hw: &'a HardwareReport,
+    pub cfg: &'a Config,
+    pub memory: &'a MemoryPlan,
+    pub status: &'a BackendStatus,
+    pub port: u16,
+}
+
+#[derive(Clone, Debug)]
+pub struct LaunchSpec {
+    pub program: PathBuf,
+    pub args: Vec<String>,
+    pub env: Vec<(String, String)>,
+    pub health_path: String,
+    /// Value the gateway must put in the upstream request's `model` field.
+    pub upstream_model: String,
+    /// Profile values this backend cannot honour, or other caveats; shown to the user.
+    pub notes: Vec<String>,
+}
+
+pub trait EngineAdapter: Send + Sync {
+    fn kind(&self) -> BackendKind;
+    fn contract_version(&self) -> u32 {
+        CONTRACT_VERSION
+    }
+    fn formats(&self) -> &'static [ModelFormat];
+    fn tested_version(&self) -> &'static str;
+    /// Detect the backend. May run short subprocesses; called once at startup.
+    fn probe(&self, hw: &HardwareReport, cfg: &Config) -> BackendStatus;
+    /// Memory the engine uses beyond weights + KV (e.g. host-side prompt caches).
+    fn extra_memory_bytes(&self, _model: &ModelEntry, _profile: &ResolvedProfile) -> u64 {
+        0
+    }
+    fn launch(&self, ctx: &LaunchContext<'_>) -> Result<LaunchSpec, RuntimeError>;
+}
+
+/// Find an executable on `PATH`.
+pub fn which(name: &str) -> Option<PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    std::env::split_paths(&path)
+        .map(|d| d.join(name))
+        .find(|p| p.is_file() && is_executable(p))
+}
+
+fn is_executable(p: &std::path::Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::metadata(p)
+        .map(|m| m.permissions().mode() & 0o111 != 0)
+        .unwrap_or(false)
+}

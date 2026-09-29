@@ -1,0 +1,22 @@
+[package]
+name = "llmario-supervisor"
+description = "Engine lifecycle, memory planning, backend selection and admission control for llmario"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+chrono.workspace = true
+libc.workspace = true
+llmario-core.workspace = true
+llmario-hardware.workspace = true
+llmario-registry.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

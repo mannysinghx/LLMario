@@ -1,0 +1,180 @@
+//! `llmario bench`: reproducible benchmark through llmario or against any OpenAI-compatible
+//! server (`--url`), with the environment manifest embedded in the report.
+
+use crate::{util, RuntimeArgs};
+use clap::Args;
+use llmario_benchmark::report::{Environment, Report};
+use llmario_benchmark::{Settings, Suite, Target};
+use std::path::PathBuf;
+
+#[derive(Args)]
+pub struct BenchArgs {
+    /// Model id or family (llmario mode), or the server-side model name with --url.
+    #[arg(long, short)]
+    pub model: String,
+    /// Benchmark an external OpenAI-compatible base URL instead (e.g. http://127.0.0.1:11434/v1).
+    #[arg(long)]
+    pub url: Option<String>,
+    /// Bearer key for --url targets.
+    #[arg(long, env = "BENCH_API_KEY", hide_env_values = true)]
+    pub api_key: Option<String>,
+    /// PID of the external server's inference process, to sample its memory.
+    #[arg(long)]
+    pub pid: Option<u32>,
+    /// Comma-separated concurrency levels.
+    #[arg(long, default_value = "1,4", value_delimiter = ',')]
+    pub concurrency: Vec<usize>,
+    /// Repetitions of each prompt per level.
+    #[arg(long, default_value_t = 3)]
+    pub runs: usize,
+    #[arg(long, default_value_t = 1)]
+    pub warmup: usize,
+    #[arg(long, default_value_t = 0.0)]
+    pub temperature: f64,
+    /// Sampling seed (omitted by default: with temperature 0 decoding is greedy, and a seed
+    /// disables batching on mlx_lm.server).
+    #[arg(long)]
+    pub seed: Option<u64>,
+    /// Prefix-cache mode: cold (unique prefix per request; measures real prefill) or warm.
+    #[arg(long, default_value = "cold")]
+    pub cache: llmario_benchmark::CacheMode,
+    /// Suite TOML (default: built-in `default` suite).
+    #[arg(long)]
+    pub suite: Option<PathBuf>,
+    #[arg(long)]
+    pub no_quality: bool,
+    /// Label for the report (default: target + model).
+    #[arg(long)]
+    pub label: Option<String>,
+    /// Output directory (default: $LLMARIO_HOME/bench).
+    #[arg(long)]
+    pub out: Option<PathBuf>,
+    #[command(flatten)]
+    pub rt: RuntimeArgs,
+}
+
+pub async fn run(a: BenchArgs) -> anyhow::Result<()> {
+    let (paths, cfg) = util::load_config(&a.rt)?;
+    let suite = match &a.suite {
+        Some(p) => Suite::load(p)?,
+        None => Suite::builtin(),
+    };
+    let settings = Settings {
+        concurrency: a.concurrency.clone(),
+        runs: a.runs.max(1),
+        warmup: a.warmup,
+        temperature: a.temperature,
+        seed: a.seed,
+        cache: a.cache,
+        skip_quality: a.no_quality,
+    };
+    let hw = util::detect_hardware().await;
+    let mut env = Environment {
+        hardware_fingerprint: hw.fingerprint(),
+        hardware: hw.summary_line(),
+        os: hw.os_version.clone(),
+        power_note: util::power_note(),
+        model: a.model.clone(),
+        ..Default::default()
+    };
+    let progress = |m: &str| eprintln!("  · {m}");
+
+    let (levels, quality, samples, cold, estimate, idle, label) = if let Some(url) = &a.url {
+        env.target = format!("external {url}");
+        env.backend = Some("external".into());
+        let t = Target {
+            base_url: url.clone(),
+            model: a.model.clone(),
+            api_key: a.api_key.clone(),
+        };
+        eprintln!("benchmarking {} at {url}", a.model);
+        let (l, q, s) = llmario_benchmark::run(&t, &suite, &settings, a.pid, progress).await?;
+        let label = a
+            .label
+            .clone()
+            .unwrap_or_else(|| format!("{} @ {url}", a.model));
+        (l, q, s, None, None, None, label)
+    } else {
+        let sup = util::supervisor(cfg, paths.clone()).await?;
+        let res = async {
+            let sel = sup.select(&a.model)?;
+            let plan = sup.plan_memory(&sel, 0);
+            let status = &sup.statuses()[&sel.backend];
+            env.target = "llmario gateway (in-process, loopback)".into();
+            env.backend = Some(sel.backend.to_string());
+            env.backend_version = status.version.clone();
+            env.model = sel.model.id.clone();
+            env.model_format = Some(sel.model.format.to_string());
+            env.model_quantization = sel.model.quantization.clone();
+            env.model_content_hash = sel.model.content_hash();
+            env.model_source = sel
+                .model
+                .source
+                .as_ref()
+                .map(|s| format!("{}@{}", s.repo, s.revision));
+            env.profile = Some(serde_json::to_value(&sel.profile)?);
+
+            util::load_with_report(&sup, &a.model).await?;
+            let lease = sup.acquire(&a.model).await?;
+            let cold = lease.engine.ready_after().as_secs_f64();
+            let pid = lease.engine.pid;
+            let idle = llmario_hardware::process_memory_bytes(pid);
+            drop(lease);
+
+            let (addr, _srv) = llmario_api::spawn_ephemeral(sup.clone()).await?;
+            let t = Target {
+                base_url: format!("http://{addr}/v1"),
+                model: sel.model.id.clone(),
+                api_key: sup.cfg.server.api_key.clone(),
+            };
+            eprintln!("benchmarking {} ({})", sel.model.id, sel.backend);
+            let (l, q, s) =
+                llmario_benchmark::run(&t, &suite, &settings, Some(pid), progress).await?;
+            let label = a.label.clone().unwrap_or_else(|| {
+                format!(
+                    "{} via llmario/{} ({} profile)",
+                    sel.model.id, sel.backend, sel.profile.kind
+                )
+            });
+            anyhow::Ok((l, q, s, Some(cold), Some(plan.total_bytes), idle, label))
+        }
+        .await;
+        sup.shutdown().await;
+        res?
+    };
+
+    let report = Report {
+        schema: 1,
+        tool: format!("llmario {}", llmario_core::VERSION),
+        timestamp: chrono::Utc::now().to_rfc3339(),
+        label,
+        environment: env,
+        settings,
+        suite: suite.name.clone(),
+        suite_version: suite.version,
+        cold_start_s: cold,
+        estimated_memory_bytes: estimate,
+        idle_memory_bytes: idle,
+        levels,
+        quality,
+        samples,
+    };
+    let dir = a.out.unwrap_or_else(|| paths.bench_dir());
+    std::fs::create_dir_all(&dir)?;
+    let stem = format!(
+        "{}-{}",
+        chrono::Utc::now().format("%Y%m%dT%H%M%SZ"),
+        report.environment.model.replace(
+            |c: char| !c.is_ascii_alphanumeric() && c != '-' && c != '.',
+            "_"
+        )
+    );
+    let json_path = dir.join(format!("{stem}.json"));
+    let md_path = dir.join(format!("{stem}.md"));
+    std::fs::write(&json_path, serde_json::to_vec_pretty(&report)?)?;
+    let md = report.markdown();
+    std::fs::write(&md_path, &md)?;
+    println!("{md}");
+    eprintln!("saved {} and {}", json_path.display(), md_path.display());
+    Ok(())
+}

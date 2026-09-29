@@ -1,0 +1,480 @@
+//! Benchmark harness. Talks to any OpenAI-compatible endpoint (llmario, Ollama, raw
+//! llama-server, LM Studio…) with the same suite and settings, so results are comparable.
+//! It measures from the client side; engine memory is sampled by PID when one is given.
+
+pub mod report;
+pub mod suite;
+
+use futures::StreamExt;
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+pub use suite::Suite;
+
+#[derive(Clone, Debug)]
+pub struct Target {
+    /// Base URL including `/v1`, e.g. `http://127.0.0.1:11500/v1`.
+    pub base_url: String,
+    pub model: String,
+    pub api_key: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Settings {
+    pub concurrency: Vec<usize>,
+    /// Repetitions of each perf case at each concurrency level.
+    pub runs: usize,
+    pub warmup: usize,
+    pub temperature: f64,
+    /// Sent only when set. Note: a seed disables batching on some servers (mlx_lm.server).
+    pub seed: Option<u64>,
+    pub skip_quality: bool,
+    /// `cold`: every request gets a unique prefix so prefix caches cannot hide prefill cost.
+    /// `warm`: identical prompts repeat, measuring prefix-cache reuse.
+    pub cache: CacheMode,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum CacheMode {
+    #[default]
+    Cold,
+    Warm,
+}
+
+impl std::str::FromStr for CacheMode {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, String> {
+        match s {
+            "cold" => Ok(Self::Cold),
+            "warm" => Ok(Self::Warm),
+            o => Err(format!("unknown cache mode '{o}' (cold|warm)")),
+        }
+    }
+}
+
+static NONCE: AtomicU64 = AtomicU64::new(0);
+
+fn prompt_for(case: &suite::Case, mode: CacheMode) -> String {
+    match mode {
+        CacheMode::Warm => case.prompt.clone(),
+        CacheMode::Cold => {
+            let n = NONCE.fetch_add(1, Ordering::Relaxed);
+            let t = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0);
+            format!("[benchmark request {t:x}-{n}]\n{}", case.prompt)
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Sample {
+    pub case: String,
+    pub concurrency: usize,
+    pub ok: bool,
+    pub error: Option<String>,
+    pub ttft_s: Option<f64>,
+    pub e2e_s: f64,
+    pub prompt_tokens: Option<u64>,
+    pub completion_tokens: u64,
+    /// `usage` when the server reported it, else `chunks` (one per content delta).
+    pub token_count_source: String,
+    pub prefill_tps: Option<f64>,
+    pub decode_tps: Option<f64>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct QualityResult {
+    pub case: String,
+    pub passed: bool,
+    pub expected_any: Vec<String>,
+    /// First 200 characters of the final answer (suite prompts are synthetic, not user data).
+    pub answer_preview: String,
+}
+
+/// Streams one chat completion and measures it.
+pub async fn run_one(
+    http: &reqwest::Client,
+    t: &Target,
+    case: &suite::Case,
+    s: &Settings,
+    concurrency: usize,
+) -> (Sample, String) {
+    let mut body = json!({
+        "model": t.model,
+        "messages": [{"role": "user", "content": prompt_for(case, s.cache)}],
+        "max_tokens": case.max_tokens,
+        "temperature": s.temperature,
+        "stream": true,
+        "stream_options": {"include_usage": true},
+    });
+    if let Some(seed) = s.seed {
+        body["seed"] = json!(seed);
+    }
+    let start = Instant::now();
+    let mut sample = Sample {
+        case: case.id.clone(),
+        concurrency,
+        ok: false,
+        error: None,
+        ttft_s: None,
+        e2e_s: 0.0,
+        prompt_tokens: None,
+        completion_tokens: 0,
+        token_count_source: "chunks".into(),
+        prefill_tps: None,
+        decode_tps: None,
+    };
+    let mut rb = http
+        .post(format!(
+            "{}/chat/completions",
+            t.base_url.trim_end_matches('/')
+        ))
+        .json(&body);
+    if let Some(k) = &t.api_key {
+        rb = rb.bearer_auth(k);
+    }
+    let resp = match rb.send().await {
+        Ok(r) => r,
+        Err(e) => {
+            sample.error = Some(e.to_string());
+            sample.e2e_s = start.elapsed().as_secs_f64();
+            return (sample, String::new());
+        }
+    };
+    if !resp.status().is_success() {
+        let st = resp.status();
+        sample.error = Some(format!(
+            "HTTP {st}: {}",
+            resp.text()
+                .await
+                .unwrap_or_default()
+                .chars()
+                .take(300)
+                .collect::<String>()
+        ));
+        sample.e2e_s = start.elapsed().as_secs_f64();
+        return (sample, String::new());
+    }
+
+    let mut text = String::new();
+    let mut first: Option<Instant> = None;
+    let mut last: Option<Instant> = None;
+    let mut chunks = 0u64;
+    let mut usage: Option<(u64, u64)> = None;
+    let mut buf = Vec::new();
+    let mut stream = resp.bytes_stream();
+    let mut stream_err = None;
+    'outer: while let Some(item) = stream.next().await {
+        let bytes = match item {
+            Ok(b) => b,
+            Err(e) => {
+                stream_err = Some(e.to_string());
+                break;
+            }
+        };
+        buf.extend_from_slice(&bytes);
+        while let Some(pos) = buf.iter().position(|b| *b == b'\n') {
+            let line: Vec<u8> = buf.drain(..=pos).collect();
+            let line = String::from_utf8_lossy(&line);
+            let Some(data) = line.trim().strip_prefix("data:") else {
+                continue;
+            };
+            let data = data.trim();
+            if data == "[DONE]" {
+                break 'outer;
+            }
+            let Ok(v) = serde_json::from_str::<Value>(data) else {
+                continue;
+            };
+            if let Some(err) = v.get("error") {
+                stream_err = Some(err.to_string());
+                break 'outer;
+            }
+            if let Some(u) = v.get("usage").filter(|u| !u.is_null()) {
+                if let (Some(p), Some(c)) = (
+                    u.get("prompt_tokens").and_then(Value::as_u64),
+                    u.get("completion_tokens").and_then(Value::as_u64),
+                ) {
+                    usage = Some((p, c));
+                }
+            }
+            if let Some(delta) = v.pointer("/choices/0/delta") {
+                let mut got = false;
+                for k in ["reasoning_content", "reasoning", "content"] {
+                    if let Some(s) = delta
+                        .get(k)
+                        .and_then(Value::as_str)
+                        .filter(|s| !s.is_empty())
+                    {
+                        if k == "content" {
+                            text.push_str(s);
+                        }
+                        got = true;
+                    }
+                }
+                if got {
+                    let now = Instant::now();
+                    first.get_or_insert(now);
+                    last = Some(now);
+                    chunks += 1;
+                }
+            }
+        }
+    }
+    sample.e2e_s = start.elapsed().as_secs_f64();
+    if let Some(e) = stream_err {
+        sample.error = Some(e);
+        return (sample, text);
+    }
+    sample.ok = true;
+    sample.ttft_s = first.map(|f| (f - start).as_secs_f64());
+    let (p, c) = match usage {
+        Some((p, c)) => {
+            sample.token_count_source = "usage".into();
+            (Some(p), c)
+        }
+        None => (None, chunks),
+    };
+    sample.prompt_tokens = p;
+    sample.completion_tokens = c;
+    if let (Some(p), Some(ttft)) = (p, sample.ttft_s) {
+        if ttft > 0.0 {
+            sample.prefill_tps = Some(p as f64 / ttft);
+        }
+    }
+    if let (Some(f), Some(l)) = (first, last) {
+        let dt = (l - f).as_secs_f64();
+        if c > 1 && dt > 0.0 {
+            sample.decode_tps = Some((c - 1) as f64 / dt);
+        }
+    }
+    (sample, text)
+}
+
+/// Samples a process's memory every 100 ms and keeps the peak.
+pub struct MemorySampler {
+    peak: Arc<AtomicU64>,
+    stop: Arc<AtomicBool>,
+    handle: tokio::task::JoinHandle<()>,
+}
+
+impl MemorySampler {
+    pub fn start(pid: u32) -> Self {
+        let peak = Arc::new(AtomicU64::new(0));
+        let stop = Arc::new(AtomicBool::new(false));
+        let (p, s) = (peak.clone(), stop.clone());
+        let handle = tokio::spawn(async move {
+            while !s.load(Ordering::Relaxed) {
+                if let Some(b) = llmario_hardware::process_memory_bytes(pid) {
+                    p.fetch_max(b, Ordering::Relaxed);
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        });
+        Self { peak, stop, handle }
+    }
+
+    pub async fn finish(self) -> Option<u64> {
+        self.stop.store(true, Ordering::Relaxed);
+        let _ = self.handle.await;
+        Some(self.peak.load(Ordering::Relaxed)).filter(|p| *p > 0)
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Stat {
+    pub n: usize,
+    pub mean: f64,
+    pub p50: f64,
+    pub p95: f64,
+    pub min: f64,
+    pub max: f64,
+}
+
+pub fn stat(values: &[f64]) -> Option<Stat> {
+    if values.is_empty() {
+        return None;
+    }
+    let mut v = values.to_vec();
+    v.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let pct = |p: f64| {
+        let rank = (p * (v.len() - 1) as f64).round() as usize;
+        v[rank.min(v.len() - 1)]
+    };
+    Some(Stat {
+        n: v.len(),
+        mean: v.iter().sum::<f64>() / v.len() as f64,
+        p50: pct(0.50),
+        p95: pct(0.95),
+        min: v[0],
+        max: v[v.len() - 1],
+    })
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct LevelResult {
+    pub concurrency: usize,
+    pub requests: usize,
+    pub errors: usize,
+    pub wall_s: f64,
+    /// Σ completion tokens / wall time.
+    pub aggregate_decode_tps: f64,
+    pub ttft_s: Option<Stat>,
+    pub e2e_s: Option<Stat>,
+    pub decode_tps: Option<Stat>,
+    pub prefill_tps: Option<Stat>,
+    pub peak_memory_bytes: Option<u64>,
+    /// Per-case TTFT/prefill (prefill depends on prompt length).
+    pub per_case: Vec<CaseResult>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CaseResult {
+    pub case: String,
+    pub prompt_tokens: Option<u64>,
+    pub ttft_s: Option<Stat>,
+    pub prefill_tps: Option<Stat>,
+    pub decode_tps: Option<Stat>,
+}
+
+/// Run the perf cases at every concurrency level, then the quality cases once.
+pub async fn run(
+    t: &Target,
+    suite: &Suite,
+    s: &Settings,
+    pid: Option<u32>,
+    progress: impl Fn(&str),
+) -> anyhow::Result<(Vec<LevelResult>, Vec<QualityResult>, Vec<Sample>)> {
+    let http = reqwest::Client::builder()
+        .no_proxy()
+        .timeout(Duration::from_secs(1800))
+        .build()?;
+
+    if let Some(c) = suite.perf.first() {
+        for i in 0..s.warmup {
+            progress(&format!("warm-up {}/{}", i + 1, s.warmup));
+            let (smp, _) = run_one(&http, t, c, s, 1).await;
+            if !smp.ok {
+                anyhow::bail!("warm-up request failed: {}", smp.error.unwrap_or_default());
+            }
+        }
+    }
+
+    let mut levels = Vec::new();
+    let mut all = Vec::new();
+    for &c in &s.concurrency {
+        let jobs: Vec<suite::Case> = (0..s.runs)
+            .flat_map(|_| suite.perf.iter().cloned())
+            .collect();
+        progress(&format!("concurrency {c}: {} requests", jobs.len()));
+        let sampler = pid.map(MemorySampler::start);
+        let started = Instant::now();
+        let samples: Vec<Sample> = futures::stream::iter(jobs.into_iter().map(|case| {
+            let http = http.clone();
+            async move { run_one(&http, t, &case, s, c).await.0 }
+        }))
+        .buffer_unordered(c.max(1))
+        .collect()
+        .await;
+        let wall = started.elapsed().as_secs_f64();
+        let peak = match sampler {
+            Some(sm) => sm.finish().await,
+            None => None,
+        };
+        levels.push(summarise(c, &samples, wall, peak, suite));
+        all.extend(samples);
+    }
+
+    let mut quality = Vec::new();
+    if !s.skip_quality {
+        for q in &suite.quality {
+            progress(&format!("quality: {}", q.id));
+            let (smp, text) = run_one(&http, t, q, s, 1).await;
+            let answer = suite::final_answer(&text);
+            let passed = smp.ok
+                && q.expect_any
+                    .iter()
+                    .any(|e| suite::contains_word(&answer, e));
+            quality.push(QualityResult {
+                case: q.id.clone(),
+                passed,
+                expected_any: q.expect_any.clone(),
+                answer_preview: if smp.ok && answer.is_empty() && smp.completion_tokens >= q.max_tokens as u64 {
+                    format!(
+                        "(no final answer: the {}-token budget was spent before an answer, e.g. in reasoning)",
+                        q.max_tokens
+                    )
+                } else if smp.ok {
+                    answer.chars().take(200).collect()
+                } else {
+                    smp.error.clone().unwrap_or_default()
+                },
+            });
+        }
+    }
+    Ok((levels, quality, all))
+}
+
+fn summarise(
+    c: usize,
+    samples: &[Sample],
+    wall: f64,
+    peak: Option<u64>,
+    suite: &Suite,
+) -> LevelResult {
+    let ok: Vec<&Sample> = samples.iter().filter(|s| s.ok).collect();
+    let col = |f: &dyn Fn(&Sample) -> Option<f64>, set: &[&Sample]| -> Vec<f64> {
+        set.iter().filter_map(|s| f(s)).collect()
+    };
+    let tokens: u64 = ok.iter().map(|s| s.completion_tokens).sum();
+    let per_case = suite
+        .perf
+        .iter()
+        .map(|case| {
+            let set: Vec<&Sample> = ok.iter().copied().filter(|s| s.case == case.id).collect();
+            CaseResult {
+                case: case.id.clone(),
+                prompt_tokens: set.iter().find_map(|s| s.prompt_tokens),
+                ttft_s: stat(&col(&|s| s.ttft_s, &set)),
+                prefill_tps: stat(&col(&|s| s.prefill_tps, &set)),
+                decode_tps: stat(&col(&|s| s.decode_tps, &set)),
+            }
+        })
+        .collect();
+    LevelResult {
+        concurrency: c,
+        requests: samples.len(),
+        errors: samples.len() - ok.len(),
+        wall_s: wall,
+        aggregate_decode_tps: if wall > 0.0 {
+            tokens as f64 / wall
+        } else {
+            0.0
+        },
+        ttft_s: stat(&col(&|s| s.ttft_s, &ok)),
+        e2e_s: stat(&col(&|s| Some(s.e2e_s), &ok)),
+        decode_tps: stat(&col(&|s| s.decode_tps, &ok)),
+        prefill_tps: stat(&col(&|s| s.prefill_tps, &ok)),
+        peak_memory_bytes: peak,
+        per_case,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn percentiles() {
+        let s = stat(&[5.0, 1.0, 3.0, 2.0, 4.0]).unwrap();
+        assert_eq!((s.min, s.p50, s.max, s.n), (1.0, 3.0, 5.0, 5));
+        assert!((s.mean - 3.0).abs() < 1e-9);
+        assert_eq!(stat(&[7.0]).unwrap().p95, 7.0);
+        assert!(stat(&[]).is_none());
+    }
+}

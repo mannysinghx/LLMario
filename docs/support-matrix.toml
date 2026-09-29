@@ -1,0 +1,43 @@
+# Machine-readable support matrix. status: validated | partial | implemented-unvalidated | detection-only | planned
+# "validated" = end-to-end generation + benchmark run on the listed hardware with the listed versions.
+
+[[path]]
+platform = "macos-aarch64"
+hardware = "Apple M4 Max, 64 GB"
+os = "macOS 27.0.1"
+backend = "mlx"
+backend_version = "mlx-lm 0.31.3 / mlx 0.32.2"
+status = "validated"
+models = ["qwen3-1.7b-mlx-4bit"]
+evidence = "benchmarks/results/"
+
+[[path]]
+platform = "macos-aarch64"
+hardware = "Apple M4 Max, 64 GB"
+os = "macOS 27.0.1"
+backend = "llamacpp"
+backend_version = "build 11146 (7fe450e19)"
+status = "partial"
+notes = "engine launch, flag acceptance and failure reporting verified; generation with a standard GGUF pending"
+
+[[path]]
+platform = "linux-x86_64"
+backend = "llamacpp"
+accelerator = "cuda"
+status = "implemented-unvalidated"
+notes = "nvidia-smi detection and hybrid-offload (-ngl) planning implemented; needs a CUDA test machine"
+
+[[path]]
+platform = "linux-x86_64 / linux-aarch64"
+backend = "llamacpp"
+accelerator = "cpu"
+status = "implemented-unvalidated"
+
+[[path]]
+platform = "linux-x86_64"
+accelerator = "rocm"
+status = "detection-only"
+
+[[path]]
+backend = "vllm / sglang"
+status = "planned"
