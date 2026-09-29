@@ -3,6 +3,7 @@
 
 pub mod config;
 pub mod error;
+pub mod os;
 pub mod paths;
 pub mod types;
 

@@ -53,6 +53,12 @@
 
 * { box-sizing: border-box; }
 html, body { height: 100%; margin: 0; }
+/* Platform-specific hints: only the current platform's (html[data-platform], set by app.js). */
+html:not([data-platform="mac"]) [data-os="mac"],
+html:not([data-platform="windows"]) [data-os="windows"],
+html:not([data-platform="linux"]) [data-os="linux"] { display: none; }
+/* Windows scrollbars are always visible (no overlay scrollbars); keep them slim. */
+html[data-platform="windows"] * { scrollbar-width: thin; }
 body {
   font: 14px/1.5 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
   color: var(--text);
@@ -166,7 +172,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .answer h3, .answer h4, .answer h5, .answer h6 { margin: 14px 0 6px; line-height: 1.3; }
 .answer blockquote { margin: 0 0 10px; padding: 2px 12px; border-left: 3px solid var(--border-strong); color: var(--muted); }
 .answer hr { border: 0; border-top: 1px solid var(--border); margin: 14px 0; }
-.answer code { font: 12.5px/1.5 ui-monospace, "SF Mono", Menlo, monospace; background: var(--code-bg); padding: 1px 5px; border-radius: 5px; }
+.answer code { font: 12.5px/1.5 ui-monospace, "SF Mono", Menlo, "Cascadia Mono", Consolas, monospace; background: var(--code-bg); padding: 1px 5px; border-radius: 5px; }
 .md-url { color: var(--muted); font-size: 12px; }
 .md-code { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; margin: 0 0 12px; background: var(--code-bg); }
 .md-code-head { display: flex; justify-content: space-between; align-items: center; padding: 5px 10px; font-size: 11.5px; color: var(--muted); border-bottom: 1px solid var(--border); }
@@ -270,7 +276,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .drop-card svg { width: 40px; height: 40px; color: var(--accent); }
 .drop-card strong { font-size: 16px; }
 .drop-card span { color: var(--muted); font-size: 13px; }
-.drop-card code, .sheet-body p code { font: 12px ui-monospace, "SF Mono", Menlo, monospace; background: var(--code-bg); padding: 1px 5px; border-radius: 5px; }
+.drop-card code, .sheet-body p code { font: 12px ui-monospace, "SF Mono", Menlo, "Cascadia Mono", Consolas, monospace; background: var(--code-bg); padding: 1px 5px; border-radius: 5px; }
 
 /* Model library */
 .sheet.wide { width: min(980px, calc(100vw - 40px)); height: min(860px, calc(100vh - 48px)); }
@@ -299,7 +305,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .variant { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; align-items: center; padding: 9px 0 0; margin-top: 9px; border-top: 1px dashed var(--border); }
 .variant-main { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 .variant-line { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 12.5px; }
-.variant .exact { font: 11.5px/1.4 ui-monospace, "SF Mono", Menlo, monospace; color: var(--muted); user-select: text; -webkit-user-select: text; word-break: break-all; }
+.variant .exact { font: 11.5px/1.4 ui-monospace, "SF Mono", Menlo, "Cascadia Mono", Consolas, monospace; color: var(--muted); user-select: text; -webkit-user-select: text; word-break: break-all; }
 .fit-ok { color: var(--ok); }
 .fit-bad { color: var(--danger); }
 .linkish { border: 0; background: none; color: var(--accent); cursor: pointer; font-size: 11.5px; padding: 0 2px; }

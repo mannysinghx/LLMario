@@ -16,6 +16,10 @@ const DEFAULT_SETTINGS = {
   saveHistory: true,
 };
 const BACKEND = { llamacpp: "llama.cpp", mlx: "MLX", mock: "mock" };
+// "mac" | "windows" | "linux". Drives platform-specific hints (`data-os` in index.html) and
+// hides MLX, which runs only on Apple Silicon Macs.
+const PLATFORM = /Windows/.test(navigator.userAgent) ? "windows" : /Macintosh|Mac OS X/.test(navigator.userAgent) ? "mac" : "linux";
+document.documentElement.dataset.platform = PLATFORM;
 const SUGGESTIONS = [
   ["Explain an idea", "How does a transformer model generate text, in simple terms?"],
   ["Write code", "Write a Python function that removes duplicates from a list but keeps the order."],
@@ -170,7 +174,7 @@ function renderWelcome() {
   w.append(img);
   if (!state.models.length) {
     w.append(el("h1", null, "Download a model to start"));
-    w.append(el("p", null, "Models run entirely on this computer. Pick one sized for your machine, or drag your own .gguf file or MLX model folder onto this window."));
+    w.append(el("p", null, `Models run entirely on this computer. Pick one sized for your machine, or drag your own .gguf file${PLATFORM === "mac" ? " or MLX model folder" : ""} onto this window.`));
     const picks = state.catalog
       .filter((c) => c.recommended && !c.installed && c.tasks.includes("chat"))
       .sort((a, b) => (a.approxBytes || 0) - (b.approxBytes || 0))
@@ -287,7 +291,8 @@ async function refreshModels() {
 }
 
 async function refreshCatalog() {
-  state.catalog = await invoke("list_catalog");
+  const catalog = await invoke("list_catalog");
+  state.catalog = PLATFORM === "mac" ? catalog : catalog.filter((c) => c.backend !== "mlx");
   renderCatalog();
   if (!currentChat()?.messages.length) renderTranscript();
 }
@@ -894,6 +899,10 @@ function wire() {
       e.preventDefault();
       newChat();
     }
+    // Windows/Linux webviews reload on F5 / Ctrl+R, which would drop a reply mid-stream.
+    if (PLATFORM !== "mac" && (e.key === "F5" || (e.ctrlKey && e.key.toLowerCase() === "r"))) {
+      e.preventDefault();
+    }
   });
 }
 
@@ -915,7 +924,7 @@ async function wireDragDrop() {
 
 async function addDropped(paths) {
   for (const path of paths) {
-    const name = path.split("/").filter(Boolean).pop() || path;
+    const name = path.split(/[\\/]/).filter(Boolean).pop() || path;
     setStatus("loading", `Adding ${name}…`);
     toast(`Adding ${name}`, "Reading the model and computing its checksum. Large files take a few seconds.", false, 4000);
     try {

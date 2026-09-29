@@ -460,13 +460,10 @@ async fn one_model_resident_lru_swap() {
     assert_eq!(loaded.len(), 1);
     assert_eq!(loaded[0].model, "mock-b");
     // The evicted engine process is really gone.
-    let alive = unsafe { libc_kill(a_pid as i32, 0) } == 0;
-    assert!(!alive, "evicted engine {a_pid} still running");
-}
-
-extern "C" {
-    #[link_name = "kill"]
-    fn libc_kill(pid: i32, sig: i32) -> i32;
+    assert!(
+        !llmario_core::os::pid_alive(a_pid),
+        "evicted engine {a_pid} still running"
+    );
 }
 
 #[tokio::test]
