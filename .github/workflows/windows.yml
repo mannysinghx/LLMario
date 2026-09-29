@@ -77,6 +77,18 @@ jobs:
                 "{0} around first 'qwen2': {1}" -f $f.Name, ($s.Substring($from, [Math]::Min(64, $s.Length - $from)) -replace "`0", "|")
               }
             }
+            # Bytes before each NUL-terminated occurrence (hex), to see how the strings are packed.
+            $b = [IO.File]::ReadAllBytes("$dir\llama.dll")
+            $t = [Text.Encoding]::Latin1.GetString($b)
+            foreach ($w in "qwen2", "qwen3", "llama", "gemma3") {
+              $at = 0; $n = 0
+              while (($at = $t.IndexOf("$w`0", $at)) -ge 0 -and $n -lt 6) {
+                $from = [Math]::Max(0, $at - 12)
+                $hex = ($b[$from..($at + $w.Length)] | ForEach-Object { $_.ToString("x2") }) -join " "
+                "llama.dll '{0}\0' at {1}: {2}" -f $w, $at, $hex
+                $at += 1; $n += 1
+              }
+            }
             throw "architecture support not confirmed for $env:SMOKE_MODEL"
           }
 
