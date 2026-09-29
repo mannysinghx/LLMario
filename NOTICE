@@ -1,0 +1,14 @@
+LLMario
+Copyright 2026 The LLMario Authors
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+LLMario launches, but does not include or redistribute, these separately installed
+open-source inference engines, which carry their own licenses:
+  - llama.cpp / ggml (MIT) — https://github.com/ggml-org/llama.cpp
+  - MLX and MLX-LM (MIT) — https://github.com/ml-explore
+
+Model weights are downloaded by the user from their publishers and are governed by each
+model's own license. LLMario does not redistribute model weights.
+
+Rust dependencies and their licenses are listed in docs/LICENSES.md.

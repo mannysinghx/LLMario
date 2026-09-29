@@ -421,9 +421,9 @@ More: [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md).
 
 ## License and credits
 
-Proposed license: Apache-2.0 (declared in `Cargo.toml`; license text to be added after dependency
-review). All 240 Rust dependencies are permissively licensed; see
-[docs/LICENSES.md](docs/LICENSES.md) and [deny.toml](deny.toml).
+LLMario is licensed under the [Apache License 2.0](LICENSE); see also [NOTICE](NOTICE). All 240
+Rust dependencies are permissively licensed; see [docs/LICENSES.md](docs/LICENSES.md) and
+[deny.toml](deny.toml).
 
 Built on [llama.cpp](https://github.com/ggml-org/llama.cpp) (MIT),
 [MLX](https://github.com/ml-explore/mlx) and [MLX-LM](https://github.com/ml-explore/mlx-lm) (MIT),
