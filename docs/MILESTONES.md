@@ -14,6 +14,17 @@ Status legend: ✅ done in repo · 🔬 needs real-hardware validation · ⏭ la
 | F | MLX-LM adapter, benchmark harness, JSON + Markdown report | ✅ validated on M4 Max (see benchmarks/results) |
 | G | Docs, CI workflow, license/advisory config (`deny.toml`), MLX venv script | ✅ · installers/packaging ⏭ |
 
+## Desktop app (added on request, 2026-09-29)
+
+| Item | Status |
+|---|---|
+| Tauri 2 window: model picker with fit status, lazy load, unload | ✅ |
+| Streaming chat with thinking, stats, Stop (cancels engine generation) | ✅ runtime client e2e-tested; used live with Qwen3-8B MLX |
+| Download catalog models with progress (HF-cache reuse) | ✅ used live |
+| Settings (profile, context, max tokens, temperature, system prompt, history) | ✅ |
+| Safe Markdown rendering (escape-first) | ✅ `markdown.test.mjs` |
+| Signed/notarized DMG, auto-update, Windows/Linux builds | ⏭ |
+
 ## Phase 2 (not started)
 
 - Cached micro-autotuning keyed by hardware fingerprint + backend build + model hash + profile.

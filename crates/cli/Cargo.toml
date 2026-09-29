@@ -22,6 +22,7 @@ llmario-benchmark.workspace = true
 llmario-core.workspace = true
 llmario-hardware.workspace = true
 llmario-registry.workspace = true
+llmario-runtime.workspace = true
 llmario-supervisor.workspace = true
 reqwest.workspace = true
 serde.workspace = true

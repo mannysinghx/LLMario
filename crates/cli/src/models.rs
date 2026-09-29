@@ -174,6 +174,7 @@ pub async fn run(cmd: ModelCmd) -> anyhow::Result<()> {
                     force,
                     show_progress: true,
                     use_hf_cache: !no_hf_cache,
+                    on_progress: None,
                 },
             )
             .await?;

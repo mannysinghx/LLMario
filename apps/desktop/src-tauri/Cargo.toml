@@ -1,0 +1,27 @@
+[package]
+name = "llmario-desktop"
+description = "LLMario desktop app: chat with local models"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "llmario-desktop"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+anyhow.workspace = true
+llmario-api.workspace = true
+llmario-core.workspace = true
+llmario-hardware.workspace = true
+llmario-registry.workspace = true
+llmario-runtime.workspace = true
+llmario-supervisor.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tauri = { version = "2", features = [] }
+tokio.workspace = true

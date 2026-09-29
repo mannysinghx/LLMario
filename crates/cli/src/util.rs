@@ -26,27 +26,16 @@ pub fn load_config(rt: &RuntimeArgs) -> anyhow::Result<(Paths, Config)> {
 }
 
 pub fn adapters(paths: &Paths) -> Vec<Arc<dyn EngineAdapter>> {
-    let exe = std::env::current_exe().unwrap_or_default();
-    vec![
-        Arc::new(llmario_adapter_llamacpp::LlamaCppAdapter),
-        Arc::new(llmario_adapter_mlx::MlxAdapter::new(&paths.home)),
-        Arc::new(llmario_adapter_mock::MockAdapter {
-            program: exe,
-            args_prefix: vec!["mock-engine".into()],
-        }),
-    ]
+    // The CLI binary implements the hidden `mock-engine` subcommand used by tests.
+    llmario_runtime::standard_adapters(paths, std::env::current_exe().ok())
 }
 
 pub async fn detect_hardware() -> HardwareReport {
-    tokio::task::spawn_blocking(HardwareReport::detect)
-        .await
-        .expect("hardware detection panicked")
+    llmario_runtime::detect_hardware().await
 }
 
 pub async fn supervisor(cfg: Config, paths: Paths) -> anyhow::Result<Arc<Supervisor>> {
-    let hw = detect_hardware().await;
-    let ad = adapters(&paths);
-    tokio::task::spawn_blocking(move || Supervisor::new(cfg, paths, hw, ad)).await?
+    llmario_runtime::build_supervisor(cfg, paths, std::env::current_exe().ok()).await
 }
 
 pub fn print_backends(sup: &Supervisor) {

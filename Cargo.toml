@@ -1,6 +1,12 @@
 [workspace]
 resolver = "2"
-members = ["crates/core", "crates/hardware", "crates/model_registry", "crates/supervisor", "crates/adapter_llamacpp", "crates/adapter_mlx", "crates/adapter_mock", "crates/api", "crates/benchmark", "crates/cli"]
+members = ["crates/*", "apps/desktop/src-tauri"]
+# The desktop app needs platform webview toolchains; plain `cargo build/test` skips it.
+default-members = [
+  "crates/core", "crates/hardware", "crates/model_registry", "crates/supervisor",
+  "crates/adapter_llamacpp", "crates/adapter_mlx", "crates/adapter_mock", "crates/api",
+  "crates/benchmark", "crates/runtime", "crates/cli",
+]
 
 [workspace.package]
 version = "0.1.0"
@@ -19,6 +25,7 @@ llmario-adapter-mlx = { path = "crates/adapter_mlx" }
 llmario-adapter-mock = { path = "crates/adapter_mock" }
 llmario-api = { path = "crates/api" }
 llmario-benchmark = { path = "crates/benchmark" }
+llmario-runtime = { path = "crates/runtime" }
 
 anyhow = "1"
 async-trait = "0.1"
@@ -49,3 +56,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 lto = "thin"
 codegen-units = 1
 strip = true
+
+# Proc-macros and build scripts are loaded by the compiler as dylibs. On macOS 27, stripping
+# them can produce "mis-aligned LINKEDIT string pool" dlopen failures (E0463 "can't find
+# crate for `tokio_macros`"), so only final artifacts are stripped.
+[profile.release.build-override]
+strip = false

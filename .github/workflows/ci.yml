@@ -22,10 +22,26 @@ jobs:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all -- --check
-      - run: cargo clippy --workspace --all-targets -- -D warnings
+      # Default members = everything except the desktop app (which needs a platform webview SDK).
+      - run: cargo clippy --all-targets -- -D warnings
       # Unit + end-to-end tests. E2E uses the in-tree mock engine; no GPU or weights needed.
-      - run: cargo test --workspace
+      - run: cargo test
       # Absolute speed numbers are never CI gates (too noisy); only check the harness runs.
+
+  desktop:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node --test apps/desktop/ui/markdown.test.mjs
+      - run: cargo clippy -p llmario-desktop -- -D warnings
+      - run: cargo build --release -p llmario-desktop
 
   licenses:
     runs-on: ubuntu-latest

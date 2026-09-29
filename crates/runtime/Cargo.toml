@@ -1,0 +1,20 @@
+[package]
+name = "llmario-runtime"
+description = "Assembles the llmario runtime (config, adapters, supervisor) and a streaming chat client for front-ends"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+futures.workspace = true
+llmario-adapter-llamacpp.workspace = true
+llmario-adapter-mlx.workspace = true
+llmario-adapter-mock.workspace = true
+llmario-core.workspace = true
+llmario-hardware.workspace = true
+llmario-supervisor.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true

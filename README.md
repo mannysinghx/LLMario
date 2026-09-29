@@ -42,6 +42,27 @@ curl -s http://127.0.0.1:11500/v1/chat/completions -H 'content-type: application
   -d '{"model":"qwen3-1.7b","messages":[{"role":"user","content":"hi"}],"stream":true}'
 ```
 
+## Desktop app
+
+`LLMario.app` is a native window for chatting with local models, built with
+[Tauri 2](https://tauri.app) (MIT/Apache-2.0) and the system webview. It runs the same runtime as
+the CLI inside the app: pick or download a model, and replies stream in with a collapsible
+"thinking" section, first-token latency and tokens/s. **Stop** really cancels generation. Each
+model shows whether it fits in memory before you load it. Chat history stays on this computer,
+and Settings can turn it off or clear it.
+
+```bash
+cargo install tauri-cli --version "^2" --locked   # once
+cd apps/desktop/src-tauri && cargo tauri build --bundles app
+open ../../../target/release/bundle/macos/LLMario.app
+```
+
+For development, `cargo run -p llmario-desktop` opens the window without bundling. The UI is plain
+HTML/CSS/JS in `apps/desktop/ui` (no bundler, no network assets, strict CSP). Model output is
+rendered by a small escaping Markdown renderer with tests in `markdown.test.mjs`. The window's
+only IPC permission is `core:default`: no filesystem, shell, or HTTP plugins. Launched from Finder,
+the app adopts your login shell's `PATH` so it finds `llama-server` and MLX.
+
 ## Commands
 
 | Command | What it does |
@@ -130,7 +151,7 @@ cargo clippy --workspace --all-targets
 cargo fmt --all
 ```
 
-Layout: `crates/{core,hardware,model_registry,supervisor,adapter_llamacpp,adapter_mlx,adapter_mock,api,benchmark,cli}`.
+Layout: `crates/{core,hardware,model_registry,supervisor,adapter_llamacpp,adapter_mlx,adapter_mock,api,benchmark,runtime,cli}` and `apps/desktop` (Tauri app).
 Design: [ADR 0001](docs/adr/0001-architecture.md) · [milestones](docs/MILESTONES.md) ·
 [benchmark plan](docs/BENCHMARK_PLAN.md) · [API](docs/API.md) ·
 [troubleshooting](docs/TROUBLESHOOTING.md) · [contributing](CONTRIBUTING.md).

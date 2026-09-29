@@ -71,9 +71,25 @@ impl Sibling {
 
 pub struct PullOptions {
     pub force: bool,
+    /// Terminal progress bars (CLI).
     pub show_progress: bool,
     pub use_hf_cache: bool,
+    /// Progress callback for GUIs, called at most every ~100 ms per file and once per finished file.
+    pub on_progress: Option<ProgressFn>,
 }
+
+/// Download progress across all files of one pull.
+#[derive(serde::Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct PullProgress {
+    pub file: String,
+    pub done_bytes: u64,
+    pub total_bytes: u64,
+    /// True when the file came from the local Hugging Face cache instead of the network.
+    pub reused: bool,
+}
+
+pub type ProgressFn = std::sync::Arc<dyn Fn(PullProgress) + Send + Sync>;
 
 pub struct PullOutcome {
     pub entry: ModelEntry,
@@ -149,6 +165,7 @@ impl HubClient {
         sib: &Sibling,
         dest: &Path,
         pb: &indicatif::ProgressBar,
+        on_bytes: &(dyn Fn(u64) + Send + Sync),
     ) -> anyhow::Result<String> {
         let url = format!(
             "{}/{repo}/resolve/{commit}/{}",
@@ -164,6 +181,7 @@ impl HubClient {
         let size = sib.expected_size().unwrap_or(0);
         sha1.update(format!("blob {size}\0").as_bytes());
         let mut written = 0u64;
+        let mut last_report = std::time::Instant::now();
         let mut stream = resp.bytes_stream();
         while let Some(chunk) = stream.next().await {
             let chunk = chunk?;
@@ -172,7 +190,12 @@ impl HubClient {
             file.write_all(&chunk).await?;
             written += chunk.len() as u64;
             pb.set_position(written);
+            if last_report.elapsed() >= std::time::Duration::from_millis(100) {
+                on_bytes(written);
+                last_report = std::time::Instant::now();
+            }
         }
+        on_bytes(written);
         file.flush().await?;
         file.sync_all().await?;
         let got256 = hex::encode(sha256.finalize());
@@ -417,6 +440,17 @@ async fn fetch_all(
 ) -> anyhow::Result<(HashMap<String, String>, u64, u64)> {
     let mut hashes = HashMap::new();
     let (mut downloaded, mut reused) = (0u64, 0u64);
+    let total: u64 = files.iter().filter_map(Sibling::expected_size).sum();
+    let report = |file: &str, done: u64, from_cache: bool| {
+        if let Some(cb) = &opts.on_progress {
+            cb(PullProgress {
+                file: file.to_string(),
+                done_bytes: done,
+                total_bytes: total,
+                reused: from_cache,
+            });
+        }
+    };
     for sib in files {
         let dest = staging.join(&sib.rfilename);
         let size = sib.expected_size().unwrap_or(0);
@@ -434,6 +468,7 @@ async fn fetch_all(
                     }
                     hashes.insert(sib.rfilename.clone(), s256);
                     reused += sz;
+                    report(&sib.rfilename, downloaded + reused, true);
                     continue;
                 }
                 std::fs::remove_file(&dest)?;
@@ -455,7 +490,12 @@ async fn fetch_all(
         };
         let mut last_err = None;
         for attempt in 1..=3 {
-            match hub.download(&entry.repo, commit, sib, &dest, &pb).await {
+            let before = downloaded + reused;
+            let on_bytes = |n: u64| report(&sib.rfilename, before + n, false);
+            match hub
+                .download(&entry.repo, commit, sib, &dest, &pb, &on_bytes)
+                .await
+            {
                 Ok(h) => {
                     hashes.insert(sib.rfilename.clone(), h);
                     last_err = None;

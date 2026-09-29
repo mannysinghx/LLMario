@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>LLMario</title>
+    <link rel="stylesheet" href="styles.css" />
+    <script type="module" src="app.js"></script>
+  </head>
+  <body>
+    <div class="app">
+      <aside class="sidebar">
+        <div class="brand">
+          <img src="icon.png" alt="" width="34" height="34" />
+          <div>
+            <div class="brand-name">LLMario</div>
+            <div class="brand-sub" id="version">local models</div>
+          </div>
+        </div>
+        <button id="new-chat" class="btn primary block" type="button">
+          <span aria-hidden="true">＋</span> New chat
+        </button>
+        <div class="section-label">Chats</div>
+        <nav id="chat-list" class="chat-list" aria-label="Chats"></nav>
+        <div class="sidebar-foot">
+          <button id="open-models" class="nav-btn" type="button">
+            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 5.5 10 2l7 3.5v9L10 18l-7-3.5v-9Zm7 2.3 5-2.5M10 7.8 5 5.3M10 7.8V16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
+            Models
+          </button>
+          <button id="open-settings" class="nav-btn" type="button">
+            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 6h8m4 0h0M4 14h2m4 0h6M12 6a2 2 0 1 0 4 0 2 2 0 0 0-4 0Zm-6 8a2 2 0 1 0 4 0 2 2 0 0 0-4 0Z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+            Settings
+          </button>
+          <div id="hw-line" class="hw-line"></div>
+        </div>
+      </aside>
+
+      <main class="main">
+        <header class="topbar">
+          <div class="model-picker">
+            <label for="model-select" class="sr-only">Model</label>
+            <select id="model-select"></select>
+          </div>
+          <span id="model-status" class="pill">Starting…</span>
+          <button id="unload" class="btn ghost small" type="button" hidden>Unload</button>
+          <div class="spacer"></div>
+          <span id="profile-chip" class="chip" title="Runtime profile"></span>
+        </header>
+
+        <section id="transcript" class="transcript" aria-live="polite"></section>
+
+        <footer class="composer-wrap">
+          <form id="composer" class="composer">
+            <textarea id="input" rows="1" placeholder="Message a local model…" autocomplete="off"></textarea>
+            <button id="send" class="send" type="submit" aria-label="Send">
+              <svg class="i-send" viewBox="0 0 20 20" aria-hidden="true"><path d="M10 16V4m0 0-5 5m5-5 5 5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              <svg class="i-stop" viewBox="0 0 20 20" aria-hidden="true"><rect x="5" y="5" width="10" height="10" rx="2" fill="currentColor"/></svg>
+            </button>
+          </form>
+          <div class="composer-hint">Runs entirely on this computer · Enter to send, Shift+Enter for a new line</div>
+        </footer>
+      </main>
+    </div>
+
+    <div id="models-panel" class="overlay" hidden>
+      <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="models-title">
+        <header class="sheet-head">
+          <h2 id="models-title">Models</h2>
+          <button class="icon-btn close" type="button" aria-label="Close">✕</button>
+        </header>
+        <div class="sheet-body">
+          <h3>On this computer</h3>
+          <div id="installed-list" class="rows"></div>
+          <h3>Download</h3>
+          <p class="muted small">Files are verified against Hugging Face checksums. Models already in your Hugging Face cache are reused instead of downloaded.</p>
+          <div id="catalog-list" class="rows"></div>
+          <h3>Engines</h3>
+          <div id="backend-list" class="rows"></div>
+        </div>
+      </div>
+    </div>
+
+    <div id="settings-panel" class="overlay" hidden>
+      <div class="sheet narrow" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+        <header class="sheet-head">
+          <h2 id="settings-title">Settings</h2>
+          <button class="icon-btn close" type="button" aria-label="Close">✕</button>
+        </header>
+        <form id="settings-form" class="sheet-body settings">
+          <fieldset>
+            <legend>Performance profile</legend>
+            <label class="radio-card"><input type="radio" name="profile" value="latency" />
+              <span><strong>Latency</strong><small>One conversation at a time. Fastest replies, least memory.</small></span></label>
+            <label class="radio-card"><input type="radio" name="profile" value="balanced" />
+              <span><strong>Balanced</strong><small>Up to 4 requests at once (e.g. apps using the model too).</small></span></label>
+            <label class="radio-card"><input type="radio" name="profile" value="throughput" />
+              <span><strong>Throughput</strong><small>Many parallel requests. Slower individual replies.</small></span></label>
+          </fieldset>
+          <label class="field">Context length (tokens)
+            <select name="context">
+              <option value="">Profile default</option>
+              <option value="4096">4,096</option>
+              <option value="8192">8,192</option>
+              <option value="16384">16,384</option>
+              <option value="32768">32,768</option>
+            </select>
+            <small>Longer context remembers more but uses more memory.</small>
+          </label>
+          <label class="field">Max reply length (tokens)
+            <input name="maxTokens" type="number" min="16" max="32768" step="16" />
+          </label>
+          <label class="field">Temperature <output id="temp-out"></output>
+            <input name="temperature" type="range" min="0" max="1.5" step="0.05" />
+            <small>0 = most predictable. Higher = more varied.</small>
+          </label>
+          <label class="field">System prompt
+            <textarea name="system" rows="3" placeholder="Optional instructions for every chat"></textarea>
+          </label>
+          <label class="check"><input type="checkbox" name="showThinking" /> Show the model's thinking</label>
+          <label class="check"><input type="checkbox" name="saveHistory" /> Save chat history on this computer</label>
+          <div class="settings-actions">
+            <button id="clear-history" class="btn ghost danger" type="button">Clear chat history</button>
+            <div class="spacer"></div>
+            <button class="btn primary" type="submit">Save</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <div id="toasts" class="toasts" aria-live="assertive"></div>
+  </body>
+</html>

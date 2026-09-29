@@ -541,3 +541,81 @@ fn cli_doctor_json_and_config() {
         "{text}"
     );
 }
+
+#[tokio::test]
+async fn runtime_chat_client_streams_cancels_and_reports_errors() {
+    use llmario_runtime::chat::{stream_chat, ChatEvent};
+    let env = Env::new(&["mock-a"], |_| {}).await;
+
+    // Streams text and reports stats + the concrete model/backend.
+    let mut events = Vec::new();
+    let stats = stream_chat(
+        &env.http,
+        &env.base,
+        json!({"model": "mockfam", "messages": user("hi"), "max_tokens": 3}),
+        std::future::pending::<()>(),
+        |e| events.push(e),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        events[0],
+        ChatEvent::Start {
+            model: "mock-a".into(),
+            backend: "mock".into()
+        }
+    );
+    let text: String = events
+        .iter()
+        .filter_map(|e| match e {
+            ChatEvent::Content { text } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(text, "tok0 tok1 tok2 ");
+    assert_eq!(stats.completion_tokens, 3);
+    assert!(!stats.cancelled && stats.ttft_ms.is_some());
+
+    // Cancelling mid-stream stops the engine's generation.
+    let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+    let mut tx = Some(tx);
+    let stats = stream_chat(
+        &env.http,
+        &env.base,
+        json!({"model": "mock-a", "messages": user("__slow__"), "max_tokens": 200}),
+        async {
+            let _ = rx.await;
+        },
+        |e| {
+            if matches!(e, ChatEvent::Content { .. }) {
+                if let Some(t) = tx.take() {
+                    let _ = t.send(());
+                }
+            }
+        },
+    )
+    .await
+    .unwrap();
+    assert!(stats.cancelled);
+    let mut cancelled = false;
+    for _ in 0..50 {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        if env.engine_stats().await["cancelled"] == 1 {
+            cancelled = true;
+            break;
+        }
+    }
+    assert!(cancelled, "engine saw the cancellation");
+
+    // Gateway errors come back as structured failures.
+    let err = stream_chat(
+        &env.http,
+        &env.base,
+        json!({"model": "nope", "messages": user("x")}),
+        std::future::pending::<()>(),
+        |_| {},
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(err.code, "model_not_found");
+}

@@ -16,6 +16,9 @@ pub struct CatalogEntry {
     pub files: Vec<String>,
     pub license: String,
     pub description: String,
+    /// Approximate download size, for display and pre-download fit checks.
+    #[serde(default)]
+    pub approx_bytes: Option<u64>,
 }
 
 #[derive(Deserialize, Debug)]

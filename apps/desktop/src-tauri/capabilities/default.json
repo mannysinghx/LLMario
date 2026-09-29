@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "The main window may use core IPC (commands, channels, events) and nothing else: no filesystem, shell, or network plugins.",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}
