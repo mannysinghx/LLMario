@@ -1,0 +1,310 @@
+{
+  "schema": 1,
+  "tool": "llmario 0.1.0",
+  "timestamp": "2026-09-29T13:21:16.863571+00:00",
+  "label": "Ollama 0.34.2 qwen3:1.7b (defaults)",
+  "environment": {
+    "hardware_fingerprint": "4c4f81b625175e7f",
+    "hardware": "Apple M4 Max · macOS 27.0.1 · 64 GiB RAM · Apple M4 Max",
+    "os": "macOS 27.0.1",
+    "target": "external http://127.0.0.1:11434/v1",
+    "backend": "external",
+    "backend_version": null,
+    "model": "qwen3:1.7b",
+    "model_format": null,
+    "model_quantization": null,
+    "model_content_hash": null,
+    "model_source": null,
+    "profile": null,
+    "power_note": "AC Power"
+  },
+  "settings": {
+    "concurrency": [
+      1
+    ],
+    "runs": 3,
+    "warmup": 1,
+    "temperature": 0.0,
+    "seed": null,
+    "skip_quality": false,
+    "cache": "cold"
+  },
+  "suite": "default",
+  "suite_version": 1,
+  "cold_start_s": null,
+  "estimated_memory_bytes": null,
+  "idle_memory_bytes": null,
+  "levels": [
+    {
+      "concurrency": 1,
+      "requests": 9,
+      "errors": 0,
+      "wall_s": 11.805135291,
+      "aggregate_decode_tps": 97.58465037484677,
+      "ttft_s": {
+        "n": 9,
+        "mean": 0.6927198703333333,
+        "p50": 0.481973542,
+        "p95": 1.680159,
+        "min": 0.039574208,
+        "max": 1.680159
+      },
+      "e2e_s": {
+        "n": 9,
+        "mean": 1.3116591432222224,
+        "p50": 1.082882833,
+        "p95": 2.423019875,
+        "min": 0.593060167,
+        "max": 2.423019875
+      },
+      "decode_tps": {
+        "n": 9,
+        "mean": 208.19396793915826,
+        "p50": 211.1096889373536,
+        "p95": 245.98244808705067,
+        "min": 171.0264189451604,
+        "max": 245.98244808705067
+      },
+      "prefill_tps": {
+        "n": 9,
+        "mean": 2594.987662314369,
+        "p50": 3112.8242594482904,
+        "p95": 3801.084544811439,
+        "min": 731.3597173440965,
+        "max": 3801.084544811439
+      },
+      "peak_memory_bytes": 12524562920,
+      "per_case": [
+        {
+          "case": "short",
+          "prompt_tokens": 58,
+          "ttft_s": {
+            "n": 3,
+            "mean": 0.064283986,
+            "p50": 0.076569708,
+            "p95": 0.076708042,
+            "min": 0.039574208,
+            "max": 0.076708042
+          },
+          "prefill_tps": {
+            "n": 3,
+            "mean": 984.3581427335363,
+            "p50": 756.1136810140454,
+            "p95": 1465.6010298424671,
+            "min": 731.3597173440965,
+            "max": 1465.6010298424671
+          },
+          "decode_tps": {
+            "n": 3,
+            "mean": 237.17870676147035,
+            "p50": 243.606585913641,
+            "p95": 245.98244808705067,
+            "min": 221.94708628371936,
+            "max": 245.98244808705067
+          }
+        },
+        {
+          "case": "medium",
+          "prompt_tokens": 1830,
+          "ttft_s": {
+            "n": 3,
+            "mean": 0.49627720833333333,
+            "p50": 0.481973542,
+            "p95": 0.525679625,
+            "min": 0.481178458,
+            "max": 0.525679625
+          },
+          "prefill_tps": {
+            "n": 3,
+            "mean": 3693.0604137874448,
+            "p50": 3796.8889171928863,
+            "p95": 3801.084544811439,
+            "min": 3481.2077793580074,
+            "max": 3801.084544811439
+          },
+          "decode_tps": {
+            "n": 3,
+            "mean": 207.81569889740547,
+            "p50": 211.1096889373536,
+            "p95": 212.58497494324507,
+            "min": 199.75243281161772,
+            "max": 212.58497494324507
+          }
+        },
+        {
+          "case": "long",
+          "prompt_tokens": 4682,
+          "ttft_s": {
+            "n": 3,
+            "mean": 1.5175984166666667,
+            "p50": 1.504421583,
+            "p95": 1.680159,
+            "min": 1.368214667,
+            "max": 1.680159
+          },
+          "prefill_tps": {
+            "n": 3,
+            "mean": 3107.5444304221273,
+            "p50": 3112.8242594482904,
+            "p95": 3421.977642050814,
+            "min": 2787.831389767278,
+            "max": 3421.977642050814
+          },
+          "decode_tps": {
+            "n": 3,
+            "mean": 179.587498158599,
+            "p50": 181.88382221840556,
+            "p95": 185.85225331223106,
+            "min": 171.0264189451604,
+            "max": 185.85225331223106
+          }
+        }
+      ]
+    }
+  ],
+  "quality": [
+    {
+      "case": "arithmetic",
+      "passed": true,
+      "expected_any": [
+        "42"
+      ],
+      "answer_preview": "42"
+    },
+    {
+      "case": "capital",
+      "passed": true,
+      "expected_any": [
+        "Paris"
+      ],
+      "answer_preview": "Paris"
+    },
+    {
+      "case": "long-retrieval",
+      "passed": false,
+      "expected_any": [
+        "5903"
+      ],
+      "answer_preview": "(no final answer: the 1024-token budget was spent before an answer, e.g. in reasoning)"
+    }
+  ],
+  "samples": [
+    {
+      "case": "short",
+      "concurrency": 1,
+      "ok": true,
+      "error": null,
+      "ttft_s": 0.039574208,
+      "e2e_s": 0.612028291,
+      "prompt_tokens": 58,
+      "completion_tokens": 128,
+      "token_count_source": "usage",
+      "prefill_tps": 1465.6010298424671,
+      "decode_tps": 221.94708628371936
+    },
+    {
+      "case": "medium",
+      "concurrency": 1,
+      "ok": true,
+      "error": null,
+      "ttft_s": 0.481973542,
+      "e2e_s": 1.079498458,
+      "prompt_tokens": 1830,
+      "completion_tokens": 128,
+      "token_count_source": "usage",
+      "prefill_tps": 3796.8889171928863,
+      "decode_tps": 212.58497494324507
+    },
+    {
+      "case": "long",
+      "concurrency": 1,
+      "ok": true,
+      "error": null,
+      "ttft_s": 1.368214667,
+      "e2e_s": 2.066610792,
+      "prompt_tokens": 4682,
+      "completion_tokens": 128,
+      "token_count_source": "usage",
+      "prefill_tps": 3421.977642050814,
+      "decode_tps": 181.88382221840556
+    },
+    {
+      "case": "short",
+      "concurrency": 1,
+      "ok": true,
+      "error": null,
+      "ttft_s": 0.076708042,
+      "e2e_s": 0.593060167,
+      "prompt_tokens": 58,
+      "completion_tokens": 128,
+      "token_count_source": "usage",
+      "prefill_tps": 756.1136810140454,
+      "decode_tps": 245.98244808705067
+    },
+    {
+      "case": "medium",
+      "concurrency": 1,
+      "ok": true,
+      "error": null,
+      "ttft_s": 0.481178458,
+      "e2e_s": 1.082882833,
+      "prompt_tokens": 1829,
+      "completion_tokens": 128,
+      "token_count_source": "usage",
+      "prefill_tps": 3801.084544811439,
+      "decode_tps": 211.1096889373536
+    },
+    {
+      "case": "long",
+      "concurrency": 1,
+      "ok": true,
+      "error": null,
+      "ttft_s": 1.504421583,
+      "e2e_s": 2.188020291,
+      "prompt_tokens": 4683,
+      "completion_tokens": 128,
+      "token_count_source": "usage",
+      "prefill_tps": 3112.8242594482904,
+      "decode_tps": 185.85225331223106
+    },
+    {
+      "case": "short",
+      "concurrency": 1,
+      "ok": true,
+      "error": null,
+      "ttft_s": 0.076569708,
+      "e2e_s": 0.597964041,
+      "prompt_tokens": 56,
+      "completion_tokens": 128,
+      "token_count_source": "usage",
+      "prefill_tps": 731.3597173440965,
+      "decode_tps": 243.606585913641
+    },
+    {
+      "case": "medium",
+      "concurrency": 1,
+      "ok": true,
+      "error": null,
+      "ttft_s": 0.525679625,
+      "e2e_s": 1.161847541,
+      "prompt_tokens": 1830,
+      "completion_tokens": 128,
+      "token_count_source": "usage",
+      "prefill_tps": 3481.2077793580074,
+      "decode_tps": 199.75243281161772
+    },
+    {
+      "case": "long",
+      "concurrency": 1,
+      "ok": true,
+      "error": null,
+      "ttft_s": 1.680159,
+      "e2e_s": 2.423019875,
+      "prompt_tokens": 4684,
+      "completion_tokens": 128,
+      "token_count_source": "usage",
+      "prefill_tps": 2787.831389767278,
+      "decode_tps": 171.0264189451604
+    }
+  ]
+}

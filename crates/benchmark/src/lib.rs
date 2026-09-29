@@ -392,9 +392,15 @@ pub async fn run(
 
     let mut quality = Vec::new();
     if !s.skip_quality {
+        // Quality always uses the exact suite prompt: a cold-cache nonce would change the
+        // prompt and make greedy answers differ between runs (observed: "42" vs "32").
+        let qs = Settings {
+            cache: CacheMode::Warm,
+            ..s.clone()
+        };
         for q in &suite.quality {
             progress(&format!("quality: {}", q.id));
-            let (smp, text) = run_one(&http, t, q, s, 1).await;
+            let (smp, text) = run_one(&http, t, q, &qs, 1).await;
             let answer = suite::final_answer(&text);
             let passed = smp.ok
                 && q.expect_any
@@ -468,6 +474,23 @@ fn summarise(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cold_prompts_are_unique_warm_prompts_exact() {
+        let c = suite::Case {
+            id: "x".into(),
+            max_tokens: 1,
+            prompt: "P".into(),
+            expect_any: vec![],
+        };
+        assert_eq!(prompt_for(&c, CacheMode::Warm), "P");
+        let (a, b) = (
+            prompt_for(&c, CacheMode::Cold),
+            prompt_for(&c, CacheMode::Cold),
+        );
+        assert_ne!(a, b);
+        assert!(a.ends_with("\nP"));
+    }
 
     #[test]
     fn percentiles() {

@@ -8,7 +8,7 @@ Status legend: ✅ done in repo · 🔬 needs real-hardware validation · ⏭ la
 |---|---|---|
 | A | Workspace skeleton, CLI, typed config (defaults < file < env < flags), structured logging without prompt content | ✅ |
 | B | `doctor` hardware/backends report; model manifest, catalog, checksum-verified `pull`, `add`, `remove`, `info`, `fit` | ✅ |
-| C | llama.cpp adapter + smoke test | ⚠ launch + flag acceptance + failure path verified on Metal; generation with a standard GGUF pending · 🔬 CUDA / CPU-only Linux |
+| C | llama.cpp adapter + smoke test | ✅ validated on Apple Silicon Metal (Qwen3-1.7B Q4_K_M) · 🔬 CUDA / CPU-only Linux |
 | D | OpenAI-compatible streaming API, cancellation, `/healthz`, `/v1/models`, `/metrics` | ✅ |
 | E | Memory estimate + admission policy, LRU single-model lifecycle | ✅ |
 | F | MLX-LM adapter, benchmark harness, JSON + Markdown report | ✅ validated on M4 Max (see benchmarks/results) |

@@ -79,35 +79,40 @@ Profiles (`--profile`): `latency` (1 slot × 8k ctx), `balanced` (4 × 8k), `thr
 
 ## Measured results (Apple M4 Max, 64 GB, AC power)
 
-Qwen3-1.7B MLX 4-bit through llmario, default suite, temperature 0, cold prefix cache.
-Full reports: [`benchmarks/results/`](benchmarks/results/).
+Qwen3-1.7B 4-bit, default suite, temperature 0, cold prefix cache, 3 runs per prompt.
+Full comparison with method and caveats: [`benchmarks/results/2026-09-29/SUMMARY.md`](benchmarks/results/2026-09-29/SUMMARY.md).
 
-| Profile | Conc | TTFT p50 | Decode tok/s per request | Aggregate tok/s | Peak footprint | llmario estimate | Quality |
-|---|---:|---:|---:|---:|---:|---:|---:|
-| latency | 1 | 566 ms | 223.7 | 98.1 | 3.18 GiB | 5.69 GiB | 3/3 |
-| balanced | 1 | 534 ms | 225.7 | 102.9 | 3.75 GiB | 10.06 GiB | 2/3 |
-| balanced | 4 | 1,953 ms | 93.3 | 123.0 | 8.06 GiB | 10.06 GiB | – |
+| Target | Conc | TTFT p50 | Decode tok/s / req | Aggregate tok/s | Peak footprint | Quality |
+|---|---:|---:|---:|---:|---:|---:|
+| llmario → llama.cpp (latency, 8k ctx) | 1 | 495 ms | 217.1 | 102.1 | 2.12 GiB | 2/3 |
+| raw llama-server, same flags | 1 | 494 ms | 214.1 | 102.3 | 2.15 GiB | 2/3 |
+| llmario → MLX (latency, 8k ctx) | 1 | 535 ms | 224.5 | 102.6 | 3.18 GiB | 3/3 |
+| Ollama 0.34.2 defaults (40k ctx) | 1 | 482 ms | 208.2 | 97.6 | 6.42–11.66 GiB | 2/3 |
+| llmario → llama.cpp (40k ctx, = Ollama) | 1 | 498 ms | 203.9 | 96.8 | 5.65 GiB | 2/3 |
+| llmario → llama.cpp (balanced) | 4 | 1,877 ms | 70.0 | 113.8 | 4.78 GiB | – |
+| llmario → MLX (balanced) | 4 | 1,668 ms | 71.1 | 117.7 | 8.51 GiB | – |
+| Ollama 0.34.2 defaults | 4 | 4,880 ms | 200.5 | 88.1 | 9.42 GiB | – |
 
-- Cold start (spawn → first token): 1.3–1.4 s. Short prompts decode at ~257 tok/s; prefill is
-  ~3.2–3.4k tok/s for 1.8k–4.7k-token prompts.
-- **Neutral result:** on this prefill-heavy suite, 4 concurrent requests raise aggregate
-  throughput only ~20% while TTFT rises ~3.6x. Use `latency` for interactive single-user work.
-- **Quality caveat:** the long-context retrieval check passes under `latency` but fails under
-  `balanced` at temperature 0 (the model exhausts its 1,024-token budget reasoning). Balanced
-  routes even single requests through MLX's batched path, which is numerically different, so
-  greedy output can diverge on borderline cases.
-- **Memory estimates are upper bounds here** (1.2–1.8x the measured peak). An earlier estimate
-  was *exceeded* 2.3x at concurrency 4. Root cause: MLX's allocator buffer cache and prompt cache,
-  now capped and counted (see ADR). This is why estimates ship with measured calibration.
-- No comparison against another runtime has been run yet, so **no speed-up claim is made.**
-  `llmario bench --url` exists for exactly that comparison.
+What this supports, and what it does not:
+- **Gateway overhead is not measurable:** llmario vs the same llama-server without llmario.
+- **Single-request speed is at parity with Ollama** (within run-to-run noise; MLX decodes ~8%
+  faster). No single-request speed win is claimed.
+- **At concurrency 4, llmario's balanced profile beats Ollama's defaults:** +29% (llama.cpp) /
+  +34% (MLX) aggregate throughput, ~2.7x lower median TTFT. Ollama 0.34.2 runs its engine with
+  `-np 1`, so requests queue; `OLLAMA_NUM_PARALLEL` was not tested.
+- **Lower memory at equal context:** 5.65 GiB vs Ollama's 6.42 GiB right after load (−12%) and
+  11.66 GiB after sustained use (−52%). Ollama leaves llama.cpp's 8 GiB host prompt cache uncapped;
+  llmario caps it at 1 GiB. The default-profile saving (2.12 GiB) comes from sizing context to the
+  workload, not from a faster engine.
+- **llmario's estimates bounded every measured peak** (estimate / peak = 1.18–1.79x). An earlier
+  MLX estimate was exceeded 2.3x; the root cause is fixed and documented in the ADR.
 
 ## Support status
 
 | Path | Status |
 |---|---|
 | Apple Silicon + MLX-LM | ✅ validated (M4 Max, macOS 27.0.1) |
-| Apple Silicon + llama.cpp (Metal) | ⚠ adapter launches build 11146 and flags are accepted; full generation with a standard GGUF not yet run |
+| Apple Silicon + llama.cpp (Metal) | ✅ validated (M4 Max, build 11146, Qwen3-1.7B Q4_K_M) |
 | Linux x86_64 + CUDA (llama.cpp) | 🔬 implemented (nvidia-smi detection, hybrid offload planning), unvalidated |
 | CPU-only (llama.cpp) | 🔬 implemented, unvalidated |
 | AMD ROCm / Intel | ⏭ detection only; no support claimed |

@@ -79,3 +79,12 @@ These changed the implementation; each is covered by a test or a recorded benchm
 5. **GGUF files from other runtimes may not load in upstream llama.cpp** (Ollama's `qwen3vl`
    blob lacks `rope.dimension_sections`). Startup failures surface the engine's last log lines;
    only port-bind races are retried.
+6. **Quality checks must not use cold-cache prompts.** The cold-mode nonce changed the prompt,
+   and greedy answers changed with it (llama.cpp: "32" in one run, "42" in the next). Quality
+   cases now always use the exact suite prompt; a unit test pins this.
+7. **Comparison with Ollama 0.34.2** (benchmarks/results/2026-09-29): Ollama runs its own bundled
+   llama-server (0.4.1-dev) with `-np 1`, 40,960 context, `--chat-template chatml`, and no
+   `--cache-ram` (default 8 GiB). llmario's gateway overhead was not measurable; single-request speed
+   was at parity; concurrency-4 throughput and TTFT were better with llmario's balanced profile; peak
+   memory was lower at equal context. The wedge is configuration and resource policy, not kernels,
+   which matches this ADR's premise.
