@@ -7,3 +7,4 @@
 .DS_Store
 *.log
 apps/desktop/src-tauri/gen/
+dist/

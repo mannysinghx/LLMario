@@ -116,9 +116,21 @@ cargo tauri build --bundles app
 ditto ../../../target/release/bundle/macos/LLMario.app /Applications/LLMario.app
 ```
 
-The app is ad-hoc signed, which macOS accepts for apps built on the same machine. Sharing it with
-other Macs needs a Developer ID signature and notarization (not set up yet). For development,
+This local build is ad-hoc signed, which macOS accepts on the machine that built it. For development,
 `cargo run -p llmario-desktop` opens the window without bundling.
+
+### Build a shareable app (signed + notarized)
+
+```bash
+scripts/release-macos.sh      # → dist/LLMario-<version>-macos-universal.dmg (+ .sha256)
+```
+
+The script makes a universal (Apple Silicon + Intel) app, signs it with your **Developer ID**
+certificate (hardened runtime, secure timestamp), has Apple **notarize** it, **staples** the ticket
+to the app and the DMG, and checks the result with Gatekeeper. Recipients can open it with no
+warnings, even offline. They still need an engine (`brew install llama.cpp`, or `pip install mlx-lm`
+on Apple Silicon). One-time setup (certificate and notary credentials) and troubleshooting:
+[docs/RELEASING.md](docs/RELEASING.md).
 
 ## Command line
 
@@ -414,7 +426,8 @@ More: [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md).
 
 ## Roadmap
 
-- Signed and notarized macOS builds; Windows and Linux desktop builds
+- Bundle llama.cpp inside the app so recipients need no separate engine install
+- Windows and Linux desktop builds
 - vLLM / SGLang adapter for multi-user NVIDIA serving
 - Cached auto-tuning per hardware, engine build, model hash and profile
 - Tool calling and JSON mode where engines support them
