@@ -214,7 +214,10 @@ pub fn architecture_names(server: &std::path::Path) -> Option<std::collections::
     (set.contains("llama") && set.contains("qwen2")).then_some(set)
 }
 
-/// Collect short NUL-delimited identifier-like strings (`[a-z0-9_.-]{2,32}`).
+/// Collect short NUL-delimited identifier-like strings (`[a-z0-9_.-]{2,32}`) and their endings.
+///
+/// Endings count because linkers may store a string as the tail of a longer one that ends the
+/// same way (tail merging): llama.cpp's Windows build keeps "qwen2" only inside "rwkv6qwen2".
 fn c_strings(bytes: &[u8], out: &mut std::collections::HashSet<String>) {
     let ok =
         |b: u8| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_' || b == b'-' || b == b'.';
@@ -224,7 +227,9 @@ fn c_strings(bytes: &[u8], out: &mut std::collections::HashSet<String>) {
             let run = &bytes[start..i];
             let standalone = start == 0 || bytes[start - 1] == 0;
             if standalone && (2..=32).contains(&run.len()) && run.iter().all(|&c| ok(c)) {
-                out.insert(String::from_utf8_lossy(run).into_owned());
+                for k in 0..=run.len() - 2 {
+                    out.insert(String::from_utf8_lossy(&run[k..]).into_owned());
+                }
             }
             start = i + 1;
         } else if !ok(b) {
@@ -250,6 +255,18 @@ mod tests {
             assert!(set.contains(a), "{a}");
         }
         assert!(!set.contains("x") && !set.contains("hello"));
+    }
+
+    #[test]
+    fn finds_tail_merged_strings() {
+        // lld-link stores "qwen2" as the last bytes of "rwkv6qwen2" (llama.cpp Windows build).
+        let mut set = std::collections::HashSet::new();
+        c_strings(b"\0rwkv6qwen2\0llama\0\xb8mistral3\0", &mut set);
+        for a in ["rwkv6qwen2", "qwen2", "llama"] {
+            assert!(set.contains(a), "{a}");
+        }
+        // Not after a NUL (here: machine code), so not a string.
+        assert!(!set.contains("mistral3"));
     }
 
     /// Runs only where llama.cpp is installed (e.g. `brew install llama.cpp`).
