@@ -24,6 +24,7 @@ fn main() {
             commands::list_models,
             commands::list_catalog,
             commands::pull_model,
+            commands::add_model,
             commands::remove_model,
             commands::load_model,
             commands::unload_model,

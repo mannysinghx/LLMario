@@ -23,6 +23,7 @@ Status legend: ✅ done in repo · 🔬 needs real-hardware validation · ⏭ la
 | Download catalog models with progress (HF-cache reuse) | ✅ used live |
 | Settings (profile, context, max tokens, temperature, system prompt, history) | ✅ |
 | Safe Markdown rendering (escape-first) | ✅ `markdown.test.mjs` |
+| Drag and drop `.gguf` files / MLX folders (registered in place, auto-named, duplicate-safe) | ✅ registry tests; UI wired to Tauri 2.12 drag-drop API (not exercised by automated UI test) |
 | Signed/notarized DMG, auto-update, Windows/Linux builds | ⏭ |
 
 ## Phase 2 (not started)

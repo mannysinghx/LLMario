@@ -170,7 +170,7 @@ function renderWelcome() {
   w.append(img);
   if (!state.models.length) {
     w.append(el("h1", null, "Download a model to start"));
-    w.append(el("p", null, "Models run entirely on this computer. Pick one sized for your machine."));
+    w.append(el("p", null, "Models run entirely on this computer. Pick one sized for your machine, or drag your own .gguf file or MLX model folder onto this window."));
     const picks = state.catalog
       .filter((c) => c.recommended && !c.installed)
       .sort((a, b) => (a.approxBytes || 0) - (b.approxBytes || 0))
@@ -734,12 +734,57 @@ function wire() {
   });
 }
 
+// ---------- drag and drop your own model files ----------
+async function wireDragDrop() {
+  const webview = tauri?.webview?.getCurrentWebview?.();
+  if (!webview?.onDragDropEvent) return;
+  const zone = $("#drop-zone");
+  await webview.onDragDropEvent((event) => {
+    const p = event.payload || {};
+    if (p.type === "enter") zone.hidden = !(p.paths && p.paths.length);
+    else if (p.type === "leave") zone.hidden = true;
+    else if (p.type === "drop") {
+      zone.hidden = true;
+      addDropped(p.paths || []);
+    }
+  });
+}
+
+async function addDropped(paths) {
+  for (const path of paths) {
+    const name = path.split("/").filter(Boolean).pop() || path;
+    setStatus("loading", `Adding ${name}…`);
+    toast(`Adding ${name}`, "Reading the model and computing its checksum. Large files take a few seconds.", false, 4000);
+    try {
+      const m = await invoke("add_model", { path });
+      await refreshModels();
+      const what = [BACKEND[m.backend], m.quantization, fmtDisk(m.sizeBytes)].filter(Boolean).join(" · ");
+      if (!m.backendAvailable) {
+        toast("Added, but its engine is not installed", `${m.id} needs ${BACKEND[m.backend]}. See Models → Engines.`, true, 10000);
+      } else if (!m.fits) {
+        toast("Added, but it is too large for this computer",
+          `${m.id} needs ~${fmtMem(m.needsBytes)} of memory; ${fmtMem(m.budgetBytes)} is available. A smaller context (Settings) may help.`, true, 12000);
+      } else if (state.generating) {
+        toast("Model added", `${m.id} (${what}). Select it when the current reply finishes.`);
+      } else {
+        toast("Model added", `${m.id} (${what}). Loading it now.`);
+        await selectModel(m.id);
+      }
+    } catch (e) {
+      toast(`Could not add ${name}`, errMsg(e), true, 12000);
+    }
+  }
+  renderModelSelect();
+  renderInstalled();
+}
+
 async function boot() {
   if (!invoke) {
     document.body.textContent = "LLMario's interface must run inside the desktop app.";
     return;
   }
   wire();
+  wireDragDrop().catch(() => {});
   loadChats();
   renderChatList();
   renderTranscript();

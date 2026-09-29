@@ -517,6 +517,84 @@ async fn fetch_all(
     Ok((hashes, downloaded, reused))
 }
 
+/// Register a model the user dropped onto the app (or pointed at) with an automatic id.
+/// Refuses a path that is already registered. Files are hashed in place, never copied.
+pub fn add_local_auto(path: &Path, registry: &mut Registry) -> anyhow::Result<ModelEntry> {
+    let probe = inspect::inspect(path, false)?;
+    if let Some(m) = registry.models.iter().find(|m| m.path == probe.path) {
+        anyhow::bail!("this model is already added as '{}'", m.id);
+    }
+    let id = unique_id(registry, &suggested_id(&probe));
+    add_local(path, Some(&id), registry)
+}
+
+/// A readable id: the file/folder name, or the GGUF `general.name` when the file is named by a
+/// hash (e.g. `sha256-…` blobs from other runtimes' caches), plus the quantization if missing.
+fn suggested_id(ins: &inspect::Inspected) -> String {
+    let stem = default_id(&ins.path);
+    let hashy = stem.starts_with("sha256")
+        || (stem.len() >= 32 && stem.chars().all(|c| c.is_ascii_hexdigit() || c == '-'));
+    let mut base = stem.clone();
+    if hashy && ins.format == ModelFormat::Gguf {
+        if let Some(name) = crate::gguf::read_metadata(&ins.path).ok().and_then(|m| {
+            m.get("general.name")
+                .and_then(|v| v.as_str())
+                .map(String::from)
+        }) {
+            base = name;
+        }
+    }
+    let mut id = slug(&base);
+    if let Some(q) = ins.quantization.as_deref().map(slug) {
+        if !q.is_empty() && !id.contains(&q) && q.len() <= 16 {
+            id = format!("{id}-{q}");
+        }
+    }
+    id
+}
+
+/// Lowercase id with only `[a-z0-9._-]`, at most 64 characters.
+pub fn slug(s: &str) -> String {
+    let mut out = String::new();
+    for c in s.trim().to_lowercase().chars() {
+        let c = if c.is_ascii_alphanumeric() || "._".contains(c) {
+            c
+        } else {
+            '-'
+        };
+        if !(c == '-' && out.ends_with('-')) {
+            out.push(c);
+        }
+    }
+    let out: String = out.trim_matches('-').chars().take(64).collect();
+    if out.is_empty() {
+        "model".into()
+    } else {
+        out
+    }
+}
+
+/// `base`, or `base-2`, `base-3`… so the id is new and never shadows a family name (which would
+/// hijack requests for that family).
+pub fn unique_id(registry: &Registry, base: &str) -> String {
+    let catalog = crate::Catalog::builtin();
+    let taken = |id: &str| {
+        registry.get(id).is_some()
+            || registry
+                .models
+                .iter()
+                .any(|m| m.family.as_deref() == Some(id))
+            || !catalog.family(id).is_empty()
+    };
+    if !taken(base) {
+        return base.to_string();
+    }
+    (2..)
+        .map(|n| format!("{base}-{n}"))
+        .find(|c| !taken(c))
+        .expect("unbounded")
+}
+
 /// Register a model that already exists on disk. Files are hashed but not copied; `remove`
 /// will never delete them.
 pub fn add_local(
@@ -711,6 +789,66 @@ mod tests {
     fn rejects_plain_http_remote() {
         assert!(HubClient::new("http://example.com", None).is_err());
         assert!(HubClient::new("http://127.0.0.1:9", None).is_ok());
+    }
+
+    #[test]
+    fn slugs_and_unique_ids() {
+        assert_eq!(slug("Qwen3 1.7B (Instruct)!"), "qwen3-1.7b-instruct");
+        assert_eq!(slug("  "), "model");
+        let mut reg = Registry::in_memory(vec![]);
+        assert_eq!(unique_id(&reg, "mine"), "mine");
+        assert_eq!(
+            unique_id(&reg, "qwen3-1.7b"),
+            "qwen3-1.7b-2",
+            "catalog family names are reserved"
+        );
+        let d = tempfile::tempdir().unwrap();
+        let g = d.path().join("mine.gguf");
+        std::fs::write(&g, crate::gguf::tests::sample_gguf()).unwrap();
+        add_local(&g, Some("mine"), &mut reg).unwrap();
+        assert_eq!(unique_id(&reg, "mine"), "mine-2");
+    }
+
+    #[test]
+    fn add_local_auto_names_blobs_and_refuses_duplicates() {
+        let home = tempfile::tempdir().unwrap();
+        let paths = Paths::at(home.path());
+        paths.ensure().unwrap();
+        let mut reg = Registry::load(&paths.registry_file()).unwrap();
+        let d = tempfile::tempdir().unwrap();
+
+        // An Ollama-style blob: no extension, hash name, real name in the header.
+        let blob = d.path().join("sha256-0123456789abcdef0123456789abcdef");
+        std::fs::write(
+            &blob,
+            crate::gguf::tests::sample_gguf_named(Some("Tiny Llama 1B")),
+        )
+        .unwrap();
+        let e = add_local_auto(&blob, &mut reg).unwrap();
+        assert_eq!(e.id, "tiny-llama-1b-q4_k_m");
+        assert!(!e.managed);
+        let err = add_local_auto(&blob, &mut reg).unwrap_err().to_string();
+        assert!(
+            err.contains("already added as 'tiny-llama-1b-q4_k_m'"),
+            "{err}"
+        );
+
+        // A normal file whose name already carries the quantization.
+        let f = d.path().join("Mistral-7B-Instruct-Q4_K_M.gguf");
+        std::fs::write(&f, crate::gguf::tests::sample_gguf()).unwrap();
+        assert_eq!(
+            add_local_auto(&f, &mut reg).unwrap().id,
+            "mistral-7b-instruct-q4_k_m"
+        );
+
+        // Not a model.
+        let junk = d.path().join("notes.txt");
+        std::fs::write(&junk, "hello").unwrap();
+        assert!(add_local_auto(&junk, &mut reg).is_err());
+        assert!(
+            Registry::load(&paths.registry_file()).unwrap().models.len() == 2,
+            "persisted"
+        );
     }
 
     #[test]

@@ -209,6 +209,11 @@ pub(crate) mod tests {
 
     /// Build a tiny GGUF v3 header for tests.
     pub fn sample_gguf() -> Vec<u8> {
+        sample_gguf_named(None)
+    }
+
+    /// Same header, optionally with `general.name` (as Ollama-style blobs carry).
+    pub fn sample_gguf_named(name: Option<&str>) -> Vec<u8> {
         fn s(out: &mut Vec<u8>, v: &str) {
             out.extend((v.len() as u64).to_le_bytes());
             out.extend(v.as_bytes());
@@ -216,7 +221,7 @@ pub(crate) mod tests {
         let mut b = b"GGUF".to_vec();
         b.extend(3u32.to_le_bytes());
         b.extend(0u64.to_le_bytes()); // tensors
-        b.extend(8u64.to_le_bytes()); // kv count
+        b.extend((8u64 + name.is_some() as u64).to_le_bytes()); // kv count
         s(&mut b, "general.architecture");
         b.extend(8u32.to_le_bytes());
         s(&mut b, "llama");
@@ -248,6 +253,11 @@ pub(crate) mod tests {
         s(&mut b, "tokenizer.chat_template");
         b.extend(8u32.to_le_bytes());
         s(&mut b, "{% for m in messages %}{{ m.content }}{% endfor %}");
+        if let Some(n) = name {
+            s(&mut b, "general.name");
+            b.extend(8u32.to_le_bytes());
+            s(&mut b, n);
+        }
         b
     }
 

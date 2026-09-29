@@ -70,6 +70,7 @@
         </header>
         <div class="sheet-body">
           <h3>On this computer</h3>
+          <p class="muted small">Have your own model? Drag a <code>.gguf</code> file or an MLX model folder onto this window. It is added in place, never copied, and removing it never deletes your files.</p>
           <div id="installed-list" class="rows"></div>
           <h3>Download</h3>
           <p class="muted small">Files are verified against Hugging Face checksums. Models already in your Hugging Face cache are reused instead of downloaded.</p>
@@ -124,6 +125,14 @@
             <button class="btn primary" type="submit">Save</button>
           </div>
         </form>
+      </div>
+    </div>
+
+    <div id="drop-zone" class="drop-zone" hidden>
+      <div class="drop-card">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0-4.5-4.5M12 15l4.5-4.5M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <strong>Drop to add a model</strong>
+        <span>A <code>.gguf</code> file or an MLX model folder. Files stay where they are.</span>
       </div>
     </div>
 

@@ -66,6 +66,9 @@ app, so it needs no separate server and no Ollama.
 - **Model downloads** — a built-in catalog with sizes, licenses and a *recommended for this
   computer* badge. A progress bar tracks each download, every file is verified against Hugging
   Face checksums, and files already in your Hugging Face cache are reused instead of re-downloaded.
+- **Drag and drop your own models** — drop a `.gguf` file or an MLX model folder anywhere on
+  the window. LLMario reads the model, checks it fits, registers it **in place** (never copied;
+  removing it never deletes your files), then selects and loads it.
 - **Settings** — performance profile (Latency / Balanced / Throughput), context length, max
   reply length, temperature, system prompt, show thinking, save history.
 - **Light and dark mode** follow macOS.
@@ -78,6 +81,9 @@ app, so it needs no separate server and no Ollama.
    *Loading…* and then *Ready · MLX · loaded in 1.4 s*.
 3. Type and press **Enter** (**Shift+Enter** adds a new line). Press the ■ button to stop.
 4. **Unload** frees the model's memory. Quitting the app stops every engine process.
+5. To use a model you already have, drag its `.gguf` file (or its MLX folder: `config.json` +
+   `.safetensors`) onto the window. Blobs named by a hash, like those in other runtimes' caches,
+   get their real name from the file's header. The same file dropped twice is recognised.
 
 ## Install
 
@@ -194,6 +200,8 @@ another model. License labels are copied from the model cards. "Open weights" do
 unrestricted use, so read the model's license.
 
 ### Your own model files
+
+In the desktop app, **drag the file or folder onto the window**. From the command line:
 
 ```bash
 llmario model add ~/Downloads/Mistral-7B-Instruct-Q4_K_M.gguf
@@ -406,7 +414,6 @@ More: [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md).
 
 ## Roadmap
 
-- Drag-and-drop of your own model files in the desktop app
 - Signed and notarized macOS builds; Windows and Linux desktop builds
 - vLLM / SGLang adapter for multi-user NVIDIA serving
 - Cached auto-tuning per hardware, engine build, model hash and profile

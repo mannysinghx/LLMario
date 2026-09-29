@@ -247,6 +247,24 @@ pub async fn pull_model(
     Ok(model_view(&rt, &out.entry, &[]))
 }
 
+/// Add a model file or folder the user dropped onto the window. Registered in place: the files
+/// are hashed, never copied, and removing the model later never deletes them.
+#[tauri::command]
+pub async fn add_model(state: State<'_, AppState>, path: String) -> CmdResult<ModelView> {
+    let _serialize_registry_writes = state.pull_lock.lock().await;
+    let rt = state.runtime().await?;
+    let registry_file = rt.sup.paths.registry_file();
+    let entry = tokio::task::spawn_blocking(move || {
+        let mut reg = Registry::load(&registry_file)?;
+        download::add_local_auto(std::path::Path::new(&path), &mut reg)
+    })
+    .await
+    .map_err(|e| CmdError::new("internal_error", e.to_string()))?
+    .map_err(|e| CmdError::new("invalid_model", format!("{e:#}")))?;
+    rt.sup.reload_registry()?;
+    Ok(model_view(&rt, &entry, &[]))
+}
+
 /// Remove a model. Downloaded files are deleted; files registered from elsewhere are kept.
 #[tauri::command]
 pub async fn remove_model(state: State<'_, AppState>, id: String) -> CmdResult<()> {
