@@ -60,7 +60,25 @@ jobs:
           $llama = $doc.backends | Where-Object kind -eq "llamacpp"
           if (-not $llama.available) { throw "llama.cpp not detected: $($llama.detail)" }
           $entry = & $exe model catalog --json | ConvertFrom-Json | Where-Object id -eq $env:SMOKE_MODEL
-          if ($entry.supported -ne $true) { throw "architecture support unknown for $env:SMOKE_MODEL (llama.dll scan failed?)" }
+          if ($entry.supported -ne $true) {
+            # Diagnostics: where (and whether) llama.cpp's architecture names appear as C strings.
+            "catalog: supported=$($entry.supported) architecture=$($entry.architecture) engine=$($entry.engineVersion)"
+            $dir = Split-Path (Get-Command llama-server.exe).Source
+            Get-ChildItem $dir -File | Format-Table Name, Length
+            foreach ($f in Get-ChildItem $dir -File -Include *.dll, *.exe -Recurse) {
+              $s = [Text.Encoding]::Latin1.GetString([IO.File]::ReadAllBytes($f.FullName))
+              foreach ($w in "llama", "qwen2", $entry.architecture) {
+                $alone = $s.Contains("`0$w`0"); $any = $s.Contains($w)
+                if ($any) { "{0}: '{1}' standalone={2}" -f $f.Name, $w, $alone }
+              }
+              $i = $s.IndexOf("qwen2")
+              if ($i -ge 0) {
+                $from = [Math]::Max(0, $i - 24)
+                "{0} around first 'qwen2': {1}" -f $f.Name, ($s.Substring($from, [Math]::Min(64, $s.Length - $from)) -replace "`0", "|")
+              }
+            }
+            throw "architecture support not confirmed for $env:SMOKE_MODEL"
+          }
 
       - name: "Smoke test: download, verify and chat"
         run: |
