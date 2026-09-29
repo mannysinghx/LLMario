@@ -2,7 +2,7 @@ use crate::RuntimeArgs;
 use llmario_core::{BackendKind, Config, Paths};
 use llmario_hardware::HardwareReport;
 use llmario_supervisor::memory::fmt_bytes;
-use llmario_supervisor::{EngineAdapter, Supervisor};
+use llmario_supervisor::Supervisor;
 use std::sync::Arc;
 
 pub fn load_config(rt: &RuntimeArgs) -> anyhow::Result<(Paths, Config)> {
@@ -23,11 +23,6 @@ pub fn load_config(rt: &RuntimeArgs) -> anyhow::Result<(Paths, Config)> {
     }
     cfg.validate()?;
     Ok((paths, cfg))
-}
-
-pub fn adapters(paths: &Paths) -> Vec<Arc<dyn EngineAdapter>> {
-    // The CLI binary implements the hidden `mock-engine` subcommand used by tests.
-    llmario_runtime::standard_adapters(paths, std::env::current_exe().ok())
 }
 
 pub async fn detect_hardware() -> HardwareReport {

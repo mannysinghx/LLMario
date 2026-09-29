@@ -1,0 +1,441 @@
+# Curated model library (research input). `scripts/catalog/build.py` verifies every variant against
+# the Hugging Face Hub and writes crates/model_registry/catalog.toml with exact files, sizes,
+# checksums, license, architecture, context length and shape, pinned to a commit.
+#
+# Selection criteria (researched 2026-09-29): current open-weight text-generation models from their
+# original publishers, sized for laptops and workstations (0.2B–120B), with a GGUF build from a
+# reputable converter (ggml-org, the publisher, unsloth, bartowski) and, where one exists, an MLX
+# build from mlx-community. Models that need datacenter hardware (DeepSeek V4, GLM-5.x, Qwen3.8
+# 2.4T) and experimental quantizations that need forked engines are left out.
+#
+# Candidate repos are tried in order; the first that exists wins. Variants that cannot be verified
+# are dropped from the generated catalog and reported.
+
+[[family]]
+id = "qwen3.8-27b"
+name = "Qwen3.8 27B"
+publisher = "Alibaba Qwen"
+released = "2026-08"
+params = "27B"
+tasks = ["chat", "reasoning", "coding", "agents", "multilingual"]
+summary = "Qwen's most capable open model (Aug 2026): strong at coding, research and multi-step agent tasks, with thinking that can be switched off per request."
+notes = "Vision-language model; LLMario uses its text abilities."
+gguf = ["ggml-org/Qwen3.8-27B-GGUF", "unsloth/Qwen3.8-27B-GGUF", "lmstudio-community/Qwen3.8-27B-GGUF"]
+mlx = ["mlx-community/Qwen3.8-27B-4bit"]
+
+[[family]]
+id = "qwen3.8-flash-next"
+name = "Qwen3.8 Flash-Next"
+publisher = "Alibaba Qwen"
+released = "2026-08"
+params = "MoE"
+tasks = ["chat", "reasoning", "coding", "agents", "long-context"]
+summary = "Experimental preview of the architecture behind Qwen4: sparse attention built for fast long-context and agent workloads."
+notes = "Experimental architecture; Qwen community license (not Apache-2.0). Vision-language model; LLMario uses text."
+gguf = ["unsloth/Qwen3.8-Flash-Next-GGUF", "ggml-org/Qwen3.8-Flash-Next-GGUF"]
+mlx = ["mlx-community/Qwen3.8-Flash-Next-4bit"]
+
+[[family]]
+id = "qwen3.6-35b-a3b"
+name = "Qwen3.6 35B-A3B"
+publisher = "Alibaba Qwen"
+released = "2026-04"
+params = "35B (3B active)"
+tasks = ["chat", "reasoning", "coding", "agents", "multilingual"]
+summary = "Mixture-of-experts model: 35B knowledge with only 3B parameters active per token, so it answers much faster than dense models of similar quality."
+notes = "Vision-language model; LLMario uses its text abilities."
+gguf = ["ggml-org/Qwen3.6-35B-A3B-GGUF", "unsloth/Qwen3.6-35B-A3B-GGUF"]
+mlx = ["mlx-community/Qwen3.6-35B-A3B-4bit"]
+
+[[family]]
+id = "qwen3.6-27b"
+name = "Qwen3.6 27B"
+publisher = "Alibaba Qwen"
+released = "2026-04"
+params = "27B"
+tasks = ["chat", "reasoning", "coding", "multilingual"]
+summary = "Dense 27B general model from the Qwen3.6 generation; steady all-rounder for writing, analysis and code."
+notes = "Vision-language model; LLMario uses its text abilities."
+gguf = ["unsloth/Qwen3.6-27B-GGUF", "ggml-org/Qwen3.6-27B-GGUF"]
+mlx = ["mlx-community/Qwen3.6-27B-4bit"]
+
+[[family]]
+id = "qwen3.5-9b"
+name = "Qwen3.5 9B"
+publisher = "Alibaba Qwen"
+released = "2026-03"
+params = "9B"
+tasks = ["chat", "reasoning", "coding", "multilingual"]
+summary = "Efficient 9B model covering 201 languages, with good reasoning and coding for its size. A strong default for mid-range laptops."
+notes = "Vision-language model; LLMario uses its text abilities."
+gguf = ["unsloth/Qwen3.5-9B-GGUF", "ggml-org/Qwen3.5-9B-GGUF"]
+mlx = ["mlx-community/Qwen3.5-9B-4bit"]
+
+[[family]]
+id = "qwen3.5-4b"
+name = "Qwen3.5 4B"
+publisher = "Alibaba Qwen"
+released = "2026-03"
+params = "4B"
+tasks = ["chat", "reasoning", "multilingual", "small"]
+summary = "Compact Qwen3.5 model for small laptops: quick answers, summaries and light coding help."
+notes = "Vision-language model; LLMario uses its text abilities."
+gguf = ["unsloth/Qwen3.5-4B-GGUF", "ggml-org/Qwen3.5-4B-GGUF"]
+mlx = ["mlx-community/Qwen3.5-4B-4bit"]
+
+[[family]]
+id = "qwen3.5-2b"
+name = "Qwen3.5 2B"
+publisher = "Alibaba Qwen"
+released = "2026-03"
+params = "2B"
+tasks = ["chat", "multilingual", "small"]
+summary = "Small and fast; good for simple chat, rewriting and classification on any machine."
+notes = "Vision-language model; LLMario uses its text abilities."
+gguf = ["unsloth/Qwen3.5-2B-GGUF", "ggml-org/Qwen3.5-2B-GGUF"]
+mlx = ["mlx-community/Qwen3.5-2B-4bit"]
+
+[[family]]
+id = "qwen3.5-0.8b"
+name = "Qwen3.5 0.8B"
+publisher = "Alibaba Qwen"
+released = "2026-03"
+params = "0.8B"
+tasks = ["chat", "small"]
+summary = "Tiny model for testing, embedded use and very low-memory devices. Expect simple answers."
+notes = "Vision-language model; LLMario uses its text abilities."
+gguf = ["ggml-org/Qwen3.5-0.8B-GGUF", "unsloth/Qwen3.5-0.8B-GGUF"]
+mlx = ["mlx-community/Qwen3.5-0.8B-4bit"]
+
+[[family]]
+id = "qwen3-coder-30b-a3b"
+name = "Qwen3 Coder 30B-A3B"
+publisher = "Alibaba Qwen"
+released = "2025-07"
+params = "30B (3B active)"
+tasks = ["coding", "agents"]
+summary = "Coding specialist: writes, explains and edits code and works well with coding agents. Fast thanks to 3B active parameters."
+gguf = ["unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF"]
+mlx = ["mlx-community/Qwen3-Coder-30B-A3B-Instruct-4bit"]
+
+[[family]]
+id = "qwen3-8b"
+name = "Qwen3 8B"
+publisher = "Alibaba Qwen"
+released = "2025-04"
+params = "8B"
+tasks = ["chat", "reasoning", "coding", "multilingual"]
+summary = "Well-tested 2025 all-rounder with switchable thinking mode; widely supported by every engine."
+gguf = ["Qwen/Qwen3-8B-GGUF"]
+mlx = ["mlx-community/Qwen3-8B-4bit"]
+keep_ids = true
+
+[[family]]
+id = "qwen3-1.7b"
+name = "Qwen3 1.7B"
+publisher = "Alibaba Qwen"
+released = "2025-04"
+params = "1.7B"
+tasks = ["chat", "reasoning", "small"]
+summary = "Small, fast and reliable; good first model and the one LLMario is benchmarked with."
+gguf = ["unsloth/Qwen3-1.7B-GGUF"]
+mlx = ["mlx-community/Qwen3-1.7B-4bit"]
+keep_ids = true
+
+[[family]]
+id = "gemma-4-31b"
+name = "Gemma 4 31B"
+publisher = "Google DeepMind"
+released = "2026-07"
+params = "31B"
+tasks = ["chat", "reasoning", "coding", "multilingual", "long-context"]
+summary = "Google's largest Gemma 4: high-quality writing, reasoning and code, 140+ languages, up to 256K context."
+notes = "Multimodal model; LLMario uses its text abilities."
+gguf = ["google/gemma-4-31B-it-qat-q4_0-gguf", "unsloth/gemma-4-31B-it-GGUF"]
+mlx = ["mlx-community/gemma-4-31B-it-4bit", "mlx-community/gemma-4-31b-it-4bit"]
+
+[[family]]
+id = "gemma-4-26b-a4b"
+name = "Gemma 4 26B-A4B"
+publisher = "Google DeepMind"
+released = "2026-07"
+params = "26B (4B active)"
+tasks = ["chat", "reasoning", "coding", "multilingual", "long-context"]
+summary = "Mixture-of-experts Gemma 4: near-31B quality at the speed of a 4B model. 256K context."
+notes = "Multimodal model; LLMario uses its text abilities."
+gguf = ["ggml-org/gemma-4-26B-A4B-it-GGUF", "google/gemma-4-26B-A4B-it-qat-q4_0-gguf"]
+mlx = ["mlx-community/gemma-4-26B-A4B-it-4bit", "mlx-community/gemma-4-26b-a4b-it-4bit"]
+
+[[family]]
+id = "gemma-4-12b"
+name = "Gemma 4 12B"
+publisher = "Google DeepMind"
+released = "2026-07"
+params = "12B"
+tasks = ["chat", "reasoning", "multilingual", "long-context"]
+summary = "Balanced Gemma 4 for mid-range machines: good writing and multilingual chat, 256K context."
+notes = "Multimodal model; LLMario uses its text abilities."
+gguf = ["google/gemma-4-12B-it-qat-q4_0-gguf", "unsloth/gemma-4-12b-it-GGUF"]
+mlx = ["mlx-community/gemma-4-12B-it-4bit", "mlx-community/gemma-4-12b-it-4bit"]
+
+[[family]]
+id = "gemma-4-e4b"
+name = "Gemma 4 E4B"
+publisher = "Google DeepMind"
+released = "2026-07"
+params = "4B effective"
+tasks = ["chat", "multilingual", "small"]
+summary = "On-device Gemma 4 designed for laptops and phones: capable chat in little memory."
+notes = "Multimodal model; LLMario uses its text abilities."
+gguf = ["ggml-org/gemma-4-E4B-it-GGUF", "google/gemma-4-E4B-it-qat-q4_0-gguf"]
+mlx = ["mlx-community/gemma-4-E4B-it-4bit", "mlx-community/gemma-4-e4b-it-4bit"]
+
+[[family]]
+id = "gemma-4-e2b"
+name = "Gemma 4 E2B"
+publisher = "Google DeepMind"
+released = "2026-07"
+params = "2B effective"
+tasks = ["chat", "small"]
+summary = "Smallest Gemma 4, for quick replies on low-memory machines."
+notes = "Multimodal model; LLMario uses its text abilities."
+gguf = ["ggml-org/gemma-4-E2B-it-GGUF", "google/gemma-4-E2B-it-qat-q4_0-gguf"]
+mlx = ["mlx-community/gemma-4-E2B-it-4bit", "mlx-community/gemma-4-e2b-it-4bit"]
+
+[[family]]
+id = "gpt-oss-20b"
+name = "gpt-oss 20B"
+publisher = "OpenAI"
+released = "2025-08"
+params = "21B (3.6B active)"
+tasks = ["chat", "reasoning", "coding", "agents"]
+summary = "OpenAI's open-weight reasoning model: strong at math, code and tool use, adjustable reasoning effort."
+gguf = ["ggml-org/gpt-oss-20b-GGUF"]
+mlx = ["mlx-community/gpt-oss-20b-MXFP4-Q8"]
+
+[[family]]
+id = "gpt-oss-120b"
+name = "gpt-oss 120B"
+publisher = "OpenAI"
+released = "2025-08"
+params = "117B (5.1B active)"
+tasks = ["chat", "reasoning", "coding", "agents"]
+summary = "The larger gpt-oss: near-frontier reasoning for high-memory workstations."
+gguf = ["ggml-org/gpt-oss-120b-GGUF"]
+mlx = ["mlx-community/gpt-oss-120b-MXFP4-Q8"]
+
+[[family]]
+id = "glm-4.7-flash"
+name = "GLM-4.7 Flash"
+publisher = "Z.ai (Zhipu)"
+released = "2026-01"
+params = "30B (3B active)"
+tasks = ["chat", "reasoning", "coding", "agents"]
+summary = "Fast mixture-of-experts model that leads the 30B class on math and science reasoning; MIT licensed."
+gguf = ["unsloth/GLM-4.7-Flash-GGUF", "ggml-org/GLM-4.7-Flash-GGUF"]
+mlx = ["mlx-community/GLM-4.7-Flash-4bit"]
+
+[[family]]
+id = "nemotron-3.5-lightning-30b-a3b"
+name = "Nemotron 3.5 Lightning 30B-A3B"
+publisher = "NVIDIA"
+released = "2026-09"
+params = "30B (3B active)"
+tasks = ["chat", "reasoning", "agents", "long-context"]
+summary = "Hybrid Mamba-2 + attention mixture-of-experts built for speed and very long context (up to 1M tokens)."
+notes = "OpenMDW-1.1 license."
+gguf = ["ggml-org/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-GGUF"]
+mlx = ["mlx-community/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit"]
+
+[[family]]
+id = "ministral-3-14b"
+name = "Ministral 3 14B"
+publisher = "Mistral AI"
+released = "2025-12"
+params = "14B"
+tasks = ["chat", "multilingual", "agents"]
+summary = "Mistral's edge model: close to Mistral Small quality in 14B, good at instructions and European languages."
+notes = "Includes a small vision encoder; LLMario uses text."
+gguf = ["mistralai/Ministral-3-14B-Instruct-2512-GGUF", "unsloth/Ministral-3-14B-Instruct-2512-GGUF", "bartowski/mistralai_Ministral-3-14B-Instruct-2512-GGUF"]
+mlx = ["mlx-community/Ministral-3-14B-Instruct-2512-4bit"]
+
+[[family]]
+id = "devstral-small-2-24b"
+name = "Devstral Small 2 24B"
+publisher = "Mistral AI"
+released = "2025-12"
+params = "24B"
+tasks = ["coding", "agents"]
+summary = "Agentic coding model: explores codebases, edits multiple files and powers software-engineering agents."
+gguf = ["unsloth/Devstral-Small-2-24B-Instruct-2512-GGUF", "mistralai/Devstral-Small-2-24B-Instruct-2512-GGUF", "bartowski/mistralai_Devstral-Small-2-24B-Instruct-2512-GGUF"]
+mlx = ["mlx-community/Devstral-Small-2-24B-Instruct-2512-4bit"]
+
+[[family]]
+id = "mistral-small-3.2-24b"
+name = "Mistral Small 3.2 24B"
+publisher = "Mistral AI"
+released = "2025-06"
+params = "24B"
+tasks = ["chat", "multilingual", "agents"]
+summary = "Reliable general assistant with strong instruction following and function calling; Apache-2.0."
+gguf = ["unsloth/Mistral-Small-3.2-24B-Instruct-2506-GGUF", "bartowski/mistralai_Mistral-Small-3.2-24B-Instruct-2506-GGUF"]
+mlx = ["mlx-community/Mistral-Small-3.2-24B-Instruct-2506-4bit"]
+
+[[family]]
+id = "phi-4"
+name = "Phi-4 14B"
+publisher = "Microsoft"
+released = "2024-12"
+params = "14B"
+tasks = ["chat", "reasoning", "coding"]
+summary = "Trained heavily on high-quality synthetic data; excellent at math and logic for its size. MIT licensed."
+gguf = ["microsoft/phi-4-gguf", "bartowski/phi-4-GGUF", "unsloth/phi-4-GGUF"]
+mlx = ["mlx-community/phi-4-4bit"]
+
+[[family]]
+id = "phi-4-mini"
+name = "Phi-4 mini 3.8B"
+publisher = "Microsoft"
+released = "2025-02"
+params = "3.8B"
+tasks = ["chat", "reasoning", "small"]
+summary = "Small Phi with good reasoning and a 128K context; MIT licensed."
+gguf = ["bartowski/microsoft_Phi-4-mini-instruct-GGUF", "unsloth/Phi-4-mini-instruct-GGUF"]
+mlx = ["mlx-community/Phi-4-mini-instruct-4bit"]
+
+[[family]]
+id = "llama3.1-8b"
+name = "Llama 3.1 8B"
+publisher = "Meta"
+released = "2024-07"
+params = "8B"
+tasks = ["chat", "multilingual"]
+summary = "Meta's widely used 8B assistant with 128K context; huge ecosystem of fine-tunes and tools."
+notes = "Llama 3.1 Community License."
+gguf = ["bartowski/Meta-Llama-3.1-8B-Instruct-GGUF"]
+mlx = ["mlx-community/Llama-3.1-8B-Instruct-4bit", "mlx-community/Meta-Llama-3.1-8B-Instruct-4bit"]
+
+[[family]]
+id = "llama3.2-3b"
+name = "Llama 3.2 3B"
+publisher = "Meta"
+released = "2024-09"
+params = "3B"
+tasks = ["chat", "small"]
+summary = "Small Llama for summaries, rewriting and simple assistants on modest hardware."
+notes = "Llama 3.2 Community License."
+gguf = ["bartowski/Llama-3.2-3B-Instruct-GGUF"]
+mlx = ["mlx-community/Llama-3.2-3B-Instruct-4bit"]
+keep_ids = true
+
+[[family]]
+id = "llama3.2-1b"
+name = "Llama 3.2 1B"
+publisher = "Meta"
+released = "2024-09"
+params = "1B"
+tasks = ["chat", "small"]
+summary = "Tiny Llama for very fast, simple tasks."
+notes = "Llama 3.2 Community License."
+gguf = ["bartowski/Llama-3.2-1B-Instruct-GGUF"]
+mlx = ["mlx-community/Llama-3.2-1B-Instruct-4bit"]
+
+[[family]]
+id = "granite-4.2-8b"
+name = "Granite 4.2 8B"
+publisher = "IBM"
+released = "2026-09"
+params = "8B"
+tasks = ["chat", "agents", "multilingual"]
+summary = "IBM's enterprise-oriented model: dependable instruction following, tool use and RAG; Apache-2.0."
+gguf = ["ibm-granite/granite-4.2-8b-GGUF"]
+mlx = ["mlx-community/granite-4.2-8b-4bit"]
+
+[[family]]
+id = "granite-4.2-3b"
+name = "Granite 4.2 3B"
+publisher = "IBM"
+released = "2026-09"
+params = "3B"
+tasks = ["chat", "agents", "small"]
+summary = "Small Granite for tool calling and structured tasks on modest hardware; Apache-2.0."
+gguf = ["ibm-granite/granite-4.2-3b-GGUF"]
+mlx = ["mlx-community/granite-4.2-3b-4bit"]
+
+[[family]]
+id = "lfm2.5-8b-a1b"
+name = "LFM2.5 8B-A1B"
+publisher = "Liquid AI"
+released = "2026-08"
+params = "8B (1B active)"
+tasks = ["chat", "agents", "small"]
+summary = "Hybrid on-device mixture-of-experts: very fast on laptops CPUs and GPUs, tuned for agent workflows."
+notes = "LFM Open License v1.0."
+gguf = ["LiquidAI/LFM2.5-8B-A1B-GGUF"]
+mlx = ["mlx-community/LFM2.5-8B-A1B-4bit"]
+
+[[family]]
+id = "lfm2.5-2.6b"
+name = "LFM2.5 2.6B"
+publisher = "Liquid AI"
+released = "2026-08"
+params = "2.6B"
+tasks = ["chat", "agents", "multilingual", "small"]
+summary = "On-device model competitive with much larger ones on tool use and instruction following; 128K context."
+notes = "LFM Open License v1.0."
+gguf = ["LiquidAI/LFM2.5-2.6B-GGUF"]
+mlx = ["mlx-community/LFM2.5-2.6B-4bit"]
+
+[[family]]
+id = "lfm2.5-1.2b"
+name = "LFM2.5 1.2B"
+publisher = "Liquid AI"
+released = "2026-08"
+params = "1.2B"
+tasks = ["chat", "small"]
+summary = "Very small hybrid model for fast on-device replies."
+notes = "LFM Open License v1.0."
+gguf = ["LiquidAI/LFM2.5-1.2B-Instruct-GGUF"]
+mlx = ["mlx-community/LFM2.5-1.2B-Instruct-4bit"]
+
+[[family]]
+id = "ornith-1.5-9b"
+name = "Ornith 1.5 9B"
+publisher = "Ornith AI"
+released = "2026-08"
+params = "9B"
+tasks = ["chat", "reasoning", "coding", "agents"]
+summary = "Self-improving model built on Qwen3.5/Gemma 4 foundations with heavy reinforcement learning; strong reasoning for 9B. MIT."
+gguf = ["ornith-ai/Ornith-1.5-9B-GGUF"]
+
+[[family]]
+id = "ornith-1.5-35b-a3b"
+name = "Ornith 1.5 35B-A3B"
+publisher = "Ornith AI"
+released = "2026-08"
+params = "35B (3B active)"
+tasks = ["chat", "reasoning", "coding", "agents"]
+summary = "Larger mixture-of-experts Ornith: stronger reasoning and agent performance with 3B active parameters. MIT."
+gguf = ["ornith-ai/Ornith-1.5-35B-A3B-GGUF"]
+
+[[family]]
+id = "olmo-3-7b"
+name = "Olmo 3 7B Instruct"
+publisher = "Allen Institute for AI"
+released = "2025-11"
+params = "7B"
+tasks = ["chat", "reasoning"]
+summary = "Fully open model: weights, training data, code and logs are all public. Good for research and transparency."
+gguf = ["bartowski/allenai_Olmo-3-7B-Instruct-GGUF", "unsloth/Olmo-3-7B-Instruct-GGUF", "allenai/Olmo-3-7B-Instruct-GGUF"]
+mlx = ["mlx-community/Olmo-3-7B-Instruct-4bit"]
+
+[[family]]
+id = "smollm3-3b"
+name = "SmolLM3 3B"
+publisher = "Hugging Face"
+released = "2025-07"
+params = "3B"
+tasks = ["chat", "reasoning", "multilingual", "small"]
+summary = "Fully open small model with switchable reasoning and long context; punches above its size."
+gguf = ["ggml-org/SmolLM3-3B-GGUF", "unsloth/SmolLM3-3B-GGUF"]
+mlx = ["mlx-community/SmolLM3-3B-4bit"]

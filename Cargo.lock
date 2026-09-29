@@ -2055,6 +2055,7 @@ dependencies = [
  "llmario-hardware",
  "llmario-registry",
  "llmario-supervisor",
+ "serde_json",
 ]
 
 [[package]]
@@ -2186,6 +2187,7 @@ dependencies = [
  "llmario-adapter-mock",
  "llmario-core",
  "llmario-hardware",
+ "llmario-registry",
  "llmario-supervisor",
  "reqwest 0.12.28",
  "serde",

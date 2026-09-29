@@ -172,14 +172,16 @@ function renderWelcome() {
     w.append(el("h1", null, "Download a model to start"));
     w.append(el("p", null, "Models run entirely on this computer. Pick one sized for your machine, or drag your own .gguf file or MLX model folder onto this window."));
     const picks = state.catalog
-      .filter((c) => c.recommended && !c.installed)
+      .filter((c) => c.recommended && !c.installed && c.tasks.includes("chat"))
       .sort((a, b) => (a.approxBytes || 0) - (b.approxBytes || 0))
-      .slice(0, 2);
-    const rows = el("div", "rows");
-    for (const c of picks) rows.append(catalogRow(c));
-    if (!picks.length) rows.append(el("p", "muted", "Open Models to see what can run here."));
+      .slice(0, 3);
     const s = el("div", "starter");
-    s.append(rows);
+    for (const c of picks) s.append(variantRow(c, { compact: true }));
+    if (!picks.length) s.append(el("p", "muted", "Open Models to see what can run here."));
+    const more = el("button", "btn small ghost", `Browse all ${new Set(state.catalog.map((c) => c.family)).size} model families →`);
+    more.type = "button";
+    more.addEventListener("click", () => openModels("library"));
+    s.append(more);
     w.append(s);
     return w;
   }
@@ -416,56 +418,202 @@ async function removeModel(id) {
   }
 }
 
-function catalogRow(c) {
-  const row = el("div", "row");
+// ---------- model library ----------
+const TASK_LABELS = {
+  chat: "Chat",
+  reasoning: "Reasoning",
+  coding: "Coding",
+  agents: "Agents",
+  multilingual: "Multilingual",
+  "long-context": "Long context",
+  small: "Small & fast",
+};
+const lib = { query: "", task: null, fits: false, works: false };
+const usable = (c) => c.backendAvailable && c.supported !== false;
+const fmtCtx = (n) => (n % 1024 === 0 ? `${n >= 1048576 ? n / 1048576 + "M" : n / 1024 + "K"}` : `${Math.round(n / 1000)}K`);
+const pullPct = (p) => (p.totalBytes ? Math.min(100, (100 * p.doneBytes) / p.totalBytes) : 0);
+
+function variantRow(c, { compact = false } = {}) {
+  const row = el("div", `variant${compact ? " compact" : ""}`);
   row.dataset.catalog = c.id;
-  const info = el("div", "info");
-  const name = el("div", "name", c.id);
-  name.append(el("span", "badge accent", BACKEND[c.backend]));
-  if (c.recommended) name.append(el("span", "badge ok", "recommended for this computer"));
-  info.append(name);
-  info.append(el("div", "meta", [c.description, c.approxBytes ? fmtDisk(c.approxBytes) : null, c.license].filter(Boolean).join(" · ")));
-  const pull = state.pulls[c.id];
-  if (pull) {
-    const bar = el("div", "progress");
-    const fill = el("div");
-    fill.style.width = `${pull.totalBytes ? Math.min(100, (100 * pull.doneBytes) / pull.totalBytes) : 0}%`;
-    bar.append(fill);
-    info.append(bar);
-    info.append(el("div", "meta", `${fmtDisk(pull.doneBytes)} of ${fmtDisk(pull.totalBytes || c.approxBytes || 0)}${pull.reused ? " (from local cache)" : ""}`));
+  const main = el("div", "variant-main");
+  const line = el("div", "variant-line");
+  line.append(el("span", "badge accent", BACKEND[c.backend]));
+  if (c.recommended) line.append(el("span", "badge ok", "recommended"));
+  if (compact) line.append(el("strong", null, c.name));
+  const bits = [
+    c.quantization,
+    c.approxBytes ? `${fmtDisk(c.approxBytes)} download` : null,
+    c.contextMax ? `${fmtCtx(c.contextMax)} context` : null,
+  ];
+  line.append(el("span", null, bits.filter(Boolean).join(" · ")));
+  line.append(
+    el(
+      "span",
+      c.fits ? "fit-ok" : "fit-bad",
+      c.fits
+        ? `needs ~${fmtMem(c.needsBytes)} · fits`
+        : `needs ~${fmtMem(c.needsBytes)} · too large (${fmtMem(c.budgetBytes)} available)`
+    )
+  );
+  if (!c.backendAvailable) line.append(el("span", "badge bad", `${BACKEND[c.backend]} not installed`));
+  else if (c.supported === false) {
+    const b = el("span", "badge bad", "needs a newer engine");
+    b.title = `Architecture "${c.architecture}" is not supported by your ${BACKEND[c.backend]} (${c.engineVersion || "unknown version"}).`;
+    line.append(b);
+  }
+  if (c.gated) line.append(el("span", "badge", "requires accepting terms on Hugging Face"));
+  main.append(line);
+  if (!compact) {
+    const name = c.files.length
+      ? `${c.repo} / ${c.files[0]}${c.files.length > 1 ? ` (+${c.files.length - 1} more parts)` : ""}`
+      : `${c.repo} (MLX model folder)`;
+    const exact = el("div", "exact", name);
+    exact.title = `Pinned to commit ${c.revision}`;
+    const copy = el("button", "linkish", "copy");
+    copy.type = "button";
+    copy.title = "Copy the exact Hugging Face name";
+    copy.addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(c.files.length ? `${c.repo}/${c.files[0]}` : c.repo);
+        copy.textContent = "copied";
+        setTimeout(() => (copy.textContent = "copy"), 1500);
+      } catch {
+        toast("Copy failed", "Clipboard access was denied.", true);
+      }
+    });
+    exact.append(" ", copy);
+    main.append(exact);
   }
   const actions = el("div", "actions");
   const btn = el("button", "btn small primary", "Download");
   btn.type = "button";
+  const pull = state.pulls[c.id];
   if (c.installed) {
-    btn.textContent = "Installed";
     btn.className = "btn small";
-    btn.disabled = true;
+    btn.textContent = state.model === c.id ? "In use" : "Use";
+    btn.disabled = state.model === c.id || !c.fits || !usable(c);
+    btn.addEventListener("click", () => {
+      closeOverlays();
+      selectModel(c.id);
+    });
   } else if (!c.backendAvailable) {
-    btn.textContent = `Needs ${BACKEND[c.backend]}`;
     btn.className = "btn small";
+    btn.textContent = "Engine missing";
+    btn.disabled = true;
+  } else if (c.supported === false) {
+    btn.className = "btn small";
+    btn.textContent = "Not supported";
     btn.disabled = true;
   } else if (pull) {
     btn.textContent = "Downloading…";
     btn.disabled = true;
+  } else if (!c.fits) {
+    // Estimates are conservative, so allow it, but never as a single accidental click.
+    btn.className = "btn small";
+    btn.textContent = "Download anyway";
+    btn.title = `Needs ~${fmtMem(c.needsBytes)}; ${fmtMem(c.budgetBytes)} is available. It will probably not load with the current settings.`;
+    btn.addEventListener("click", () => confirmThen(btn, () => pullModel(c)));
+  } else {
+    btn.addEventListener("click", () => pullModel(c));
   }
-  btn.addEventListener("click", () => pullModel(c));
   actions.append(btn);
-  row.append(info, actions);
+  row.append(main, actions);
+  if (pull) {
+    const bar = el("div", "progress");
+    const fill = el("div");
+    fill.style.width = `${pullPct(pull)}%`;
+    bar.append(fill);
+    const text = `${fmtDisk(pull.doneBytes)} of ${fmtDisk(pull.totalBytes || c.approxBytes || 0)}${pull.reused ? " (from local cache)" : ""}`;
+    row.append(bar, el("div", "progress-text", text));
+  }
   return row;
+}
+
+function familyVariants(variants) {
+  const q = lib.query.trim().toLowerCase();
+  const v0 = variants[0];
+  if (q) {
+    const hay = [
+      v0.name, v0.family, v0.publisher, v0.description, v0.params, v0.released,
+      ...v0.tasks.map((t) => TASK_LABELS[t] || t),
+      ...variants.flatMap((v) => [v.id, v.repo, BACKEND[v.backend], v.architecture]),
+    ].join(" ").toLowerCase();
+    if (!q.split(/\s+/).every((w) => hay.includes(w))) return null;
+  }
+  if (lib.task && !v0.tasks.includes(lib.task)) return null;
+  let vs = variants;
+  if (lib.fits) vs = vs.filter((v) => v.fits);
+  if (lib.works) vs = vs.filter(usable);
+  return vs.length ? vs : null;
 }
 
 function renderCatalog() {
   const list = $("#catalog-list");
+  if (!list) return;
   list.replaceChildren();
-  for (const c of state.catalog) list.append(catalogRow(c));
+  const fams = new Map();
+  for (const c of state.catalog) {
+    if (!fams.has(c.family)) fams.set(c.family, []);
+    fams.get(c.family).push(c);
+  }
+  let shown = 0;
+  for (const variants of fams.values()) {
+    const vs = familyVariants(variants);
+    if (!vs) continue;
+    shown++;
+    const v0 = variants[0];
+    const card = el("article", "family");
+    const head = el("div", "family-head");
+    head.append(el("h4", null, v0.name));
+    head.append(
+      el("span", "family-meta", [v0.publisher, v0.released, v0.params ? `${v0.params} parameters` : null, v0.license].filter(Boolean).join(" · "))
+    );
+    card.append(head, el("p", "family-desc", v0.description));
+    if (v0.notes) card.append(el("p", "family-notes", v0.notes));
+    const tags = el("div", "tags");
+    for (const t of v0.tasks) tags.append(el("span", "tag", TASK_LABELS[t] || t));
+    card.append(tags);
+    for (const v of [...vs].sort((a, b) => b.recommended - a.recommended)) card.append(variantRow(v));
+    list.append(card);
+  }
+  $("#lib-count").textContent = `Showing ${shown} of ${fams.size} model families · ${state.catalog.length} downloads, each verified on Hugging Face and pinned to an exact version.`;
+  if (!shown) list.append(el("div", "empty-lib", "No models match. Try another search or filter."));
+}
+
+function renderTaskChips() {
+  const box = $("#lib-tasks");
+  box.replaceChildren();
+  for (const [key, label] of [[null, "All"], ...Object.entries(TASK_LABELS)]) {
+    const b = el("button", `chip-btn${lib.task === key ? " active" : ""}`, label);
+    b.type = "button";
+    b.addEventListener("click", () => {
+      lib.task = key;
+      renderTaskChips();
+      renderCatalog();
+    });
+    box.append(b);
+  }
+}
+
+// Re-render just the rows of one model (download progress) instead of the whole library.
+function refreshVariantRows(id) {
+  const c = state.catalog.find((x) => x.id === id);
+  if (!c) return;
+  document.querySelectorAll(".variant").forEach((r) => {
+    if (r.dataset.catalog === id) r.replaceWith(variantRow(c, { compact: r.classList.contains("compact") }));
+  });
+}
+
+function showTab(name) {
+  document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t.dataset.tab === name));
+  document.querySelectorAll(".tab-panel").forEach((p) => (p.hidden = p.id !== `tab-${name}`));
 }
 
 async function pullModel(c) {
   if (state.pulls[c.id]) return;
   state.pulls[c.id] = { doneBytes: 0, totalBytes: c.approxBytes || 0 };
-  renderCatalog();
-  if (!currentChat()?.messages.length) renderTranscript();
+  refreshVariantRows(c.id);
   const ch = new Channel();
   let frame = null;
   ch.onmessage = (p) => {
@@ -473,13 +621,12 @@ async function pullModel(c) {
     if (frame) return;
     frame = requestAnimationFrame(() => {
       frame = null;
-      renderCatalog();
-      if (!currentChat()?.messages.length) renderTranscript();
+      refreshVariantRows(c.id);
     });
   };
   try {
     const m = await invoke("pull_model", { id: c.id, onProgress: ch });
-    toast("Download complete", `${m.id} is ready to use.`);
+    toast("Download complete", `${c.name} (${m.id}) is ready to use.`);
     delete state.pulls[c.id];
     await Promise.all([refreshCatalog(), refreshModels()]);
     if (!state.model || state.model === m.id) {
@@ -489,8 +636,8 @@ async function pullModel(c) {
     }
   } catch (e) {
     delete state.pulls[c.id];
-    renderCatalog();
-    toast(`Could not download ${c.id}`, errMsg(e), true, 10000);
+    refreshVariantRows(c.id);
+    toast(`Could not download ${c.name}`, errMsg(e), true, 10000);
   }
   if (!currentChat()?.messages.length) renderTranscript();
 }
@@ -602,10 +749,13 @@ async function stop() {
 }
 
 // ---------- overlays & settings ----------
-function openModels() {
+function openModels(tab = "library") {
   renderInstalled();
+  renderTaskChips();
   renderCatalog();
+  showTab(tab);
   $("#models-panel").hidden = false;
+  if (tab === "library") $("#lib-search").focus();
 }
 function openSettings() {
   const f = $("#settings-form");
@@ -675,7 +825,20 @@ function autoGrow() {
 // ---------- wiring ----------
 function wire() {
   $("#new-chat").addEventListener("click", newChat);
-  $("#open-models").addEventListener("click", openModels);
+  $("#open-models").addEventListener("click", () => openModels("library"));
+  document.querySelectorAll(".tab").forEach((t) => t.addEventListener("click", () => showTab(t.dataset.tab)));
+  $("#lib-search").addEventListener("input", (e) => {
+    lib.query = e.target.value;
+    renderCatalog();
+  });
+  $("#lib-fits").addEventListener("change", (e) => {
+    lib.fits = e.target.checked;
+    renderCatalog();
+  });
+  $("#lib-works").addEventListener("change", (e) => {
+    lib.works = e.target.checked;
+    renderCatalog();
+  });
   $("#open-settings").addEventListener("click", openSettings);
   document.querySelectorAll(".overlay").forEach((o) =>
     o.addEventListener("click", (e) => {

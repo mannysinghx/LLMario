@@ -63,20 +63,37 @@
     </div>
 
     <div id="models-panel" class="overlay" hidden>
-      <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="models-title">
+      <div class="sheet wide" role="dialog" aria-modal="true" aria-labelledby="models-title">
         <header class="sheet-head">
           <h2 id="models-title">Models</h2>
+          <div class="tabs" role="tablist">
+            <button class="tab active" type="button" role="tab" data-tab="library">Library</button>
+            <button class="tab" type="button" role="tab" data-tab="installed">On this computer</button>
+            <button class="tab" type="button" role="tab" data-tab="engines">Engines</button>
+          </div>
           <button class="icon-btn close" type="button" aria-label="Close">✕</button>
         </header>
         <div class="sheet-body">
-          <h3>On this computer</h3>
-          <p class="muted small">Have your own model? Drag a <code>.gguf</code> file or an MLX model folder onto this window. It is added in place, never copied, and removing it never deletes your files.</p>
-          <div id="installed-list" class="rows"></div>
-          <h3>Download</h3>
-          <p class="muted small">Files are verified against Hugging Face checksums. Models already in your Hugging Face cache are reused instead of downloaded.</p>
-          <div id="catalog-list" class="rows"></div>
-          <h3>Engines</h3>
-          <div id="backend-list" class="rows"></div>
+          <section id="tab-library" class="tab-panel">
+            <div class="lib-tools">
+              <input id="lib-search" type="search" placeholder="Search by name, publisher, task or Hugging Face repo…" autocomplete="off" />
+              <div id="lib-tasks" class="chips" role="group" aria-label="Filter by task"></div>
+              <div class="lib-toggles">
+                <label class="check"><input type="checkbox" id="lib-fits" /> Fits this computer</label>
+                <label class="check"><input type="checkbox" id="lib-works" /> Runs on my engines</label>
+              </div>
+            </div>
+            <p id="lib-count" class="muted small"></p>
+            <div id="catalog-list" class="families"></div>
+          </section>
+          <section id="tab-installed" class="tab-panel" hidden>
+            <p class="muted small">Have your own model? Drag a <code>.gguf</code> file or an MLX model folder onto this window. It is added in place, never copied, and removing it never deletes your files.</p>
+            <div id="installed-list" class="rows"></div>
+          </section>
+          <section id="tab-engines" class="tab-panel" hidden>
+            <p class="muted small">Engines run the models. Install llama.cpp (<code>brew install llama.cpp</code>) for GGUF models, and MLX-LM (<code>pip install mlx-lm</code>) for MLX models on Apple Silicon. A model marked "needs a newer engine" uses an architecture your installed version cannot load yet.</p>
+            <div id="backend-list" class="rows"></div>
+          </section>
         </div>
       </div>
     </div>

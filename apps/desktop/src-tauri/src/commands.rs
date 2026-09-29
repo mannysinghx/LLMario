@@ -6,6 +6,7 @@ use llmario_core::{BackendKind, ModelFormat, ResolvedProfile};
 use llmario_registry::download::{self, HubClient, ProgressFn, PullOptions, PullProgress};
 use llmario_registry::{Catalog, ModelEntry, Registry};
 use llmario_runtime::chat::{stream_chat, ChatEvent, ChatStats};
+use llmario_runtime::library::CatalogView;
 use llmario_supervisor::planner::{self, Selection};
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -60,22 +61,6 @@ pub struct ModelView {
     needs_bytes: u64,
     budget_bytes: u64,
     loaded: bool,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CatalogView {
-    id: String,
-    family: String,
-    format: ModelFormat,
-    backend: BackendKind,
-    backend_available: bool,
-    /// The variant this machine would pick for the family (MLX on Apple Silicon, else llama.cpp).
-    recommended: bool,
-    license: String,
-    description: String,
-    approx_bytes: Option<u64>,
-    installed: bool,
 }
 
 #[derive(Serialize)]
@@ -187,33 +172,7 @@ pub async fn list_models(state: State<'_, AppState>) -> CmdResult<Vec<ModelView>
 #[tauri::command]
 pub async fn list_catalog(state: State<'_, AppState>) -> CmdResult<Vec<CatalogView>> {
     let rt = state.runtime().await?;
-    let reg = rt.sup.registry();
-    let available = |b: BackendKind| rt.sup.statuses().get(&b).is_some_and(|s| s.available);
-    let cat = Catalog::builtin();
-    Ok(cat
-        .models
-        .iter()
-        .map(|c| {
-            let backend = planner::backend_for(c.format);
-            let preferred = if rt.sup.hw.apple_silicon && available(BackendKind::Mlx) {
-                BackendKind::Mlx
-            } else {
-                BackendKind::LlamaCpp
-            };
-            CatalogView {
-                id: c.id.clone(),
-                family: c.family.clone(),
-                format: c.format,
-                backend,
-                backend_available: available(backend),
-                recommended: backend == preferred && available(backend),
-                license: c.license.clone(),
-                description: c.description.clone(),
-                approx_bytes: c.approx_bytes,
-                installed: reg.get(&c.id).is_some(),
-            }
-        })
-        .collect())
+    Ok(llmario_runtime::library::catalog_views(&rt.sup))
 }
 
 /// Download a catalog model with checksum verification, streaming progress to the UI.

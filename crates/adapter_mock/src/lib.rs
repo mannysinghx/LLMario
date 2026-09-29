@@ -49,6 +49,7 @@ impl EngineAdapter for MockAdapter {
             version: Some(llmario_core::VERSION.into()),
             tested_version: "in-tree".into(),
             detail: "mock engine for tests".into(),
+            architectures: None,
         }
     }
     fn launch(&self, ctx: &LaunchContext<'_>) -> Result<LaunchSpec, RuntimeError> {

@@ -77,6 +77,16 @@ pub fn select(
         let backend = backend_for(m.format);
         match statuses.get(&backend) {
             Some(s) if s.available => {
+                if let Some(arch) = m.architecture.as_deref() {
+                    if s.supports_architecture(arch) == Some(false) {
+                        rejected.push(format!(
+                            "{} uses the '{arch}' architecture, which your {backend} ({}) cannot load; update the engine",
+                            m.id,
+                            s.version.as_deref().unwrap_or("unknown version")
+                        ));
+                        continue;
+                    }
+                }
                 let reason = if exact {
                     format!("{} requested explicitly → {backend}", m.id)
                 } else {
@@ -124,6 +134,7 @@ mod tests {
                 } else {
                     "not installed".into()
                 },
+                architectures: None,
             },
         )
     }
@@ -236,6 +247,46 @@ mod tests {
             .unwrap_err()
             .code(),
             "model_not_found"
+        );
+    }
+
+    #[test]
+    fn unsupported_architecture_is_skipped_or_refused() {
+        let mut h = hw(64, None);
+        h.apple_silicon = true;
+        let (k, mut mlx) = status(BackendKind::Mlx, true);
+        mlx.architectures = Some(std::sync::Arc::new(["qwen3".to_string()].into()));
+        let st: HashMap<_, _> = [(k, mlx), status(BackendKind::LlamaCpp, true)].into();
+        let mut r = reg();
+        for m in r.models.iter_mut() {
+            m.architecture = Some(if m.format == ModelFormat::Mlx {
+                "gemma4_unified".into()
+            } else {
+                "gemma4".into()
+            });
+        }
+        // Family: the MLX variant is skipped (engine cannot load it), llama.cpp is used.
+        assert_eq!(
+            select("q", &r, &st, &h, &Config::default(), ProfileKind::Latency)
+                .unwrap()
+                .model
+                .id,
+            "q-gguf"
+        );
+        // Exact id: refused with the reason, never substituted.
+        let err = select(
+            "q-mlx",
+            &r,
+            &st,
+            &h,
+            &Config::default(),
+            ProfileKind::Latency,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            err.contains("gemma4_unified") && err.contains("update the engine"),
+            "{err}"
         );
     }
 

@@ -1,0 +1,19 @@
+<!doctype html>
+<!-- Browser preview of the desktop UI with a simulated Tauri bridge (not shipped in the app).
+     Serve the apps/desktop directory and open /preview/index.html. See README.md here. -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <base href="../ui/" />
+    <title>LLMario — UI preview</title>
+    <link rel="stylesheet" href="styles.css" />
+    <script src="/preview/mock-tauri.js"></script>
+    <script type="module">
+      const html = await (await fetch("index.html")).text();
+      document.body.innerHTML = new DOMParser().parseFromString(html, "text/html").body.innerHTML;
+      await import("./app.js");
+    </script>
+  </head>
+  <body></body>
+</html>

@@ -39,6 +39,15 @@ pub fn prompt_cache_bytes(model: &ModelEntry, profile: &ResolvedProfile) -> u64 
     profile.prompt_cache_entries as u64 * profile.ctx_per_slot as u64 * per_token
 }
 
+/// Probe: versions on line 1; on line 2, the `model_type`s this mlx-lm can load (its model
+/// modules plus the names it remaps onto them), as JSON.
+const PROBE: &str = "import json, os, mlx_lm, mlx.core as mx\n\
+print(mlx_lm.__version__, mx.__version__)\n\
+d = os.path.join(os.path.dirname(mlx_lm.__file__), 'models')\n\
+mods = {f[:-3] for f in os.listdir(d) if f.endswith('.py') and not f.startswith('_')}\n\
+try:\n    from mlx_lm.utils import MODEL_REMAPPING as r\nexcept Exception:\n    r = {}\n\
+print(json.dumps(sorted(mods | {k for k, v in r.items() if v in mods})))";
+
 /// Launch shim: apply `mx.set_cache_limit` (public MLX API) and then run the stock
 /// `mlx_lm.server` entry point with the remaining arguments. `sys.argv[1]` is the limit.
 const BOOTSTRAP: &str = "import sys, mlx.core as mx; mx.set_cache_limit(int(sys.argv[1])); \
@@ -98,6 +107,7 @@ impl EngineAdapter for MlxAdapter {
             version: None,
             tested_version: self.tested_version().into(),
             detail: String::new(),
+            architectures: None,
         };
         if !hw.apple_silicon {
             st.detail = "MLX requires Apple Silicon macOS".into();
@@ -108,19 +118,20 @@ impl EngineAdapter for MlxAdapter {
             return st;
         };
         st.path = Some(python.clone());
-        let out = Command::new(&python)
-            .args([
-                "-c",
-                "import mlx_lm, mlx.core as mx; print(mlx_lm.__version__, mx.__version__)",
-            ])
-            .output();
+        let out = Command::new(&python).args(["-c", PROBE]).output();
         match out {
             Ok(o) if o.status.success() => {
                 let text = String::from_utf8_lossy(&o.stdout);
-                let mut parts = text.split_whitespace();
+                let mut lines = text.lines();
+                let mut parts = lines.next().unwrap_or("").split_whitespace();
                 let lm = parts.next().unwrap_or("?").to_string();
                 let mx = parts.next().unwrap_or("?").to_string();
                 st.available = true;
+                st.architectures = lines
+                    .next()
+                    .and_then(|l| serde_json::from_str::<Vec<String>>(l).ok())
+                    .filter(|v| !v.is_empty())
+                    .map(|v| std::sync::Arc::new(v.into_iter().collect()));
                 st.version = Some(format!("mlx-lm {lm} / mlx {mx}"));
                 st.detail = if lm == TESTED_MLX_LM {
                     format!("found via {source}")

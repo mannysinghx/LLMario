@@ -2,6 +2,7 @@
 //! engine adapters, supervisor construction, and a streaming chat client with cancellation.
 
 pub mod chat;
+pub mod library;
 
 use llmario_core::{Config, Paths};
 use llmario_hardware::HardwareReport;

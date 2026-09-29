@@ -8,3 +8,4 @@
 *.log
 apps/desktop/src-tauri/gen/
 dist/
+apps/desktop/preview/catalog.json

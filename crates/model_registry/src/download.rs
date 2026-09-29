@@ -453,6 +453,10 @@ async fn fetch_all(
     };
     for sib in files {
         let dest = staging.join(&sib.rfilename);
+        // Some repos keep large models in quantization subfolders (e.g. `Q4_K_M/…-00001-of-00003.gguf`).
+        if let Some(parent) = dest.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
         let size = sib.expected_size().unwrap_or(0);
 
         if opts.use_hf_cache {

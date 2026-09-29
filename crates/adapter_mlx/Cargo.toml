@@ -10,3 +10,4 @@ llmario-core.workspace = true
 llmario-hardware.workspace = true
 llmario-registry.workspace = true
 llmario-supervisor.workspace = true
+serde_json.workspace = true

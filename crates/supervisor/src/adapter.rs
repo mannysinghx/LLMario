@@ -29,6 +29,17 @@ pub struct BackendStatus {
     pub tested_version: String,
     /// Human explanation (why unavailable, or what was found).
     pub detail: String,
+    /// Architecture names this engine build can load (llama.cpp: GGUF `general.architecture`;
+    /// MLX-LM: `model_type`). `None` when they could not be determined.
+    #[serde(skip)]
+    pub architectures: Option<std::sync::Arc<std::collections::HashSet<String>>>,
+}
+
+impl BackendStatus {
+    /// `Some(false)` only when we know the engine cannot load this architecture.
+    pub fn supports_architecture(&self, arch: &str) -> Option<bool> {
+        self.architectures.as_ref().map(|set| set.contains(arch))
+    }
 }
 
 pub struct LaunchContext<'a> {

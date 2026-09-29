@@ -69,6 +69,7 @@ impl EngineAdapter for LlamaCppAdapter {
             version: None,
             tested_version: self.tested_version().into(),
             detail: String::new(),
+            architectures: None,
         };
         let Some(path) = Self::find(cfg) else {
             st.detail = "llama-server not found on PATH (install: `brew install llama.cpp`, or build from github.com/ggml-org/llama.cpp; or set backends.llamacpp.server_path)".into();
@@ -93,6 +94,7 @@ impl EngineAdapter for LlamaCppAdapter {
                             None => "found (build number unknown)".into(),
                         };
                         st.version = Some(v);
+                        st.architectures = architecture_names(&path).map(std::sync::Arc::new);
                     }
                     None => st.detail = "llama-server --version produced no version line".into(),
                 }
@@ -168,9 +170,88 @@ impl EngineAdapter for LlamaCppAdapter {
     }
 }
 
+/// Architecture names compiled into this llama.cpp build. They live in llama.cpp's
+/// architecture table as standalone C strings ("qwen3", "gemma4", "gpt-oss", …), in the
+/// `llama-server` binary (static builds) or its `libllama` shared library (Homebrew).
+/// Returns `None` if the table cannot be found, so callers treat support as unknown.
+pub fn architecture_names(server: &std::path::Path) -> Option<std::collections::HashSet<String>> {
+    let real = std::fs::canonicalize(server).ok()?;
+    let mut files = vec![real.clone()];
+    if let Some(bin) = real.parent() {
+        for dir in [bin.join("../lib"), bin.to_path_buf()] {
+            let Ok(rd) = std::fs::read_dir(&dir) else {
+                continue;
+            };
+            for e in rd.flatten() {
+                let n = e.file_name().to_string_lossy().into_owned();
+                let lib = n.starts_with("libllama.")
+                    || n == "libllama.so"
+                    || n.starts_with("libllama.so.");
+                if lib && (n.contains(".dylib") || n.contains(".so")) {
+                    files.push(e.path());
+                }
+            }
+        }
+    }
+    let mut set = std::collections::HashSet::new();
+    for f in files {
+        if let Ok(bytes) = std::fs::read(&f) {
+            c_strings(&bytes, &mut set);
+        }
+    }
+    // Sanity check: a real architecture table contains these.
+    (set.contains("llama") && set.contains("qwen2")).then_some(set)
+}
+
+/// Collect short NUL-delimited identifier-like strings (`[a-z0-9_.-]{2,32}`).
+fn c_strings(bytes: &[u8], out: &mut std::collections::HashSet<String>) {
+    let ok =
+        |b: u8| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_' || b == b'-' || b == b'.';
+    let mut start = 0usize;
+    for (i, &b) in bytes.iter().enumerate() {
+        if b == 0 {
+            let run = &bytes[start..i];
+            let standalone = start == 0 || bytes[start - 1] == 0;
+            if standalone && (2..=32).contains(&run.len()) && run.iter().all(|&c| ok(c)) {
+                out.insert(String::from_utf8_lossy(run).into_owned());
+            }
+            start = i + 1;
+        } else if !ok(b) {
+            // Breaks the run. The next run is only "standalone" if it starts right after a NUL,
+            // which the check above verifies via `bytes[start - 1]`.
+            start = i + 1;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn extracts_standalone_c_strings() {
+        let mut set = std::collections::HashSet::new();
+        c_strings(
+            b"\0qwen3\0gemma4\0gpt-oss\0Hello World\0x\0nemotron_h_moe\0",
+            &mut set,
+        );
+        for a in ["qwen3", "gemma4", "gpt-oss", "nemotron_h_moe"] {
+            assert!(set.contains(a), "{a}");
+        }
+        assert!(!set.contains("x") && !set.contains("hello"));
+    }
+
+    /// Runs only where llama.cpp is installed (e.g. `brew install llama.cpp`).
+    #[test]
+    fn local_build_lists_known_architectures() {
+        let Some(server) = llmario_supervisor::adapter::which("llama-server") else {
+            return;
+        };
+        let set = architecture_names(&server).expect("architecture table found");
+        for a in ["llama", "qwen2", "qwen3", "gemma3", "phi3"] {
+            assert!(set.contains(a), "{a} missing from {} names", set.len());
+        }
+    }
 
     #[test]
     fn parses_versions() {

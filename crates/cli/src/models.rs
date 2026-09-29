@@ -1,6 +1,6 @@
 use crate::util;
 use clap::Subcommand;
-use llmario_core::{BackendKind, ModelFormat};
+use llmario_core::ModelFormat;
 use llmario_registry::download::{self, HubClient, PullOptions};
 use llmario_registry::{Catalog, Registry};
 use llmario_supervisor::memory::fmt_bytes;
@@ -14,8 +14,14 @@ pub enum ModelCmd {
         #[arg(long)]
         json: bool,
     },
-    /// List models available to pull.
-    Catalog,
+    /// The model library: every downloadable model with what it is for, its size, whether it
+    /// fits this computer and whether your installed engines can run it.
+    Catalog {
+        /// Filter by text (name, publisher, task, repo).
+        filter: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
     /// Download a catalog model (id or family name) with checksum verification.
     Pull {
         name: String,
@@ -87,28 +93,66 @@ pub async fn run(cmd: ModelCmd) -> anyhow::Result<()> {
                 );
             }
         }
-        ModelCmd::Catalog => {
-            let cat = Catalog::builtin();
-            println!(
-                "{:<24} {:<14} {:<5} {:<28} DESCRIPTION",
-                "ID", "FAMILY", "FMT", "LICENSE"
-            );
-            for m in &cat.models {
-                let installed = if reg.get(&m.id).is_some() {
-                    " [installed]"
+        ModelCmd::Catalog { filter, json } => {
+            let (paths, cfg) = util::load_config(&Default::default())?;
+            let sup = util::supervisor(cfg, paths).await?;
+            let mut views = llmario_runtime::library::catalog_views(&sup);
+            if let Some(f) = filter.map(|f| f.to_lowercase()) {
+                views.retain(|v| {
+                    [&v.id, &v.name, &v.repo, &v.description]
+                        .iter()
+                        .any(|s| s.to_lowercase().contains(&f))
+                        || v.publisher
+                            .as_deref()
+                            .unwrap_or("")
+                            .to_lowercase()
+                            .contains(&f)
+                        || v.tasks.iter().any(|t| t.contains(&f))
+                });
+            }
+            if json {
+                println!("{}", serde_json::to_string_pretty(&views)?);
+                return Ok(());
+            }
+            let mut family = String::new();
+            for v in &views {
+                if v.family != family {
+                    family = v.family.clone();
+                    println!(
+                        "\n{} — {} · {} · {} · {}\n  {}",
+                        v.name,
+                        v.publisher.as_deref().unwrap_or("?"),
+                        v.params.as_deref().unwrap_or("?"),
+                        v.license,
+                        v.tasks.join(", "),
+                        v.description
+                    );
+                }
+                let status = if v.installed {
+                    "installed".to_string()
+                } else if !v.backend_available {
+                    format!("{} not installed", v.backend)
+                } else if v.supported == Some(false) {
+                    format!(
+                        "needs newer {} (arch {})",
+                        v.backend,
+                        v.architecture.as_deref().unwrap_or("?")
+                    )
+                } else if !v.fits {
+                    format!("too large (needs ~{})", fmt_bytes(v.needs_bytes))
                 } else {
-                    ""
+                    format!("fits (needs ~{})", fmt_bytes(v.needs_bytes))
                 };
                 println!(
-                    "{:<24} {:<14} {:<5} {:<28} {}{installed}",
-                    m.id,
-                    m.family,
-                    m.format.to_string(),
-                    m.license,
-                    m.description
+                    "  {} {:<40} {:<9} {:>9}  {}",
+                    if v.recommended { "★" } else { " " },
+                    v.id,
+                    v.backend.to_string(),
+                    v.approx_bytes.map(fmt_bytes).unwrap_or_default(),
+                    status
                 );
             }
-            println!("\nPull by id, or by family to get the best variant for this machine: `llmario model pull qwen3-1.7b`");
+            println!("\n★ = recommended for this computer. Pull by id, or by family for the best variant: `llmario model pull qwen3.5-9b`");
         }
         ModelCmd::Pull {
             name,
@@ -125,32 +169,33 @@ pub async fn run(cmd: ModelCmd) -> anyhow::Result<()> {
                             "'{name}' is not in the catalog (see `llmario model catalog`)"
                         );
                     }
-                    // Pick the variant this machine would serve best.
-                    let (_, cfg) = util::load_config(&Default::default())?;
-                    let hw = util::detect_hardware().await;
-                    let statuses: std::collections::HashMap<_, _> = util::adapters(&paths)
-                        .iter()
-                        .map(|a| (a.kind(), a.probe(&hw, &cfg)))
-                        .collect();
-                    let mut ranked: Vec<_> = variants
+                    // Use the library's recommendation: engine installed and able to load the
+                    // architecture, fits in memory, preferred engine for this hardware.
+                    let (paths2, cfg) = util::load_config(&Default::default())?;
+                    let sup = util::supervisor(cfg, paths2).await?;
+                    let views = llmario_runtime::library::catalog_views(&sup);
+                    let pick = views.iter().find(|v| v.family == name && v.recommended);
+                    let Some(pick) = pick else {
+                        let why: Vec<String> = views
+                            .iter()
+                            .filter(|v| v.family == name)
+                            .map(|v| {
+                                let reason = if !v.backend_available {
+                                    format!("{} not installed", v.backend)
+                                } else if v.supported == Some(false) {
+                                    format!("needs a newer {}", v.backend)
+                                } else {
+                                    format!("too large (needs ~{})", fmt_bytes(v.needs_bytes))
+                                };
+                                format!("{}: {reason}", v.id)
+                            })
+                            .collect();
+                        anyhow::bail!("no variant of '{name}' can run here: {}", why.join("; "));
+                    };
+                    let chosen = variants
                         .into_iter()
-                        .filter(|v| {
-                            statuses
-                                .get(&planner::backend_for(v.format))
-                                .is_some_and(|s| s.available)
-                        })
-                        .collect();
-                    ranked.sort_by_key(|v| {
-                        let b = planner::backend_for(v.format);
-                        if cfg.backends.prefer == Some(b) {
-                            0
-                        } else if hw.apple_silicon && b == BackendKind::Mlx {
-                            1
-                        } else {
-                            2
-                        }
-                    });
-                    let chosen = ranked.first().ok_or_else(|| anyhow::anyhow!("no installed backend can run any variant of '{name}'; run `llmario doctor`"))?;
+                        .find(|v| v.id == pick.id)
+                        .expect("view comes from the same catalog");
                     eprintln!(
                         "family '{name}' → {} ({} via {})",
                         chosen.id,
