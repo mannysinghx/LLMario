@@ -23,6 +23,8 @@ loading it, and gives you three ways to use it:
 | ⌨️ **CLI** | `llmario doctor`, `model pull`, `run`, `serve`, `bench`, … | `llmario --help` |
 | 🔌 **Local API** | OpenAI-compatible `/v1/chat/completions` on `127.0.0.1` | `llmario serve` |
 
+🌐 **Website:** [llmario-production-1e80.up.railway.app](https://llmario-production-1e80.up.railway.app): how it works and a 3-step setup guide.
+
 Everything runs on your machine. Prompts and replies are never sent anywhere, and they never appear in logs.
 
 **Status:** Phase 1 MVP, validated end to end on an Apple M4 Max (64 GB) with both MLX-LM and
@@ -103,6 +105,15 @@ app, so it needs no separate server and no Ollama.
 |---|---|---|---|
 | llama.cpp | GGUF models; Mac, Linux, CPU, NVIDIA | `brew install llama.cpp` or build [ggml-org/llama.cpp](https://github.com/ggml-org/llama.cpp) | build 11146 (7fe450e19) |
 | MLX-LM | MLX models; Apple Silicon only (usually fastest there) | `./scripts/setup-mlx-venv.sh` (pinned venv) or `pip install mlx-lm` | mlx-lm 0.31.3, mlx 0.32.2 |
+
+### One-command install (macOS)
+
+```bash
+git clone https://github.com/mannysinghx/LLMario.git && cd LLMario && ./scripts/install-macos.sh
+```
+
+This checks prerequisites, then installs the `llmario` command and `LLMario.app` (`--cli-only` and
+`--check` are available). Or build the pieces yourself:
 
 ### Build the CLI
 
@@ -418,7 +429,8 @@ apps/desktop/
   preview         browser preview of the UI with a simulated backend (not shipped)
 benchmarks/       suites and published results (no model weights)
 docs/             ADR, threat model, API, benchmark plan, milestones, support matrix
-scripts/          catalog builder, release, MLX venv setup, benchmark tables, icon generator
+scripts/          installer, catalog builder, release, MLX venv setup, benchmark tables, icon
+website/          public single-page site (static, Caddy on Railway)
 ```
 
 ```bash
