@@ -23,7 +23,7 @@ loading it, and gives you three ways to use it:
 | ⌨️ **CLI** | `llmario doctor`, `model pull`, `run`, `serve`, `bench`, … | `llmario --help` |
 | 🔌 **Local API** | OpenAI-compatible `/v1/chat/completions` on `127.0.0.1` | `llmario serve` |
 
-🌐 **Website:** [llmario-production-1e80.up.railway.app](https://llmario-production-1e80.up.railway.app): how it works and a 3-step setup guide.
+🌐 **Website:** [llmario.com](https://llmario.com): how it works and a 3-step setup guide.
 
 Everything runs on your machine. Prompts and replies are never sent anywhere, and they never appear in logs.
 
