@@ -89,8 +89,10 @@ async fn overview_of(rt: &Runtime) -> Overview {
         gpu: gpu.map(|g| g.name.clone()),
         gpu_memory_bytes: gpu.and_then(|g| g.memory_total_bytes),
         unified_memory: hw.unified_memory,
+        // MLX runs only on Apple Silicon Macs; elsewhere it would always show as "not found".
         backends: [BackendKind::LlamaCpp, BackendKind::Mlx]
             .iter()
+            .filter(|k| cfg!(target_os = "macos") || **k != BackendKind::Mlx)
             .filter_map(|k| sup.statuses().get(k))
             .map(|s| BackendView {
                 kind: s.kind,

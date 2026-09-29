@@ -5,6 +5,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod commands;
+#[cfg(target_os = "macos")]
 mod shell_env;
 mod state;
 
@@ -12,7 +13,8 @@ use tauri::Manager;
 
 fn main() {
     // Before any threads start: apps launched from Finder get a minimal PATH and would not find
-    // llama-server or the MLX Python install.
+    // llama-server or the MLX Python install. (Windows apps inherit the user's full PATH.)
+    #[cfg(target_os = "macos")]
     shell_env::inherit_login_path();
 
     let app = tauri::Builder::default()

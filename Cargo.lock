@@ -2011,7 +2011,7 @@ checksum = "47d9d19d1d6efa0109d2f65ff4c85cddd50bd572e5a00127ab10987290bcefae"
 
 [[package]]
 name = "llmario"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2039,7 +2039,7 @@ dependencies = [
 
 [[package]]
 name = "llmario-adapter-llamacpp"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "llmario-core",
  "llmario-hardware",
@@ -2049,7 +2049,7 @@ dependencies = [
 
 [[package]]
 name = "llmario-adapter-mlx"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "llmario-core",
  "llmario-hardware",
@@ -2060,7 +2060,7 @@ dependencies = [
 
 [[package]]
 name = "llmario-adapter-mock"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -2076,7 +2076,7 @@ dependencies = [
 
 [[package]]
 name = "llmario-api"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -2094,7 +2094,7 @@ dependencies = [
 
 [[package]]
 name = "llmario-benchmark"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2111,20 +2111,22 @@ dependencies = [
 
 [[package]]
 name = "llmario-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "dirs 6.0.0",
+ "libc",
  "serde",
  "tempfile",
  "thiserror 2.0.21",
  "toml 0.9.12+spec-1.1.0",
  "tracing",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
 name = "llmario-desktop"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "llmario-api",
@@ -2143,10 +2145,11 @@ dependencies = [
 
 [[package]]
 name = "llmario-hardware"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "hex",
  "libc",
+ "llmario-core",
  "serde",
  "serde_json",
  "sha2",
@@ -2155,7 +2158,7 @@ dependencies = [
 
 [[package]]
 name = "llmario-registry"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2163,7 +2166,6 @@ dependencies = [
  "futures",
  "hex",
  "indicatif",
- "libc",
  "llmario-core",
  "reqwest 0.12.28",
  "serde",
@@ -2178,7 +2180,7 @@ dependencies = [
 
 [[package]]
 name = "llmario-runtime"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "futures",
@@ -2197,7 +2199,7 @@ dependencies = [
 
 [[package]]
 name = "llmario-supervisor"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "chrono",

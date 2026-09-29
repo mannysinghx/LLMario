@@ -12,7 +12,6 @@ dirs.workspace = true
 futures.workspace = true
 hex.workspace = true
 indicatif.workspace = true
-libc.workspace = true
 llmario-core.workspace = true
 reqwest.workspace = true
 serde.workspace = true

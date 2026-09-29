@@ -308,20 +308,7 @@ fn cached_blob(repo: &str, sib: &Sibling) -> Option<PathBuf> {
     p.is_file().then_some(p)
 }
 
-pub fn free_space_bytes(path: &Path) -> Option<u64> {
-    use std::ffi::CString;
-    use std::os::unix::ffi::OsStrExt;
-    let c = CString::new(path.as_os_str().as_bytes()).ok()?;
-    // SAFETY: statvfs writes into the zeroed struct; we check the return code.
-    unsafe {
-        let mut s: libc::statvfs = std::mem::zeroed();
-        if libc::statvfs(c.as_ptr(), &mut s) != 0 {
-            return None;
-        }
-        #[allow(clippy::unnecessary_cast)]
-        Some(s.f_bavail as u64 * s.f_frsize as u64)
-    }
-}
+pub use llmario_core::os::free_space_bytes;
 
 /// Pull a catalog model into the managed models directory and register it.
 pub async fn pull(

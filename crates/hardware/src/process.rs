@@ -3,6 +3,7 @@
 /// - macOS: `ri_phys_footprint` from `proc_pid_rusage` — this is what Activity Monitor shows
 ///   and, unlike RSS, it includes Metal/MLX GPU allocations in unified memory.
 /// - Linux: `VmRSS` from `/proc/<pid>/status` (host memory only; CUDA VRAM is not included).
+/// - Windows: the working set (host memory only; GPU memory is not included).
 pub fn process_memory_bytes(pid: u32) -> Option<u64> {
     imp::footprint(pid)
 }
@@ -33,7 +34,14 @@ mod imp {
     }
 }
 
-#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+#[cfg(windows)]
+mod imp {
+    pub fn footprint(pid: u32) -> Option<u64> {
+        llmario_core::os::process_working_set_bytes(pid)
+    }
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
 mod imp {
     pub fn footprint(_pid: u32) -> Option<u64> {
         None
@@ -45,7 +53,7 @@ mod tests {
     #[test]
     fn own_process_has_memory() {
         let m = super::process_memory_bytes(std::process::id());
-        if cfg!(any(target_os = "macos", target_os = "linux")) {
+        if cfg!(any(target_os = "macos", target_os = "linux", windows)) {
             assert!(m.unwrap() > 0);
         }
     }

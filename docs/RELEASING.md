@@ -91,3 +91,48 @@ xcrun stapler validate LLMario-<version>-macos-universal.dmg   # "The validate a
 | Build waits with no output | A Keychain dialog is asking to use the signing key. Choose **Always Allow**. |
 | Notarization `Invalid` | Run `xcrun notarytool log <submission-id> --keychain-profile llmario-notary`. The log lists each rejected file. |
 | Recipient sees "damaged" or "unidentified developer" | They got an unnotarized build (`--skip-notarize`) or a file modified after signing. Re-run the full script. |
+
+# Releasing for Windows
+
+Windows builds are made on GitHub's Windows machines by
+[`.github/workflows/windows.yml`](../.github/workflows/windows.yml), which runs on every pull
+request and every push to `main`. Nothing Windows-specific is needed on the release machine.
+
+Each run:
+
+- builds `llmario.exe` and runs smoke tests on real Windows with llama.cpp (pinned build,
+  checksum-verified). It downloads and checks the smallest library model, chats with it, and
+  confirms that engines stop with llmario, including when llmario is killed (job object).
+- builds the desktop installer (NSIS, per-user, no admin rights), then installs it, launches the
+  app for 20 s and uninstalls it.
+- uploads the artifact `llmario-windows-<version>` with:
+  - `LLMario-<version>-windows-x64-setup.exe`: the desktop app installer
+  - `llmario-<version>-windows-x64.zip`: the command-line tool (`llmario.exe`, LICENSE, NOTICE)
+  - a `.sha256` file for each
+
+## Attaching the Windows files to a release
+
+1. Check that the `windows` workflow passed for the release commit.
+2. Download its artifact and attach the files, together with the macOS DMG:
+
+   ```bash
+   gh run download <run-id> -n llmario-windows-<version> -D dist/windows
+   gh release create v<version> dist/LLMario-*.dmg dist/LLMario-*.dmg.sha256 dist/windows/* --notes-file notes.md
+   ```
+
+## Signing
+
+The Windows files are **not code-signed** yet, so Windows SmartScreen shows "Windows protected
+your PC" the first time the installer runs. Users click **More info → Run anyway**. The website and
+release notes say so. Signing (for example with Azure Trusted Signing) can be added to the
+workflow later without other changes.
+
+## What Windows users need
+
+- Windows 10 or 11, x64. The installer adds the Microsoft Edge WebView2 runtime if it is missing
+  (it is built into Windows 11).
+- llama.cpp: `winget install ggml.llamacpp` (its Vulkan build), or a zip from
+  [llama.cpp releases](https://github.com/ggml-org/llama.cpp/releases) on `PATH`. MLX is
+  macOS-only. LLMario detects NVIDIA GPUs (via `nvidia-smi`) and offloads to them; on other
+  GPUs it plans for CPU-only execution for now.
+- LLMario keeps its files in `%USERPROFILE%\.llmario` (override with `LLMARIO_HOME`).

@@ -5,6 +5,12 @@ all-features = false
 [advisories]
 version = 2
 yanked = "deny"
+ignore = [
+  # "Unmaintained" notice, not a vulnerability. A compile-time proc-macro reached only through
+  # Tauri's Linux GTK stack (gtk-rs 0.18 → glib-macros); not in the macOS or Windows builds.
+  # cargo-deny reports no safe upgrade; drop this once Tauri moves to a newer gtk-rs.
+  { id = "RUSTSEC-2024-0370", reason = "unmaintained compile-time dependency of Tauri's Linux GTK stack; no upgrade available" },
+]
 
 [licenses]
 version = 2

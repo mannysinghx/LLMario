@@ -117,8 +117,13 @@ impl Engine {
             .kill_on_drop(true);
         #[cfg(unix)]
         cmd.process_group(0);
-        // Linux: the kernel kills the engine if llmario dies without cleanup. macOS has no
-        // equivalent; there, leftovers are found via run records (`llmario doctor`).
+        // Windows: no console window (it would pop up when started from the desktop app), and
+        // Ctrl-C in llmario's console does not reach the engine; llmario stops it itself.
+        #[cfg(windows)]
+        cmd.creation_flags(llmario_core::os::CREATE_NO_WINDOW);
+        // Linux: the kernel kills the engine if llmario dies without cleanup. Windows: a job
+        // object does the same (below). macOS has no equivalent; there, leftovers are found via
+        // run records (`llmario doctor`).
         #[cfg(target_os = "linux")]
         unsafe {
             cmd.pre_exec(|| {
@@ -134,6 +139,12 @@ impl Engine {
         let pid = child
             .id()
             .ok_or_else(|| RuntimeError::EngineStart("process exited immediately".into()))?;
+        #[cfg(windows)]
+        if let Some(h) = child.raw_handle() {
+            if let Err(e) = llmario_core::os::kill_on_exit(h) {
+                tracing::warn!(pid, error = %e, "engine not tied to llmario's lifetime; `llmario doctor` reports leftovers");
+            }
+        }
 
         let record_path = run_dir.join(format!("{pid}.json"));
         let record = RunRecord {
@@ -162,7 +173,7 @@ impl Engine {
                     let st = match tokio::time::timeout(Duration::from_secs(8), child.wait()).await {
                         Ok(st) => st.ok(),
                         Err(_) => {
-                            tracing::warn!(pid, "engine ignored SIGTERM; sending SIGKILL");
+                            tracing::warn!(pid, "engine did not stop; killing it");
                             kill_group(pid);
                             let _ = child.kill().await;
                             child.wait().await.ok()
@@ -354,17 +365,29 @@ fn signal_of(_: std::process::ExitStatus) -> Option<i32> {
     None
 }
 
+#[cfg(unix)]
 fn terminate_group(pid: u32) {
     // SAFETY: plain syscall; negative pid targets the process group we created.
     unsafe {
         libc::kill(-(pid as i32), libc::SIGTERM);
     }
 }
+#[cfg(unix)]
 fn kill_group(pid: u32) {
     // SAFETY: as above.
     unsafe {
         libc::kill(-(pid as i32), libc::SIGKILL);
     }
+}
+// Windows has no SIGTERM; engines keep no state that needs a clean exit, so both end the
+// process immediately.
+#[cfg(windows)]
+fn terminate_group(pid: u32) {
+    llmario_core::os::terminate(pid);
+}
+#[cfg(windows)]
+fn kill_group(pid: u32) {
+    llmario_core::os::terminate(pid);
 }
 
 /// Last `n` lines of a log file (startup diagnostics only).
@@ -395,7 +418,7 @@ pub fn find_orphans(run_dir: &Path) -> Vec<(u32, String, String)> {
         let Ok(r) = serde_json::from_slice::<RunRecord>(&text) else {
             continue;
         };
-        let alive = |pid: u32| unsafe { libc::kill(pid as i32, 0) == 0 };
+        let alive = llmario_core::os::pid_alive;
         if !alive(r.owner_pid) {
             if alive(r.pid) {
                 out.push((r.pid, r.model, r.program));

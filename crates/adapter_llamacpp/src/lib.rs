@@ -10,14 +10,23 @@
 //! | prefix reuse         | `--cache-reuse 256`   |
 //! Host-side prompt cache is capped with `--cache-ram` so it is inside the memory estimate.
 
+use llmario_core::os::background_command;
 use llmario_core::{BackendKind, Config, ModelFormat, ResolvedProfile, RuntimeError};
 use llmario_hardware::HardwareReport;
 use llmario_supervisor::adapter::{which, BackendStatus, EngineAdapter, LaunchContext, LaunchSpec};
 use std::path::PathBuf;
-use std::process::Command;
 
 pub const TESTED_BUILD: u32 = 11146;
 const CACHE_RAM_MIB: u64 = 1024;
+
+/// How to install llama.cpp on this platform (shown when `llama-server` is missing).
+pub const INSTALL_HINT: &str = if cfg!(windows) {
+    "`winget install ggml.llamacpp`, or unzip a Windows build from github.com/ggml-org/llama.cpp/releases and add it to PATH"
+} else if cfg!(target_os = "macos") {
+    "`brew install llama.cpp`, or build from github.com/ggml-org/llama.cpp"
+} else {
+    "build from github.com/ggml-org/llama.cpp, or use your distribution's package"
+};
 
 pub struct LlamaCppAdapter;
 
@@ -72,11 +81,13 @@ impl EngineAdapter for LlamaCppAdapter {
             architectures: None,
         };
         let Some(path) = Self::find(cfg) else {
-            st.detail = "llama-server not found on PATH (install: `brew install llama.cpp`, or build from github.com/ggml-org/llama.cpp; or set backends.llamacpp.server_path)".into();
+            st.detail = format!(
+                "llama-server not found on PATH (install: {INSTALL_HINT}; or set backends.llamacpp.server_path)"
+            );
             return st;
         };
         st.path = Some(path.clone());
-        match Command::new(&path).arg("--version").output() {
+        match background_command(&path).arg("--version").output() {
             Ok(out) => {
                 let text = format!(
                     "{}{}",
@@ -172,7 +183,8 @@ impl EngineAdapter for LlamaCppAdapter {
 
 /// Architecture names compiled into this llama.cpp build. They live in llama.cpp's
 /// architecture table as standalone C strings ("qwen3", "gemma4", "gpt-oss", …), in the
-/// `llama-server` binary (static builds) or its `libllama` shared library (Homebrew).
+/// `llama-server` binary (static builds) or its shared library: `libllama` (Homebrew, Linux) or
+/// `llama.dll` next to `llama-server.exe` (Windows release zips and winget).
 /// Returns `None` if the table cannot be found, so callers treat support as unknown.
 pub fn architecture_names(server: &std::path::Path) -> Option<std::collections::HashSet<String>> {
     let real = std::fs::canonicalize(server).ok()?;
@@ -184,10 +196,9 @@ pub fn architecture_names(server: &std::path::Path) -> Option<std::collections::
             };
             for e in rd.flatten() {
                 let n = e.file_name().to_string_lossy().into_owned();
-                let lib = n.starts_with("libllama.")
-                    || n == "libllama.so"
-                    || n.starts_with("libllama.so.");
-                if lib && (n.contains(".dylib") || n.contains(".so")) {
+                let unix_lib =
+                    n.starts_with("libllama.") && (n.contains(".dylib") || n.contains(".so"));
+                if unix_lib || n.eq_ignore_ascii_case("llama.dll") {
                     files.push(e.path());
                 }
             }
@@ -203,7 +214,10 @@ pub fn architecture_names(server: &std::path::Path) -> Option<std::collections::
     (set.contains("llama") && set.contains("qwen2")).then_some(set)
 }
 
-/// Collect short NUL-delimited identifier-like strings (`[a-z0-9_.-]{2,32}`).
+/// Collect short NUL-delimited identifier-like strings (`[a-z0-9_.-]{2,32}`) and their endings.
+///
+/// Endings count because linkers may store a string as the tail of a longer one that ends the
+/// same way (tail merging): llama.cpp's Windows build keeps "qwen2" only inside "rwkv6qwen2".
 fn c_strings(bytes: &[u8], out: &mut std::collections::HashSet<String>) {
     let ok =
         |b: u8| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_' || b == b'-' || b == b'.';
@@ -213,7 +227,9 @@ fn c_strings(bytes: &[u8], out: &mut std::collections::HashSet<String>) {
             let run = &bytes[start..i];
             let standalone = start == 0 || bytes[start - 1] == 0;
             if standalone && (2..=32).contains(&run.len()) && run.iter().all(|&c| ok(c)) {
-                out.insert(String::from_utf8_lossy(run).into_owned());
+                for k in 0..=run.len() - 2 {
+                    out.insert(String::from_utf8_lossy(&run[k..]).into_owned());
+                }
             }
             start = i + 1;
         } else if !ok(b) {
@@ -239,6 +255,18 @@ mod tests {
             assert!(set.contains(a), "{a}");
         }
         assert!(!set.contains("x") && !set.contains("hello"));
+    }
+
+    #[test]
+    fn finds_tail_merged_strings() {
+        // lld-link stores "qwen2" as the last bytes of "rwkv6qwen2" (llama.cpp Windows build).
+        let mut set = std::collections::HashSet::new();
+        c_strings(b"\0rwkv6qwen2\0llama\0\xb8mistral3\0", &mut set);
+        for a in ["rwkv6qwen2", "qwen2", "llama"] {
+            assert!(set.contains(a), "{a}");
+        }
+        // Not after a NUL (here: machine code), so not a string.
+        assert!(!set.contains("mistral3"));
     }
 
     /// Runs only where llama.cpp is installed (e.g. `brew install llama.cpp`).

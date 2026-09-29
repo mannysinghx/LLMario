@@ -1,0 +1,158 @@
+name: windows
+
+# Builds the Windows downloads (llmario CLI zip + LLMario installer) and tests them on a real
+# Windows machine: a chat through llama.cpp with a small model, engine cleanup when llmario is
+# killed, and install → launch → uninstall of the desktop app. The `llmario-windows-<version>`
+# artifact holds the files that are attached to a GitHub release (see docs/RELEASING.md).
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      # llama.cpp build validated with llmario (see README); checksum from the GitHub release.
+      LLAMA_BUILD: b11146
+      LLAMA_ZIP_SHA256: 14cf1303ca9ac3abd94816850532f9f9a69ac66fbaca3776fc6f9061c2fac1d1
+      # Smallest GGUF in the model library (537 MiB).
+      SMOKE_MODEL: qwen3.5-0.8b-gguf-q4_0
+      LLMARIO_HOME: ${{ github.workspace }}\.smoke-home
+    steps:
+      - run: git config --global core.autocrlf false
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Version
+        id: version
+        run: |
+          $v = (Get-Content apps/desktop/src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          "version=$v" >> $env:GITHUB_OUTPUT
+
+      - name: Build the llmario CLI
+        run: cargo build --release --locked -p llmario
+
+      - name: Install llama.cpp ${{ env.LLAMA_BUILD }} (CPU build)
+        run: |
+          $zip = "$env:RUNNER_TEMP\llama.zip"
+          Invoke-WebRequest "https://github.com/ggml-org/llama.cpp/releases/download/$env:LLAMA_BUILD/llama-$env:LLAMA_BUILD-bin-win-cpu-x64.zip" -OutFile $zip
+          $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
+          if ($hash -ne $env:LLAMA_ZIP_SHA256) { throw "llama.cpp zip checksum mismatch: $hash" }
+          Expand-Archive $zip -DestinationPath "$env:RUNNER_TEMP\llama"
+          $server = Get-ChildItem "$env:RUNNER_TEMP\llama" -Recurse -Filter llama-server.exe | Select-Object -First 1
+          $server.DirectoryName >> $env:GITHUB_PATH
+
+      - name: "Smoke test: doctor finds llama.cpp and reads its architectures"
+        run: |
+          $exe = "$pwd\target\release\llmario.exe"
+          & $exe doctor
+          $doc = & $exe doctor --json | ConvertFrom-Json
+          $llama = $doc.backends | Where-Object kind -eq "llamacpp"
+          if (-not $llama.available) { throw "llama.cpp not detected: $($llama.detail)" }
+          $entry = & $exe model catalog --json | ConvertFrom-Json | Where-Object id -eq $env:SMOKE_MODEL
+          if ($entry.supported -ne $true) {
+            # Diagnostics: where (and whether) llama.cpp's architecture names appear as C strings.
+            "catalog: supported=$($entry.supported) architecture=$($entry.architecture) engine=$($entry.engineVersion)"
+            $dir = Split-Path (Get-Command llama-server.exe).Source
+            Get-ChildItem $dir -File | Format-Table Name, Length
+            foreach ($f in Get-ChildItem $dir -File -Include *.dll, *.exe -Recurse) {
+              $s = [Text.Encoding]::Latin1.GetString([IO.File]::ReadAllBytes($f.FullName))
+              foreach ($w in "llama", "qwen2", $entry.architecture) {
+                $alone = $s.Contains("`0$w`0"); $any = $s.Contains($w)
+                if ($any) { "{0}: '{1}' standalone={2}" -f $f.Name, $w, $alone }
+              }
+              $i = $s.IndexOf("qwen2")
+              if ($i -ge 0) {
+                $from = [Math]::Max(0, $i - 24)
+                "{0} around first 'qwen2': {1}" -f $f.Name, ($s.Substring($from, [Math]::Min(64, $s.Length - $from)) -replace "`0", "|")
+              }
+            }
+            throw "architecture support not confirmed for $env:SMOKE_MODEL"
+          }
+
+      - name: "Smoke test: download, verify and chat"
+        run: |
+          $exe = "$pwd\target\release\llmario.exe"
+          & $exe model pull $env:SMOKE_MODEL
+          if ($LASTEXITCODE -ne 0) { throw "model pull failed" }
+          $reply = & $exe run --max-tokens 256 $env:SMOKE_MODEL "Reply with one word: ready"
+          if ($LASTEXITCODE -ne 0) { throw "run failed" }
+          $text = ($reply -join "`n").Trim()
+          "reply: $text"
+          if (-not $text) { throw "empty reply" }
+          Start-Sleep 2
+          if (Get-Process llama-server -ErrorAction SilentlyContinue) { throw "llama-server still running after llmario exited" }
+
+      - name: "Smoke test: engines die with llmario (job object)"
+        run: |
+          $p = Start-Process "$pwd\target\release\llmario.exe" -ArgumentList "serve", "--preload", $env:SMOKE_MODEL -PassThru -RedirectStandardError "$env:RUNNER_TEMP\serve.log"
+          $deadline = (Get-Date).AddMinutes(3)
+          while (-not (Get-Process llama-server -ErrorAction SilentlyContinue)) {
+            if ($p.HasExited) { Get-Content "$env:RUNNER_TEMP\serve.log"; throw "llmario serve exited early" }
+            if ((Get-Date) -gt $deadline) { Get-Content "$env:RUNNER_TEMP\serve.log"; throw "engine never started" }
+            Start-Sleep 1
+          }
+          Start-Sleep 3
+          Stop-Process -Id $p.Id -Force   # simulate a crash: no cleanup code runs
+          Start-Sleep 3
+          if (Get-Process llama-server -ErrorAction SilentlyContinue) { throw "llama-server outlived a killed llmario" }
+          "engine ended with llmario"
+
+      - name: Install the Tauri CLI
+        run: if (-not (Get-Command cargo-tauri -ErrorAction SilentlyContinue)) { cargo install tauri-cli --version "^2" --locked }
+
+      - name: Build the desktop installer
+        working-directory: apps/desktop/src-tauri
+        run: cargo tauri build --bundles nsis
+
+      - name: "Smoke test: install, launch, uninstall the app"
+        run: |
+          $setup = Get-ChildItem target\release\bundle\nsis\*-setup.exe | Select-Object -First 1
+          Start-Process $setup.FullName -ArgumentList "/S" -Wait
+          $dir = "$env:LOCALAPPDATA\LLMario"
+          Get-ChildItem $dir
+          $app = Get-ChildItem $dir -Filter *.exe | Where-Object Name -notlike "uninstall*" | Select-Object -First 1
+          if (-not $app) { throw "app not installed in $dir" }
+          $p = Start-Process $app.FullName -PassThru
+          Start-Sleep 20
+          if ($p.HasExited) { throw "app exited during startup (code $($p.ExitCode))" }
+          "app running as pid $($p.Id)"
+          Stop-Process -Id $p.Id -Force
+          $un = Get-ChildItem $dir -Filter "uninstall*.exe" | Select-Object -First 1
+          if ($un) { Start-Process $un.FullName -ArgumentList "/S" -Wait }
+
+      - name: Package
+        run: |
+          $v = "${{ steps.version.outputs.version }}"
+          New-Item -ItemType Directory dist | Out-Null
+          $cli = "dist\llmario-$v-windows-x64"
+          New-Item -ItemType Directory $cli | Out-Null
+          Copy-Item target\release\llmario.exe, LICENSE, NOTICE $cli
+          Compress-Archive $cli "$cli.zip"
+          Remove-Item $cli -Recurse
+          $setup = Get-ChildItem target\release\bundle\nsis\*-setup.exe | Select-Object -First 1
+          Copy-Item $setup.FullName "dist\LLMario-$v-windows-x64-setup.exe"
+          $files = Get-ChildItem dist -File
+          foreach ($f in $files) {
+            $h = (Get-FileHash $f.FullName -Algorithm SHA256).Hash.ToLower()
+            # LF line ending so `shasum -c` / `sha256sum -c` also work on macOS and Linux.
+            [IO.File]::WriteAllText("$($f.FullName).sha256", "$h  $($f.Name)`n")
+          }
+          Get-ChildItem dist | Format-Table Name, Length
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: llmario-windows-${{ steps.version.outputs.version }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 30

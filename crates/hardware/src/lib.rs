@@ -5,9 +5,9 @@ mod process;
 
 pub use process::process_memory_bytes;
 
+use llmario_core::os::background_command as command;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::process::Command;
 
 const GIB: f64 = 1024.0 * 1024.0 * 1024.0;
 
@@ -200,7 +200,7 @@ fn detect_apple_gpu(total_mem: u64, notes: &mut Vec<String>) -> GpuInfo {
 }
 
 fn apple_gpu_name() -> Option<(String, Option<u32>)> {
-    let out = Command::new("system_profiler")
+    let out = command("system_profiler")
         .args(["SPDisplaysDataType", "-json"])
         .output()
         .ok()?;
@@ -215,7 +215,7 @@ fn apple_gpu_name() -> Option<(String, Option<u32>)> {
 }
 
 fn detect_nvidia(notes: &mut Vec<String>) -> Vec<GpuInfo> {
-    let out = match Command::new("nvidia-smi")
+    let out = match command("nvidia-smi")
         .args([
             "--query-gpu=name,memory.total,memory.free,driver_version",
             "--format=csv,noheader,nounits",
@@ -254,10 +254,7 @@ fn parse_nvidia_smi(text: &str) -> Vec<GpuInfo> {
 }
 
 fn detect_rocm(notes: &mut Vec<String>) -> Option<GpuInfo> {
-    let out = Command::new("rocm-smi")
-        .arg("--showproductname")
-        .output()
-        .ok()?;
+    let out = command("rocm-smi").arg("--showproductname").output().ok()?;
     if !out.status.success() {
         return None;
     }
@@ -277,7 +274,7 @@ fn detect_rocm(notes: &mut Vec<String>) -> Option<GpuInfo> {
 }
 
 fn sysctl_u64(name: &str) -> Option<u64> {
-    let out = Command::new("sysctl").args(["-n", name]).output().ok()?;
+    let out = command("sysctl").args(["-n", name]).output().ok()?;
     if !out.status.success() {
         return None;
     }

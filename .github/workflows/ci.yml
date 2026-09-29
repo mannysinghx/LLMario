@@ -13,9 +13,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-14]
+        os: [ubuntu-latest, macos-14, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
+      # Keep LF line endings on Windows so rustfmt and text fixtures match the repository.
+      - run: git config --global core.autocrlf false
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -29,8 +31,13 @@ jobs:
       # Absolute speed numbers are never CI gates (too noisy); only check the harness runs.
 
   desktop:
-    runs-on: macos-14
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
+      - run: git config --global core.autocrlf false
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -41,7 +48,9 @@ jobs:
           node-version: 22
       - run: node --test apps/desktop/ui/markdown.test.mjs
       - run: cargo clippy -p llmario-desktop -- -D warnings
-      - run: cargo build --release -p llmario-desktop
+      # The Windows release build and installer are built and tested in windows.yml.
+      - if: runner.os == 'macOS'
+        run: cargo build --release -p llmario-desktop
 
   licenses:
     runs-on: ubuntu-latest

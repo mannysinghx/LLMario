@@ -80,17 +80,36 @@ pub trait EngineAdapter: Send + Sync {
     fn launch(&self, ctx: &LaunchContext<'_>) -> Result<LaunchSpec, RuntimeError>;
 }
 
-/// Find an executable on `PATH`.
+/// Find an executable on `PATH`. On Windows `name` may omit the extension: `llama-server`
+/// finds `llama-server.exe` (any `PATHEXT` extension).
 pub fn which(name: &str) -> Option<PathBuf> {
     let path = std::env::var_os("PATH")?;
-    std::env::split_paths(&path)
-        .map(|d| d.join(name))
-        .find(|p| p.is_file() && is_executable(p))
+    std::env::split_paths(&path).find_map(|d| executable_in(&d, name))
 }
 
-fn is_executable(p: &std::path::Path) -> bool {
+#[cfg(unix)]
+fn executable_in(dir: &std::path::Path, name: &str) -> Option<PathBuf> {
     use std::os::unix::fs::PermissionsExt;
-    std::fs::metadata(p)
-        .map(|m| m.permissions().mode() & 0o111 != 0)
-        .unwrap_or(false)
+    let p = dir.join(name);
+    std::fs::metadata(&p)
+        .is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+        .then_some(p)
+}
+
+#[cfg(windows)]
+fn executable_in(dir: &std::path::Path, name: &str) -> Option<PathBuf> {
+    let exts = std::env::var("PATHEXT").unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".into());
+    let exts: Vec<String> = exts
+        .split(';')
+        .filter(|e| !e.is_empty())
+        .map(|e| e.to_ascii_lowercase())
+        .collect();
+    let lower = name.to_ascii_lowercase();
+    if exts.iter().any(|e| lower.ends_with(e.as_str())) {
+        let p = dir.join(name);
+        return p.is_file().then_some(p);
+    }
+    exts.iter()
+        .map(|e| dir.join(format!("{name}{e}")))
+        .find(|p| p.is_file())
 }
