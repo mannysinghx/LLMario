@@ -35,6 +35,25 @@ accelerator = "cpu"
 status = "implemented-unvalidated"
 
 [[path]]
+platform = "windows-x86_64"
+hardware = "GitHub Actions windows-latest (AMD EPYC 7763, 2 cores, 16 GB)"
+os = "Windows Server 2025"
+backend = "llamacpp"
+backend_version = "build 11146 (7fe450e19), win-cpu-x64"
+accelerator = "cpu"
+status = "partial"
+models = ["qwen3.5-0.8b-gguf-q4_0"]
+evidence = ".github/workflows/windows.yml"
+notes = "download, verification, chat and engine cleanup (including a killed llmario) pass in CI; no benchmark"
+
+[[path]]
+platform = "windows-x86_64"
+backend = "llamacpp"
+accelerator = "cuda / vulkan (nvidia)"
+status = "implemented-unvalidated"
+notes = "nvidia-smi detection and offload planning; AMD/Intel GPUs are planned as CPU-only"
+
+[[path]]
 platform = "linux-x86_64"
 accelerator = "rocm"
 status = "detection-only"

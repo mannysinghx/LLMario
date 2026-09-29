@@ -1,4 +1,5 @@
-// Copy buttons for code blocks, and simple tabs. No tracking, no external requests.
+// Copy buttons for code blocks, simple tabs, and Windows tabs for Windows visitors. No tracking,
+// no external requests.
 document.querySelectorAll(".code .copy").forEach((btn) => {
   btn.addEventListener("click", async () => {
     const text = btn.parentElement.querySelector("code").textContent;
@@ -21,3 +22,8 @@ document.querySelectorAll("[data-tabs]").forEach((tabs) => {
     })
   );
 });
+
+// Windows visitors see the Windows setup tabs first. Nothing is stored or sent anywhere.
+if (/Windows/.test(navigator.userAgent)) {
+  document.querySelectorAll('[role="tab"][data-os="windows"]').forEach((b) => b.click());
+}

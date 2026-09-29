@@ -19,11 +19,13 @@ loading it, and gives you three ways to use it:
 
 | | What it is | Start it |
 |---|---|---|
-| 🖥 **Desktop app** | A native macOS window to download models and chat with them | `LLMario.app` |
+| 🖥 **Desktop app** | A native window for macOS and Windows (preview) to download models and chat with them | `LLMario.app` / Start menu |
 | ⌨️ **CLI** | `llmario doctor`, `model pull`, `run`, `serve`, `bench`, … | `llmario --help` |
 | 🔌 **Local API** | OpenAI-compatible `/v1/chat/completions` on `127.0.0.1` | `llmario serve` |
 
 🌐 **Website:** [llmario.com](https://llmario.com): how it works and a 3-step setup guide.
+
+⬇️ **Download:** [macOS (.dmg)](https://github.com/mannysinghx/LLMario/releases/download/v0.2.0/LLMario-0.2.0-macos-universal.dmg) · [Windows, preview (.exe)](https://github.com/mannysinghx/LLMario/releases/download/v0.2.0/LLMario-0.2.0-windows-x64-setup.exe) · [Windows command line (.zip)](https://github.com/mannysinghx/LLMario/releases/download/v0.2.0/llmario-0.2.0-windows-x64.zip), with checksums on the [releases page](https://github.com/mannysinghx/LLMario/releases/latest). The Windows files are not code-signed yet: if SmartScreen warns, click **More info → Run anyway**.
 
 Everything runs on your machine. Prompts and replies are never sent anywhere, and they never appear in logs.
 
@@ -97,13 +99,13 @@ app, so it needs no separate server and no Ollama.
 
 ### Requirements
 
-- macOS 13+ on Apple Silicon (validated), or Linux (CLI; unvalidated)
+- macOS 13+ on Apple Silicon (validated), Windows 10/11 x64 (preview; tested in CI), or Linux (CLI; unvalidated)
 - [Rust](https://rustup.rs) 1.80+
 - At least one inference engine:
 
 | Engine | Use for | Install | Tested version |
 |---|---|---|---|
-| llama.cpp | GGUF models; Mac, Linux, CPU, NVIDIA | `brew install llama.cpp` or build [ggml-org/llama.cpp](https://github.com/ggml-org/llama.cpp) | build 11146 (7fe450e19) |
+| llama.cpp | GGUF models; Mac, Windows, Linux, CPU, NVIDIA | `brew install llama.cpp` (macOS), `winget install ggml.llamacpp` (Windows), or build [ggml-org/llama.cpp](https://github.com/ggml-org/llama.cpp) | build 11146 (7fe450e19) |
 | MLX-LM | MLX models; Apple Silicon only (usually fastest there) | `./scripts/setup-mlx-venv.sh` (pinned venv) or `pip install mlx-lm` | mlx-lm 0.31.3, mlx 0.32.2 |
 
 ### One-command install (macOS)
@@ -404,9 +406,13 @@ extra_args = []
 | macOS, Apple Silicon | llama.cpp (Metal) | ✅ validated (build 11146) |
 | Linux x86_64 + NVIDIA | llama.cpp (CUDA) | 🔬 implemented: `nvidia-smi` detection, hybrid CPU/GPU offload planning. Unvalidated |
 | Linux / macOS, CPU only | llama.cpp | 🔬 implemented, unvalidated |
+| Windows x64, CPU | llama.cpp | 🟡 preview: download, chat and engine cleanup pass in CI (Windows Server 2025, build 11146); not benchmarked or used day to day |
+| Windows x64 + NVIDIA | llama.cpp | 🔬 implemented (`nvidia-smi` detection, offload planning), unvalidated |
 | AMD ROCm, Intel | — | detection only, no support claimed |
 | vLLM / SGLang | — | planned (Phase 2) |
-| Desktop app | macOS | ✅ used for real chats; Windows/Linux builds not set up |
+| Desktop app | macOS | ✅ used for real chats |
+| Desktop app | Windows | 🟡 preview: installer installs, app launches and uninstalls in CI; not yet used on a real PC |
+| Desktop app | Linux | not set up |
 
 Machine-readable: [docs/support-matrix.toml](docs/support-matrix.toml).
 
@@ -461,7 +467,7 @@ More: [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md).
 ## Roadmap
 
 - Bundle llama.cpp inside the app so recipients need no separate engine install
-- Windows and Linux desktop builds
+- Linux desktop build; Windows code signing and AMD/Intel GPU offload on Windows
 - vLLM / SGLang adapter for multi-user NVIDIA serving
 - Cached auto-tuning per hardware, engine build, model hash and profile
 - Tool calling and JSON mode where engines support them

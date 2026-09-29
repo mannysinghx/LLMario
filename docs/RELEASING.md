@@ -120,6 +120,10 @@ Each run:
    gh release create v<version> dist/LLMario-*.dmg dist/LLMario-*.dmg.sha256 dist/windows/* --notes-file notes.md
    ```
 
+3. Update the download links in `website/index.html` and `README.md`. They point at the
+   versioned files, so a one-click download never lands on an empty page. Pushing
+   `website/` redeploys llmario.com.
+
 ## Signing
 
 The Windows files are **not code-signed** yet, so Windows SmartScreen shows "Windows protected

@@ -82,6 +82,12 @@ main { max-width: 1080px; margin: 0 auto; padding: 0 16px; }
 .lead { font-size: clamp(16px, 2vw, 19px); color: var(--muted); max-width: 720px; margin: 0 auto 26px; }
 .cta { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
 .fine { font-size: 13px; color: var(--muted); margin-top: 16px; }
+.announce {
+  display: inline-flex; align-items: center; gap: 8px; margin-top: 18px;
+  padding: 4px 14px 4px 5px; border: 1px solid var(--border); border-radius: 999px;
+  background: var(--panel); color: var(--text); font-size: 14px; font-weight: 500; box-shadow: var(--shadow);
+}
+.announce:hover { text-decoration: none; border-color: var(--accent); }
 
 /* Sections */
 .section { padding: 56px 0; border-top: 1px solid var(--border); }
@@ -105,6 +111,7 @@ main { max-width: 1080px; margin: 0 auto; padding: 0 16px; }
 .howto li { margin: 5px 0; }
 .pill { font-size: 12px; font-weight: 600; padding: 1px 8px; border-radius: 999px; }
 .pill.ok { background: var(--ok-soft); color: var(--ok); }
+.pill.new { background: var(--accent); color: #fff; padding: 2px 9px; }
 
 /* Tabs */
 .tabs { margin: 10px 0; }
@@ -161,6 +168,6 @@ details p { color: var(--muted); margin: 10px 0 2px; }
   .hero { padding: 48px 0 40px; }
   .step { padding: 18px; }
   .tab-list { display: flex; }
-  .tab-list button { flex: 1; }
+  .tab-list button { flex: 1 1 auto; white-space: nowrap; padding: 6px 8px; }
   .t td:first-child { white-space: normal; width: 36%; }
 }

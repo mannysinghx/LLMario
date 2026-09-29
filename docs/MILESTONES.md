@@ -25,7 +25,8 @@ Status legend: ✅ done in repo · 🔬 needs real-hardware validation · ⏭ la
 | Safe Markdown rendering (escape-first) | ✅ `markdown.test.mjs` |
 | Drag and drop `.gguf` files / MLX folders (registered in place, auto-named, duplicate-safe) | ✅ registry tests; UI wired to Tauri 2.12 drag-drop API (not exercised by automated UI test) |
 | Developer ID signing + notarization pipeline (`scripts/release-macos.sh`) | ✅ signed universal build verified (both engines run under hardened runtime); notarization pending credentials |
-| Auto-update, bundled engine, Windows/Linux builds | ⏭ |
+| Windows build (installer + CLI zip), smoke-tested in CI | ✅ preview, released in v0.2.0 (not code-signed) |
+| Auto-update, bundled engine, Linux desktop build, Windows code signing | ⏭ |
 
 ## Phase 2 (not started)
 
