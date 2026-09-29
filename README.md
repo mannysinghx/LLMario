@@ -91,17 +91,19 @@ Full comparison with method and caveats: [`benchmarks/results/2026-09-29/SUMMARY
 | llmario → llama.cpp (40k ctx, = Ollama) | 1 | 498 ms | 203.9 | 96.8 | 5.65 GiB | 2/3 |
 | llmario → llama.cpp (balanced) | 4 | 1,877 ms | 70.0 | 113.8 | 4.78 GiB | – |
 | llmario → MLX (balanced) | 4 | 1,668 ms | 71.1 | 117.7 | 8.51 GiB | – |
-| Ollama 0.34.2 defaults | 4 | 4,880 ms | 200.5 | 88.1 | 9.42 GiB | – |
+| Ollama 0.34.2 defaults (1 slot) | 4 | 4,880 ms | 200.5 | 88.1 | 9.42 GiB | – |
+| Ollama, `NUM_PARALLEL=4`, 8k ctx (= balanced) | 4 | 1,326 ms | 56.6 | 104.5 | 7.01 GiB | – |
 
 What this supports, and what it does not:
 - **Gateway overhead is not measurable:** llmario vs the same llama-server without llmario.
 - **Single-request speed is at parity with Ollama** (within run-to-run noise; MLX decodes ~8%
   faster). No single-request speed win is claimed.
-- **At concurrency 4, llmario's balanced profile beats Ollama's defaults:** +29% (llama.cpp) /
-  +34% (MLX) aggregate throughput, ~2.7x lower median TTFT. Ollama 0.34.2 runs its engine with
-  `-np 1`, so requests queue; `OLLAMA_NUM_PARALLEL` was not tested.
-- **Lower memory at equal context:** 5.65 GiB vs Ollama's 6.42 GiB right after load (−12%) and
-  11.66 GiB after sustained use (−52%). Ollama leaves llama.cpp's 8 GiB host prompt cache uncapped;
+- **At concurrency 4 the win is mostly Ollama's defaults.** vs defaults (`-np 1`): +29–34%
+  aggregate throughput, ~2.7x lower median TTFT. vs Ollama tuned to the same 4 × 8k slots:
+  only +9–13% throughput (below the 15% bar), and **Ollama's median TTFT is better** (1.33 s vs
+  1.67–1.88 s, not yet explained; micro-batch size ruled out).
+- **Lower memory at equal context (llama.cpp path):** 4.78 vs 7.01 GiB at 4 × 8k (−32%); 5.65 vs
+  6.42 GiB right after load and 11.66 GiB after sustained use at 1 × 40k. Ollama leaves llama.cpp's 8 GiB host prompt cache uncapped;
   llmario caps it at 1 GiB. The default-profile saving (2.12 GiB) comes from sizing context to the
   workload, not from a faster engine.
 - **llmario's estimates bounded every measured peak** (estimate / peak = 1.18–1.79x). An earlier

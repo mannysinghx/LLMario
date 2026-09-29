@@ -85,6 +85,9 @@ These changed the implementation; each is covered by a test or a recorded benchm
 7. **Comparison with Ollama 0.34.2** (benchmarks/results/2026-09-29): Ollama runs its own bundled
    llama-server (0.4.1-dev) with `-np 1`, 40,960 context, `--chat-template chatml`, and no
    `--cache-ram` (default 8 GiB). llmario's gateway overhead was not measurable; single-request speed
-   was at parity; concurrency-4 throughput and TTFT were better with llmario's balanced profile; peak
-   memory was lower at equal context. The wedge is configuration and resource policy, not kernels,
-   which matches this ADR's premise.
+   was at parity; peak
+   memory was lower at equal context. Concurrency-4 gains were large against Ollama's defaults
+   (+29–34%) but small against Ollama tuned to the same 4 × 8k slots (+9–13%, below the 15% bar),
+   where Ollama also had the better median TTFT (unexplained; micro-batch size ruled out). The wedge
+   so far is configuration and resource policy, not kernels, which matches this ADR's premise,
+   and a tuned competitor narrows it.
