@@ -115,7 +115,12 @@ impl EngineAdapter for LlamaCppAdapter {
         st
     }
 
-    fn extra_memory_bytes(&self, _m: &llmario_registry::ModelEntry, _p: &ResolvedProfile) -> u64 {
+    fn extra_memory_bytes(
+        &self,
+        _m: &llmario_registry::ModelEntry,
+        _p: &ResolvedProfile,
+        _cfg: &Config,
+    ) -> u64 {
         CACHE_RAM_MIB * 1024 * 1024
     }
 

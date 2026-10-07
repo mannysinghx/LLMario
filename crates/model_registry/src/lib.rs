@@ -6,10 +6,11 @@ pub mod catalog;
 pub mod download;
 pub mod gguf;
 pub mod inspect;
+pub mod layout;
 pub mod manifest;
 
 pub use catalog::{Catalog, CatalogEntry};
-pub use manifest::{FileRecord, ModelEntry, ModelShape, ModelSource, Registry};
+pub use manifest::{FileRecord, KvGroup, ModelEntry, ModelShape, ModelSource, Registry};
 
 use sha2::{Digest, Sha256};
 use std::io::Read;
