@@ -3,7 +3,7 @@
 #[derive(thiserror::Error, Debug)]
 pub enum RuntimeError {
     #[error(
-        "model '{0}' is not installed. See `llmario model list`, or `llmario model pull <name>`."
+        "model '{0}' is not installed. See `{cli} model list`, or `{cli} model pull <name>`.", cli = crate::APP_NAME
     )]
     ModelNotFound(String),
     #[error("{0}")]

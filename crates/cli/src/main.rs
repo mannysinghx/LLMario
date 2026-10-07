@@ -10,7 +10,7 @@ use clap::{Args, Parser, Subcommand};
 use llmario_core::ProfileKind;
 
 #[derive(Parser)]
-#[command(name = "llmario", version, about = "Adaptive local LLM runtime", long_about = None)]
+#[command(name = env!("CARGO_BIN_NAME"), version, about = "Adaptive local LLM runtime", long_about = None)]
 struct Cli {
     /// More logging (-v info, -vv debug). Prompts and completions are never logged.
     #[arg(short, long, action = clap::ArgAction::Count, global = true)]
@@ -102,11 +102,16 @@ enum Cmd {
 fn init_logging(verbose: u8, json: bool, default: &str) {
     let level = match verbose {
         0 => default,
-        1 => "llmario=info,llmario_supervisor=info,llmario_api=info,warn",
+        // The binary's own log target is its crate name (`llmario` for the `llmario` binary).
+        1 => concat!(
+            env!("CARGO_CRATE_NAME"),
+            "=info,llmario_supervisor=info,llmario_api=info,warn"
+        ),
         _ => "debug,hyper=info,reqwest=info,h2=info",
     };
     let filter =
-        tracing_subscriber::EnvFilter::try_from_env("LLMARIO_LOG").unwrap_or_else(|_| level.into());
+        tracing_subscriber::EnvFilter::try_from_env(format!("{}_LOG", llmario_core::ENV_PREFIX))
+            .unwrap_or_else(|_| level.into());
     let b = tracing_subscriber::fmt()
         .with_env_filter(filter)
         .with_writer(std::io::stderr)

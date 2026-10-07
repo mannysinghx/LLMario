@@ -54,7 +54,11 @@ pub async fn run(as_json: bool) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    println!("llmario {} — doctor\n", llmario_core::VERSION);
+    println!(
+        "{} {} — doctor\n",
+        llmario_core::APP_NAME,
+        llmario_core::VERSION
+    );
     println!("Hardware");
     let cores = match (hw.performance_cores, hw.efficiency_cores) {
         (Some(p), Some(e)) => format!("{p}P + {e}E cores, {} threads", hw.logical_cores),
@@ -128,7 +132,8 @@ pub async fn run(as_json: bool) -> anyhow::Result<()> {
 
     println!("\nModels ({} installed)", models.len());
     if models.is_empty() {
-        println!("  none — try `llmario model catalog` then `llmario model pull qwen3-1.7b`");
+        let cli = llmario_core::APP_NAME;
+        println!("  none — try `{cli} model catalog` then `{cli} model pull qwen3-1.7b`");
     }
     for (m, b, _p, plan, ok) in &models {
         let fit = if !ok {
