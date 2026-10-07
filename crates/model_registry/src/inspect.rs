@@ -146,8 +146,15 @@ fn inspect_gguf(path: &Path, hash: bool) -> anyhow::Result<Inspected> {
             head_dim,
             hidden_size,
             context_max: md.arch_u64("context_length").map(|v| v as u32),
+            kv_groups: vec![],
+            state_bytes_per_seq: 0,
         })
-    })();
+    })()
+    .map(|mut s| {
+        (s.kv_groups, s.state_bytes_per_seq) =
+            crate::layout::from_gguf(&md, s.n_layers, s.n_kv_heads, s.head_dim);
+        s
+    });
     if shape.is_none() {
         notes.push(
             "could not read layer/head counts; memory estimate will use a conservative fallback"
@@ -222,8 +229,14 @@ fn inspect_mlx(dir: &Path, hash: bool) -> anyhow::Result<Inspected> {
             head_dim: num("head_dim").unwrap_or(hidden_size / n_heads.max(1)),
             hidden_size,
             context_max: num("max_position_embeddings"),
+            kv_groups: vec![],
+            state_bytes_per_seq: 0,
         })
-    })();
+    })()
+    .map(|mut s| {
+        (s.kv_groups, s.state_bytes_per_seq) = crate::layout::from_config(tc);
+        s
+    });
     if shape.is_none() {
         notes.push(
             "config.json lacks layer/head counts; memory estimate will use a conservative fallback"

@@ -13,12 +13,52 @@ pub struct ModelShape {
     pub hidden_size: u32,
     /// Maximum trained context, if the model declares one.
     pub context_max: Option<u32>,
+    /// Which layers keep a KV cache and how big it is, when known. Empty = unknown: every layer
+    /// is planned as full attention at `n_kv_heads` × `head_dim` (the conservative layout).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub kv_groups: Vec<KvGroup>,
+    /// Fixed per-sequence state of recurrent / linear-attention layers, in bytes.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub state_bytes_per_seq: u64,
+}
+
+fn is_zero(v: &u64) -> bool {
+    *v == 0
+}
+
+/// Layers that share one KV-cache shape.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct KvGroup {
+    pub layers: u32,
+    pub n_kv_heads: u32,
+    pub head_dim: u32,
+    /// Sliding-window size in tokens; `None` = full attention (the cache grows with the context).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window: Option<u32>,
+}
+
+impl KvGroup {
+    /// K and V bytes per cached token at the given element width (2 = f16/bf16).
+    pub fn bytes_per_token(&self, bytes_per_elem: u64) -> u64 {
+        2 * self.layers as u64 * self.n_kv_heads as u64 * self.head_dim as u64 * bytes_per_elem
+    }
 }
 
 impl ModelShape {
-    /// KV-cache bytes per token at the given element width (2 = f16/bf16).
+    /// KV-cache bytes per token at the given element width (2 = f16/bf16), counting every layer
+    /// as full attention (the conservative layout).
     pub fn kv_bytes_per_token(&self, bytes_per_elem: u64) -> u64 {
         2 * self.n_layers as u64 * self.n_kv_heads as u64 * self.head_dim as u64 * bytes_per_elem
+    }
+
+    /// Every layer as one full-attention group (used when the real layout is unknown).
+    pub fn conservative_groups(&self) -> Vec<KvGroup> {
+        vec![KvGroup {
+            layers: self.n_layers,
+            n_kv_heads: self.n_kv_heads,
+            head_dim: self.head_dim,
+            window: None,
+        }]
     }
 }
 
@@ -248,7 +288,30 @@ mod tests {
             head_dim: 128,
             hidden_size: 2048,
             context_max: None,
+            kv_groups: vec![],
+            state_bytes_per_seq: 0,
         };
         assert_eq!(s.kv_bytes_per_token(2), 2 * 28 * 8 * 128 * 2);
+        assert_eq!(
+            s.conservative_groups()[0].bytes_per_token(2),
+            s.kv_bytes_per_token(2)
+        );
+        // Older registries and catalogs have no layout fields; newer ones round-trip them.
+        let old: ModelShape = toml::from_str(
+            "n_layers = 2\nn_heads = 2\nn_kv_heads = 1\nhead_dim = 8\nhidden_size = 16",
+        )
+        .unwrap();
+        assert!(old.kv_groups.is_empty() && old.state_bytes_per_seq == 0);
+        let mut new = old.clone();
+        new.kv_groups = vec![KvGroup {
+            layers: 1,
+            n_kv_heads: 1,
+            head_dim: 8,
+            window: Some(1024),
+        }];
+        new.state_bytes_per_seq = 7;
+        let back: ModelShape = toml::from_str(&toml::to_string(&new).unwrap()).unwrap();
+        assert_eq!(back, new);
+        assert!(!toml::to_string(&old).unwrap().contains("kv_groups"));
     }
 }

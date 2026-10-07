@@ -62,6 +62,21 @@ pub struct RuntimeConfig {
     pub idle_unload_secs: u64,
     /// Relaunches allowed after engine crashes within 10 minutes before giving up.
     pub max_restarts: u32,
+    /// How the memory planner sizes the KV cache.
+    pub kv_accounting: KvAccounting,
+}
+
+/// How the memory planner sizes the KV cache.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum KvAccounting {
+    /// Count only caches that grow, when the model's layout is known: full-attention layers for
+    /// the whole context, sliding-window layers up to their window, and linear-attention layers
+    /// as fixed state. Models with an unknown layout fall back to `conservative`.
+    #[default]
+    PerLayer,
+    /// Every layer as full attention (the planner's formula before LLMario Beta Phase 2).
+    Conservative,
 }
 
 impl Default for RuntimeConfig {
@@ -77,6 +92,7 @@ impl Default for RuntimeConfig {
             engine_start_timeout_secs: 300,
             idle_unload_secs: 0,
             max_restarts: 3,
+            kv_accounting: KvAccounting::PerLayer,
         }
     }
 }
@@ -245,6 +261,17 @@ mod tests {
             Some(4096),
             "untouched file values survive"
         );
+    }
+
+    #[test]
+    fn kv_accounting_defaults_and_parses() {
+        assert_eq!(
+            Config::default().runtime.kv_accounting,
+            KvAccounting::PerLayer
+        );
+        let c = Config::from_toml("[runtime]\nkv_accounting = \"conservative\"").unwrap();
+        assert_eq!(c.runtime.kv_accounting, KvAccounting::Conservative);
+        assert!(Config::from_toml("[runtime]\nkv_accounting = \"guess\"").is_err());
     }
 
     #[test]

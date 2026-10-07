@@ -322,10 +322,11 @@ pub async fn run(cmd: ModelCmd) -> anyhow::Result<()> {
                 sel.profile.kind, sel.profile.parallel, sel.profile.ctx_per_slot
             );
             println!("weights   {}", fmt_bytes(plan.weights_bytes));
+            // Per token: only what grows with the context (full-attention layers).
             println!(
-                "KV cache  {} ({} per token × {} tokens)",
+                "KV cache  {} ({:.0} KiB per token × {} tokens in the layers that grow)",
                 fmt_bytes(plan.kv_cache_bytes),
-                fmt_bytes(plan.kv_bytes_per_token),
+                plan.kv_bytes_per_token as f64 / 1024.0,
                 plan.ctx_total
             );
             println!("overhead  {}", fmt_bytes(plan.overhead_bytes));
