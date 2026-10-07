@@ -245,7 +245,11 @@ pub async fn run(cmd: ModelCmd) -> anyhow::Result<()> {
                 "  license: {} — review the model card before use.",
                 entry.license
             );
-            println!("  try: llmario run {} \"hello\"", out.entry.id);
+            println!(
+                "  try: {} run {} \"hello\"",
+                llmario_core::APP_NAME,
+                out.entry.id
+            );
         }
         ModelCmd::Add { path, name, family } => {
             eprintln!("hashing files…");
