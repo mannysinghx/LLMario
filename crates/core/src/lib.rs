@@ -12,9 +12,14 @@ pub use error::RuntimeError;
 pub use paths::Paths;
 pub use types::{BackendKind, ModelFormat, ProfileKind, ResolvedProfile};
 
-/// Project name. Used for the home directory, env-var prefix and user agent, so a fork can
-/// rename the project by changing this constant and the `[[bin]]` name.
+/// Project name: the home directory (`~/.<APP_NAME>`), the command-line binary named in hints,
+/// and the user agent. A fork or a separate edition renames the project by changing these
+/// constants and the `[[bin]]` names.
 pub const APP_NAME: &str = "llmario";
+/// Prefix of the environment variables (`<ENV_PREFIX>_HOME`, `<ENV_PREFIX>_PORT`, …).
+pub const ENV_PREFIX: &str = "LLMARIO";
+/// Default port of the local API (`serve`).
+pub const DEFAULT_PORT: u16 = 11500;
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub fn user_agent() -> String {

@@ -142,7 +142,7 @@ impl Engine {
         #[cfg(windows)]
         if let Some(h) = child.raw_handle() {
             if let Err(e) = llmario_core::os::kill_on_exit(h) {
-                tracing::warn!(pid, error = %e, "engine not tied to llmario's lifetime; `llmario doctor` reports leftovers");
+                tracing::warn!(pid, error = %e, "engine not tied to llmario's lifetime; `{} doctor` reports leftovers", llmario_core::APP_NAME);
             }
         }
 
