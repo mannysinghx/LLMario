@@ -9,6 +9,8 @@
 //! | memory plan          | `-ngl` (999 = all layers when the model fits) |
 //! | prefix reuse         | `--cache-reuse 256`   |
 //! Host-side prompt cache is capped with `--cache-ram` so it is inside the memory estimate.
+//! Context checkpoints (copies of sliding-window caches and recurrent state, kept so a prompt
+//! prefix can be reused) are capped with `--ctx-checkpoints` and counted too.
 
 use llmario_core::os::background_command;
 use llmario_core::{BackendKind, Config, ModelFormat, ResolvedProfile, RuntimeError};
@@ -18,6 +20,12 @@ use std::path::PathBuf;
 
 pub const TESTED_BUILD: u32 = 11146;
 const CACHE_RAM_MIB: u64 = 1024;
+/// Context checkpoints per slot. llama.cpp keeps up to 32 by default; each holds a copy of the
+/// sliding-window caches and recurrent state. Measured on Gemma 4 12B (8k context, a long prompt
+/// and two follow-up turns): default peak 9.81 GiB (+2.54 GiB after load), 2 checkpoints
+/// 7.94 GiB (+0.66 GiB), and the follow-up turns reused the prompt equally well (17 and 14 new
+/// tokens processed in both cases).
+const CTX_CHECKPOINTS: u64 = 2;
 
 /// How to install llama.cpp on this platform (shown when `llama-server` is missing).
 pub const INSTALL_HINT: &str = if cfg!(windows) {
@@ -117,11 +125,14 @@ impl EngineAdapter for LlamaCppAdapter {
 
     fn extra_memory_bytes(
         &self,
-        _m: &llmario_registry::ModelEntry,
-        _p: &ResolvedProfile,
-        _cfg: &Config,
+        m: &llmario_registry::ModelEntry,
+        p: &ResolvedProfile,
+        cfg: &Config,
     ) -> u64 {
-        CACHE_RAM_MIB * 1024 * 1024
+        // Checkpoints copy what does not grow with the context: sliding-window caches at their
+        // cap and recurrent state, for every slot.
+        let bounded = llmario_supervisor::memory::kv_plan(m, p, BackendKind::LlamaCpp, cfg).bounded;
+        CACHE_RAM_MIB * 1024 * 1024 + CTX_CHECKPOINTS * bounded
     }
 
     fn launch(&self, ctx: &LaunchContext<'_>) -> Result<LaunchSpec, RuntimeError> {
@@ -170,6 +181,8 @@ impl EngineAdapter for LlamaCppAdapter {
             "256".into(),
             "--cache-ram".into(),
             CACHE_RAM_MIB.to_string(),
+            "--ctx-checkpoints".into(),
+            CTX_CHECKPOINTS.to_string(),
             "--threads".into(),
             ctx.hw.recommended_threads().to_string(),
             "--no-webui".into(),
@@ -284,6 +297,61 @@ mod tests {
         for a in ["llama", "qwen2", "qwen3", "gemma3", "phi3"] {
             assert!(set.contains(a), "{a} missing from {} names", set.len());
         }
+    }
+
+    #[test]
+    fn checkpoints_are_capped_and_counted() {
+        use llmario_registry::{FileRecord, KvGroup, ModelEntry, ModelShape};
+        let group = |layers, n_kv_heads, head_dim, window| KvGroup {
+            layers,
+            n_kv_heads,
+            head_dim,
+            window,
+        };
+        // Gemma 4 12B layout: the sliding-window cache at its cap is 480 MiB (1536 cells).
+        let m = ModelEntry {
+            id: "g".into(),
+            family: None,
+            format: ModelFormat::Gguf,
+            path: "/g.gguf".into(),
+            managed: false,
+            source: None,
+            license: None,
+            architecture: None,
+            quantization: None,
+            shape: Some(ModelShape {
+                n_layers: 48,
+                n_heads: 16,
+                n_kv_heads: 8,
+                head_dim: 512,
+                hidden_size: 3840,
+                context_max: None,
+                kv_groups: vec![group(8, 1, 512, None), group(40, 8, 256, Some(1024))],
+                state_bytes_per_seq: 0,
+            }),
+            chat_template: true,
+            files: vec![FileRecord {
+                name: "g.gguf".into(),
+                size: 1,
+                sha256: None,
+            }],
+            size_bytes: 1,
+            added_at: String::new(),
+        };
+        let p = ResolvedProfile::resolve(llmario_core::ProfileKind::Latency, None);
+        let mib = 1024 * 1024;
+        let a = LlamaCppAdapter;
+        assert_eq!(
+            a.extra_memory_bytes(&m, &p, &Config::default()),
+            (1024 + 2 * 480) * mib
+        );
+        // Plain models have nothing to checkpoint.
+        let mut plain = m.clone();
+        plain.shape.as_mut().unwrap().kv_groups.clear();
+        assert_eq!(
+            a.extra_memory_bytes(&plain, &p, &Config::default()),
+            1024 * mib
+        );
     }
 
     #[test]
