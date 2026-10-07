@@ -141,6 +141,12 @@ impl HardwareReport {
             })
     }
 
+    /// One-minute load average (runnable + waiting processes). `None` where the OS has no
+    /// load average (Windows), so callers do not mistake "unknown" for "idle".
+    pub fn load_average_1m() -> Option<f64> {
+        cfg!(unix).then(|| sysinfo::System::load_average().one)
+    }
+
     /// Threads for CPU-side work: performance cores on hybrid CPUs, else physical cores.
     pub fn recommended_threads(&self) -> usize {
         self.performance_cores.unwrap_or(self.physical_cores).max(1)

@@ -38,6 +38,24 @@ pub struct Environment {
     pub model_source: Option<String>,
     pub profile: Option<serde_json::Value>,
     pub power_note: String,
+    /// Bytes of weight files, for effective bandwidth (llmario-managed targets only).
+    #[serde(default)]
+    pub model_weight_bytes: Option<u64>,
+    /// One-minute load average when the run started, and the CPU's logical cores.
+    #[serde(default)]
+    pub load_average_1m: Option<f64>,
+    #[serde(default)]
+    pub logical_cores: Option<usize>,
+}
+
+impl Environment {
+    /// True when the machine was too busy for trustworthy timings (see [`crate::is_busy`]).
+    pub fn busy(&self) -> bool {
+        match (self.load_average_1m, self.logical_cores) {
+            (Some(l), Some(c)) => crate::is_busy(l, c),
+            _ => false,
+        }
+    }
 }
 
 fn f(s: &Option<Stat>, pick: fn(&Stat) -> f64, scale: f64, prec: usize) -> String {
@@ -56,6 +74,14 @@ impl Report {
         let e = &self.environment;
         let mut s = String::new();
         let _ = writeln!(s, "# Benchmark: {}\n", self.label);
+        if e.busy() {
+            let _ = writeln!(
+                s,
+                "> ⚠ **Busy machine**: these timings are not comparable (load average {:.1} on {} cores when the run started).\n",
+                e.load_average_1m.unwrap_or_default(),
+                e.logical_cores.unwrap_or_default()
+            );
+        }
         let _ = writeln!(s, "| | |\n|---|---|");
         let _ = writeln!(s, "| Date | {} |", self.timestamp);
         let _ = writeln!(
@@ -91,6 +117,13 @@ impl Report {
             self.suite, self.suite_version, self.settings.temperature, self.settings.seed.map(|s| s.to_string()).unwrap_or_else(|| "none".into()), self.settings.runs, self.settings.warmup, self.settings.cache
         );
         let _ = writeln!(s, "| Power | {} |", e.power_note);
+        if let (Some(l), Some(c)) = (e.load_average_1m, e.logical_cores) {
+            let _ = writeln!(
+                s,
+                "| Machine load | {l:.1} (1-min load average) on {c} cores at start: {} |",
+                if e.busy() { "busy" } else { "quiet" }
+            );
+        }
         if let Some(c) = self.cold_start_s {
             let _ = writeln!(s, "| Cold start | {c:.2} s (spawn → first warm-up token) |");
         }
@@ -102,12 +135,49 @@ impl Report {
         );
 
         let _ = writeln!(s, "\n## Throughput and latency by concurrency\n");
-        let _ = writeln!(s, "| conc | req | err | TTFT p50 ms | TTFT p95 ms | E2E p50 s | E2E p95 s | decode tok/s (mean/req) | aggregate tok/s | peak mem |");
-        let _ = writeln!(s, "|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|");
+        let bw = self
+            .levels
+            .iter()
+            .any(|l| l.effective_bandwidth_gbs.is_some());
+        let draft = self.levels.iter().any(|l| l.draft_acceptance.is_some());
+        let _ = writeln!(
+            s,
+            "| conc | req | err | TTFT p50 ms | TTFT p95 ms | E2E p50 s | E2E p95 s | decode tok/s (mean/req) | aggregate tok/s | peak mem |{}{}",
+            if bw { " eff. GB/s |" } else { "" },
+            if draft { " draft accepted |" } else { "" }
+        );
+        let _ = writeln!(
+            s,
+            "|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|{}{}",
+            if bw { "---:|" } else { "" },
+            if draft { "---:|" } else { "" }
+        );
         for l in &self.levels {
+            let opt = |v: Option<f64>, fmt: &dyn Fn(f64) -> String| {
+                v.map(fmt).unwrap_or_else(|| "–".into())
+            };
+            let extra = format!(
+                "{}{}",
+                if bw {
+                    format!(
+                        " {} |",
+                        opt(l.effective_bandwidth_gbs, &|v| format!("{v:.0}"))
+                    )
+                } else {
+                    String::new()
+                },
+                if draft {
+                    format!(
+                        " {} |",
+                        opt(l.draft_acceptance, &|v| format!("{:.0}%", v * 100.0))
+                    )
+                } else {
+                    String::new()
+                }
+            );
             let _ = writeln!(
                 s,
-                "| {} | {} | {} | {} | {} | {} | {} | {} | {:.1} | {} |",
+                "| {} | {} | {} | {} | {} | {} | {} | {} | {:.1} | {} |{extra}",
                 l.concurrency,
                 l.requests,
                 l.errors,
@@ -181,7 +251,8 @@ impl Report {
         let _ = writeln!(
             s,
             "\n_Method: client-side streaming timings; TTFT = request sent → first content/reasoning delta; decode = (completion tokens − 1) / (last − first delta); \
-             token counts from server `usage` when reported. Numbers are for this machine, model, and settings only._"
+             token counts from server `usage` when reported. Effective bandwidth = weight bytes × mean decode tok/s (dense models: a lower bound, KV reads excluded; MoE models read only active experts, so it overstates). \
+             Numbers are for this machine, model, and settings only._"
         );
         s
     }
