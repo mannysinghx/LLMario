@@ -43,6 +43,10 @@ pub struct BenchArgs {
     pub suite: Option<PathBuf>,
     #[arg(long)]
     pub no_quality: bool,
+    /// Run even when the machine is busy (1-minute load average above half the CPU cores).
+    /// The report is then marked as not comparable.
+    #[arg(long)]
+    pub allow_busy: bool,
     /// Label for the report (default: target + model).
     #[arg(long)]
     pub label: Option<String>,
@@ -75,8 +79,21 @@ pub async fn run(a: BenchArgs) -> anyhow::Result<()> {
         os: hw.os_version.clone(),
         power_note: util::power_note(),
         model: a.model.clone(),
+        load_average_1m: llmario_hardware::HardwareReport::load_average_1m(),
+        logical_cores: Some(hw.logical_cores),
         ..Default::default()
     };
+    if env.busy() {
+        let msg = format!(
+            "the machine is busy (1-minute load average {:.1} on {} cores); timings would not be comparable. Close other work and retry, or pass --allow-busy to run anyway (the report is then marked busy)",
+            env.load_average_1m.unwrap_or_default(),
+            hw.logical_cores
+        );
+        if !a.allow_busy {
+            anyhow::bail!(msg);
+        }
+        eprintln!("warning: {msg}");
+    }
     let progress = |m: &str| eprintln!("  · {m}");
 
     let (levels, quality, samples, cold, estimate, idle, label) = if let Some(url) = &a.url {
@@ -105,6 +122,7 @@ pub async fn run(a: BenchArgs) -> anyhow::Result<()> {
             env.backend_version = status.version.clone();
             env.model = sel.model.id.clone();
             env.model_format = Some(sel.model.format.to_string());
+            env.model_weight_bytes = Some(sel.model.weight_bytes()).filter(|b| *b > 0);
             env.model_quantization = sel.model.quantization.clone();
             env.model_content_hash = sel.model.content_hash();
             env.model_source = sel
@@ -143,8 +161,13 @@ pub async fn run(a: BenchArgs) -> anyhow::Result<()> {
         res?
     };
 
+    let mut levels = levels;
+    if let Some(w) = env.model_weight_bytes {
+        llmario_benchmark::add_effective_bandwidth(&mut levels, w);
+    }
     let report = Report {
-        schema: 1,
+        // 2: environment load/weights, per-level draft acceptance and effective bandwidth.
+        schema: 2,
         tool: format!("llmario {}", llmario_core::VERSION),
         timestamp: chrono::Utc::now().to_rfc3339(),
         label,

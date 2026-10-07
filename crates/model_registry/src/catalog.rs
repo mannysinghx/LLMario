@@ -171,6 +171,24 @@ mod tests {
     }
 
     #[test]
+    fn benchmark_reference_set_is_in_the_catalog() {
+        #[derive(Deserialize)]
+        struct Reference {
+            models: Vec<String>,
+        }
+        let r: Reference =
+            toml::from_str(include_str!("../../../benchmarks/reference-16gb.toml")).unwrap();
+        let c = Catalog::builtin();
+        assert!(r.models.len() >= 8);
+        for id in &r.models {
+            assert!(
+                c.get(id).is_some(),
+                "reference model {id} is not in the catalog"
+            );
+        }
+    }
+
+    #[test]
     fn planning_entry_carries_size_and_shape() {
         let c = Catalog::builtin();
         let e = c.get("qwen3-8b-gguf-q4km").unwrap().planning_entry();
