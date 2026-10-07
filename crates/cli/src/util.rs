@@ -73,7 +73,7 @@ pub async fn load_with_report(sup: &Arc<Supervisor>, name: &str) -> anyhow::Resu
         .map(fmt_bytes)
         .unwrap_or_else(|| "?".into());
     eprintln!(
-        "ready in {:.2}s (pid {}, footprint {resident})",
+        "ready in {:.2}s (pid {}, memory {resident})",
         e.ready_after().as_secs_f64(),
         e.pid
     );

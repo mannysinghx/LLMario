@@ -34,7 +34,7 @@
 | Decode rate | `(completion_tokens − 1) / (t_last − t_first)` |
 | E2E latency p50/p95 | Request sent → stream end |
 | Aggregate throughput | Σ completion tokens / wall time of the level |
-| Peak memory | Engine process physical footprint (macOS `proc_pid_rusage`, Linux `VmRSS`), sampled every 100 ms |
+| Peak memory | Engine process memory, sampled every 100 ms: macOS max(`ri_phys_footprint`, `ri_resident_size`) from `proc_pid_rusage` (the footprint alone leaves out llama.cpp's memory-mapped weights), Linux `VmRSS`, Windows working set |
 | Effective bandwidth | Weight bytes × mean decode tok/s per request, in GB/s. Dense models: a lower bound (KV reads excluded). MoE: overstated (only active experts are read) |
 | Draft acceptance | Σ `draft_n_accepted` ÷ Σ `draft_n` from llama-server `timings`, when speculative decoding is on |
 | Machine load | 1-minute load average and CPU cores when the run starts |
