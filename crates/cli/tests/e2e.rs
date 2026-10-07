@@ -9,7 +9,7 @@ use serde_json::{json, Value};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
-const EXE: &str = env!("CARGO_BIN_EXE_llmario");
+const EXE: &str = env!("CARGO_BIN_EXE_llmario-beta");
 
 fn hardware() -> llmario_hardware::HardwareReport {
     static HW: OnceLock<llmario_hardware::HardwareReport> = OnceLock::new();

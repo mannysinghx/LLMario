@@ -12,7 +12,7 @@
       { kind: "llamacpp", available: true, version: "0.5.0 (build 11146)", detail: "preview" },
       { kind: "mlx", available: true, version: "mlx-lm 0.31.3 / mlx 0.32.2", detail: "preview" },
     ],
-    profile: { kind: "latency", parallel: 1, ctx_per_slot: 8192 }, home: "~/.llmario", loaded: [],
+    profile: { kind: "latency", parallel: 1, ctx_per_slot: 8192 }, home: "~/.llmario-beta", loaded: [],
   };
   const installed = () => catalog.filter((c) => c.installed).map((c) => ({
     id: c.id, family: c.family, format: c.format, backend: c.backend, backendAvailable: c.backendAvailable,

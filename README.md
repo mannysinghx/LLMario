@@ -11,6 +11,18 @@
 
 ---
 
+> **This is the `beta` branch: LLMario Beta.** A separate app that installs and runs alongside
+> LLMario without touching it: `LLMario Beta.app`, the `llmario-beta` command, data in
+> `~/.llmario-beta`, settings from `LLMARIO_BETA_*` variables, and the local API on port **11501**.
+> Beta builds are published as GitHub pre-releases. What it is for and the order of work:
+> [docs/PHASES_16GB_AND_SPEED.md](docs/PHASES_16GB_AND_SPEED.md). The rest of this README
+> describes production LLMario; in the beta, read `llmario` as `llmario-beta`.
+>
+> Reuse models you already downloaded for LLMario (registered in place, never copied):
+> `llmario-beta model add ~/.llmario/models/<model-id>/<file>.gguf` (or an MLX model folder).
+
+---
+
 LLMario is an open-source local LLM runtime written in Rust. It does **not** reimplement
 inference kernels. Instead it detects your hardware, picks and supervises a proven open-source
 engine ([llama.cpp](https://github.com/ggml-org/llama.cpp) or Apple's

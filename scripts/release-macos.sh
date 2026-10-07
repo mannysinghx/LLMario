@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Build a signed, notarized, stapled LLMario DMG that opens on any Mac without warnings.
+# Build a signed, notarized, stapled LLMario Beta DMG that opens on any Mac without warnings.
+# Publish it as a GitHub *pre-release* so /releases/latest keeps pointing at production.
 #
 #   scripts/release-macos.sh                  # universal (Apple Silicon + Intel), notarized
 #   scripts/release-macos.sh --skip-notarize  # sign + DMG only (dry run; others will see warnings)
@@ -51,10 +52,10 @@ for t in $([[ $TARGET == universal-apple-darwin ]] && echo aarch64-apple-darwin 
   rustup target list --installed | grep -qx "$t" || die "missing Rust target $t: rustup target add $t"
 done
 
-say "Building LLMario $VERSION ($ARCH), signing as: $IDENTITY"
+say "Building LLMario Beta $VERSION ($ARCH), signing as: $IDENTITY"
 say "(macOS may ask once for permission to use the signing key: choose Always Allow)"
 (cd "$TAURI_DIR" && APPLE_SIGNING_IDENTITY="$IDENTITY" cargo tauri build --target "$TARGET" --bundles app)
-APP="$ROOT/target/$TARGET/release/bundle/macos/LLMario.app"
+APP="$ROOT/target/$TARGET/release/bundle/macos/LLMario Beta.app"
 [[ -d "$APP" ]] || die "bundle not found at $APP"
 
 say "Verifying app signature"
@@ -63,7 +64,7 @@ SIGINFO="$(codesign -d --verbose=4 "$APP" 2>&1)"
 grep -q "Authority=Developer ID Application" <<<"$SIGINFO" || die "app is not signed with a Developer ID certificate"
 grep -Eq "flags=.*runtime" <<<"$SIGINFO" || die "hardened runtime is not enabled (required for notarization)"
 grep -q "^Timestamp=" <<<"$SIGINFO" || die "signature has no secure timestamp (required for notarization)"
-lipo -archs "$APP/Contents/MacOS/llmario-desktop"
+lipo -archs "$APP/Contents/MacOS/llmario-desktop-beta"
 
 OUT="$ROOT/dist"
 mkdir -p "$OUT"
@@ -72,18 +73,18 @@ trap 'rm -rf "$WORK"' EXIT
 
 if (( NOTARIZE )); then
   say "Notarizing the app (usually 1–5 minutes)"
-  ditto -c -k --keepParent "$APP" "$WORK/LLMario.zip"
-  xcrun notarytool submit "$WORK/LLMario.zip" --keychain-profile "$PROFILE" --wait
+  ditto -c -k --keepParent "$APP" "$WORK/LLMario-Beta.zip"
+  xcrun notarytool submit "$WORK/LLMario-Beta.zip" --keychain-profile "$PROFILE" --wait
   xcrun stapler staple "$APP"
 fi
 
 say "Creating DMG"
-DMG="$OUT/LLMario-$VERSION-macos-$ARCH.dmg"
+DMG="$OUT/LLMario-Beta-$VERSION-macos-$ARCH.dmg"
 mkdir "$WORK/dmg"
-ditto "$APP" "$WORK/dmg/LLMario.app"
+ditto "$APP" "$WORK/dmg/LLMario Beta.app"
 ln -s /Applications "$WORK/dmg/Applications"
 rm -f "$DMG"
-hdiutil create -volname "LLMario $VERSION" -srcfolder "$WORK/dmg" -fs HFS+ -format UDZO -ov "$DMG" >/dev/null
+hdiutil create -volname "LLMario Beta $VERSION" -srcfolder "$WORK/dmg" -fs HFS+ -format UDZO -ov "$DMG" >/dev/null
 codesign --sign "$IDENTITY" --timestamp "$DMG"
 
 if (( NOTARIZE )); then

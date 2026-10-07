@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "LLMario",
-  "version": "0.2.0",
-  "identifier": "dev.llmario.desktop",
+  "productName": "LLMario Beta",
+  "version": "0.3.0-beta.1",
+  "identifier": "dev.llmario.desktop.beta",
   "build": {
     "frontendDist": "../ui"
   },
@@ -11,7 +11,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "LLMario",
+        "title": "LLMario Beta",
         "width": 1180,
         "height": 780,
         "minWidth": 760,
@@ -26,7 +26,7 @@
     "active": true,
     "targets": ["app", "dmg"],
     "category": "DeveloperTool",
-    "shortDescription": "Chat with local LLMs",
+    "shortDescription": "Chat with local LLMs (beta)",
     "longDescription": "LLMario runs open models on your own computer with llama.cpp or MLX, sized to your hardware.",
     "icon": [
       "icons/32x32.png",
