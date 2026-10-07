@@ -199,14 +199,38 @@ Validated by a dry run on the M4 Max development machine with Qwen3 1.7B GGUF, i
 - The production comparison is not meaningful there. The runs were at load 5–8, and production
   still warms up with only the short prompt.
 
+**First full run** (2026-10-07, M4 Max development machine, not 16 GB hardware), in
+[benchmarks/results/2026-10-07-apple-m4-max-64gb](../benchmarks/results/2026-10-07-apple-m4-max-64gb/SUMMARY.md).
+Three reference models (GGUF), beta and production, concurrency 1, quiet machine (load 4.6 at
+start):
+
+| Model | Beta decode tok/s | Production decode tok/s | Beta eff. GB/s | Planner estimate | Quality |
+|---|---:|---:|---:|---:|---|
+| Qwen3.5 9B Q4_K_M | 67.4 | 57.0 | 383 | 8.32 GiB | 3/3 both |
+| Gemma 4 12B Q4_0 | 48.9 | 47.8 | 341 | 14.62 GiB | 3/3 both |
+| gpt-oss-20b MXFP4 | 90.5 | 75.5 | 1,096 (MoE: overstated) | 14.18 GiB | 3/3 both |
+
+The beta–production gap is the harness, not inference. Production warms up with one short request,
+so its first measured prompts are slower. On medium and long prompts the two are within about 2–9%.
+
 Open items:
 
-- **The 16 GB run** needs a 16 GB Mac and the reference models (about 66 GiB of downloads for all
-  ten files; any subset works).
+- **The 16 GB run** still needs a 16 GB Mac. Three reference GGUFs are on the external drive, linked
+  as the beta's models folder (`~/.llmario-beta/models`).
+- **Peak memory leaves out memory-mapped weights for llama.cpp.** gpt-oss-20b used 0.49 GiB right
+  after loading 11.28 GiB of weights.
+  - Likely cause (not yet verified): llama.cpp maps the weight file into memory, and macOS does not
+    count those pages in the process footprint.
+  - This blocks Phase 2's "estimate at or above measured peak" check. Measure system-level memory
+    while a model loads, or run llama.cpp without memory mapping, before calibrating.
+- **Consecutive runs inherit load.** Gemma 4 12B started at load 7.9, raised by the previous model's
+  run. Add a cool-down between models in `scripts/bench-baseline.sh`.
+- **Comparing with production:** use the medium and long prompts, or measure production through the
+  beta's harness (`llmario-beta bench --url`), so both get the same warm-up.
 - **Calibrate the busy threshold.** At load 8.0 on 16 cores the guard let the dry run through,
   and those numbers were 9–15% below the quiet published baseline. Measure one model at several
   loads before tightening the threshold.
-- `main` pins the yanked `yoke-derive` 0.8.3 too (fixed on `beta`); a separate fix is proposed.
+- `yoke-derive` on `main`: fixed by PR #2 (merged as `9932492`).
 
 ## Phase 2 — Accurate KV accounting
 
