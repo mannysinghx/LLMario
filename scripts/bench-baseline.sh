@@ -90,6 +90,17 @@ keep = {k: d[k] for k in ("version", "hardware", "hardware_fingerprint", "profil
 keep["backends"] = [{k: b.get(k) for k in ("kind", "available", "version", "tested_version")} for b in d["backends"]]
 print(json.dumps(keep, indent=2))' <<<"$ENV_JSON" >"$OUT/environment.json"
 
+# Between models the previous run's engine threads keep the 1-minute load average up (measured:
+# 7.9 right after a run); wait up to 5 minutes for it to settle below the busy threshold.
+wait_quiet() {
+  local waited=0
+  while python3 -c "import os, sys; l = os.getloadavg()[0]; sys.exit(0 if l > max(2.0, os.cpu_count() * 0.5) else 1)"; do
+    (( waited >= 300 )) && { echo "  ! still busy after 5 minutes; bench will refuse"; return; }
+    (( waited == 0 )) && echo "  · waiting for the machine to settle"
+    sleep 15; waited=$(( waited + 15 ))
+  done
+}
+
 installed() { "$1" model list --json 2>/dev/null | python3 -c 'import json, sys; print("\n".join(m["id"] for m in json.load(sys.stdin)))'; }
 
 SUMMARY="$OUT/SUMMARY.md"
@@ -110,6 +121,7 @@ bench_all() { # edition-name binary [extra args]
     if ! grep -qx "$id" <<<"$have"; then
       echo "| $name | \`$id\` | not installed |" >>"$SUMMARY"; continue
     fi
+    (( ALLOW_BUSY )) || wait_quiet
     say "$name: $id"
     local log="$OUT/$name/.$id.log"
     if "$bin" bench -m "$id" --concurrency "$CONC" --runs "$RUNS" --out "$OUT/$name" "$@" >/dev/null 2>"$log"; then

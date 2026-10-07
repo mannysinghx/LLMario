@@ -616,3 +616,76 @@ async fn runtime_chat_client_streams_cancels_and_reports_errors() {
     .unwrap_err();
     assert_eq!(err.code, "model_not_found");
 }
+
+/// `model refresh` restores the per-layer KV layout of a model registered before it existed.
+#[test]
+fn cli_model_refresh_records_kv_layout() {
+    let home = tempfile::tempdir().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let types: Vec<&str> = (0..6)
+        .map(|i| {
+            if i == 5 {
+                "full_attention"
+            } else {
+                "sliding_attention"
+            }
+        })
+        .collect();
+    let cfg = json!({"model_type": "gemma4_text", "num_hidden_layers": 6, "layer_types": types,
+        "num_attention_heads": 4, "num_key_value_heads": 2, "head_dim": 64, "hidden_size": 256,
+        "num_global_key_value_heads": 1, "global_head_dim": 128, "sliding_window": 512});
+    std::fs::write(dir.path().join("config.json"), cfg.to_string()).unwrap();
+    std::fs::write(dir.path().join("model.safetensors"), [0u8; 64]).unwrap();
+    std::fs::write(
+        dir.path().join("tokenizer_config.json"),
+        r#"{"chat_template":"x"}"#,
+    )
+    .unwrap();
+    let env = format!("{}_HOME", llmario_core::ENV_PREFIX);
+    let run = |args: &[&str]| {
+        let out = std::process::Command::new(EXE)
+            .args(args)
+            .env(&env, home.path())
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8_lossy(&out.stdout).to_string()
+    };
+    run(&[
+        "model",
+        "add",
+        dir.path().to_str().unwrap(),
+        "--name",
+        "swa",
+    ]);
+    let reg_path = home.path().join("registry.toml");
+    let groups = |text: &str| {
+        let r: Registry = toml::from_str(text).unwrap();
+        r.get("swa").unwrap().shape.clone().unwrap().kv_groups
+    };
+    let recorded = groups(&std::fs::read_to_string(&reg_path).unwrap());
+    assert_eq!(recorded.len(), 2, "1 full + 5 sliding layers: {recorded:?}");
+
+    // An entry from before Phase 2: no layout fields.
+    let mut r: Registry = toml::from_str(&std::fs::read_to_string(&reg_path).unwrap()).unwrap();
+    for m in r.models.iter_mut() {
+        m.shape.as_mut().unwrap().kv_groups.clear();
+    }
+    std::fs::write(&reg_path, toml::to_string_pretty(&r).unwrap()).unwrap();
+    assert!(groups(&std::fs::read_to_string(&reg_path).unwrap()).is_empty());
+
+    let out = run(&["model", "refresh"]);
+    assert!(
+        out.contains("✓ swa") && out.contains("1 model(s) updated"),
+        "{out}"
+    );
+    assert_eq!(
+        groups(&std::fs::read_to_string(&reg_path).unwrap()),
+        recorded
+    );
+    assert!(run(&["model", "refresh", "swa"]).contains("unchanged"));
+}
