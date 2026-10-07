@@ -1,0 +1,27 @@
+# Phase 1 reference set (docs/PHASES_16GB_AND_SPEED.md): models at or near the 16 GB limit, in
+# both formats where published. Every later phase is measured on these, on 16 GB hardware,
+# against the production baseline. Ids are model-library (catalog) ids; a test checks they exist.
+#
+# Run: scripts/bench-baseline.sh (benchmarks every reference model installed in the beta, and
+# in production when given --production).
+
+name = "16gb"
+version = 1
+
+models = [
+  # Dense 8–9B: fits a 16 GB Mac today; the speed baseline.
+  "qwen3-8b-gguf-q4km",
+  "qwen3-8b-mlx-4bit",
+  # Hybrid attention (linear layers): KV over-counted today (Phase 2).
+  "qwen3.5-9b-gguf-q4km",
+  "qwen3.5-9b-mlx-4bit",
+  # Sliding-window attention: refused on 16 GB today, ~9 GiB with real KV (Phase 2).
+  "gemma-4-12b-gguf-q4_0",
+  "gemma-4-12b-mlx-4bit",
+  # Dense 14B: fits only with 8-bit KV and smaller caches (Phase 3).
+  "ministral-3-14b-gguf-q4km",
+  "ministral-3-14b-mlx-4bit",
+  # MoE, 3.6B of 21B active: at the edge of 16 GB; needs the GPU/CPU split on a Mac (Phase 7).
+  "gpt-oss-20b-gguf-mxfp4",
+  "gpt-oss-20b-mlx-mxfp4-q8",
+]

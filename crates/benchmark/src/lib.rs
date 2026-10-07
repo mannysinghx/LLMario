@@ -85,6 +85,12 @@ pub struct Sample {
     pub token_count_source: String,
     pub prefill_tps: Option<f64>,
     pub decode_tps: Option<f64>,
+    /// Speculative decoding, when the engine reports it (llama-server `timings.draft_n` /
+    /// `timings.draft_n_accepted`): tokens proposed by the draft and tokens the model kept.
+    #[serde(default)]
+    pub draft_tokens: Option<u64>,
+    #[serde(default)]
+    pub draft_accepted: Option<u64>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -128,6 +134,8 @@ pub async fn run_one(
         token_count_source: "chunks".into(),
         prefill_tps: None,
         decode_tps: None,
+        draft_tokens: None,
+        draft_accepted: None,
     };
     let mut rb = http
         .post(format!(
@@ -202,6 +210,10 @@ pub async fn run_one(
                 ) {
                     usage = Some((p, c));
                 }
+            }
+            if let Some((n, a)) = draft_counts(&v) {
+                sample.draft_tokens = Some(n);
+                sample.draft_accepted = Some(a);
             }
             if let Some(delta) = v.pointer("/choices/0/delta") {
                 let mut got = false;
@@ -329,6 +341,12 @@ pub struct LevelResult {
     pub decode_tps: Option<Stat>,
     pub prefill_tps: Option<Stat>,
     pub peak_memory_bytes: Option<u64>,
+    /// Σ accepted ÷ Σ drafted tokens, when the engine reports speculative decoding.
+    #[serde(default)]
+    pub draft_acceptance: Option<f64>,
+    /// Weight bytes × mean decode tok/s, in GB/s (see [`add_effective_bandwidth`]).
+    #[serde(default)]
+    pub effective_bandwidth_gbs: Option<f64>,
     /// Per-case TTFT/prefill (prefill depends on prompt length).
     pub per_case: Vec<CaseResult>,
 }
@@ -355,9 +373,11 @@ pub async fn run(
         .timeout(Duration::from_secs(1800))
         .build()?;
 
-    if let Some(c) = suite.perf.first() {
-        for i in 0..s.warmup {
-            progress(&format!("warm-up {}/{}", i + 1, s.warmup));
+    // Each warm-up pass runs every perf case once, so the engine has seen every prompt length
+    // (kernels compiled, buffers sized, GPU clocks up) before anything is measured.
+    for i in 0..s.warmup {
+        for c in &suite.perf {
+            progress(&format!("warm-up {}/{}: {}", i + 1, s.warmup, c.id));
             let (smp, _) = run_one(&http, t, c, s, 1).await;
             if !smp.ok {
                 anyhow::bail!("warm-up request failed: {}", smp.error.unwrap_or_default());
@@ -438,6 +458,10 @@ fn summarise(
         set.iter().filter_map(|s| f(s)).collect()
     };
     let tokens: u64 = ok.iter().map(|s| s.completion_tokens).sum();
+    let (drafted, accepted) = ok
+        .iter()
+        .filter_map(|s| Some((s.draft_tokens?, s.draft_accepted?)))
+        .fold((0u64, 0u64), |(n, a), (dn, da)| (n + dn, a + da));
     let per_case = suite
         .perf
         .iter()
@@ -467,8 +491,39 @@ fn summarise(
         decode_tps: stat(&col(&|s| s.decode_tps, &ok)),
         prefill_tps: stat(&col(&|s| s.prefill_tps, &ok)),
         peak_memory_bytes: peak,
+        draft_acceptance: (drafted > 0).then(|| accepted as f64 / drafted as f64),
+        effective_bandwidth_gbs: None,
         per_case,
     }
+}
+
+/// `(draft_n, draft_n_accepted)` from a streamed chunk's llama-server `timings`, if present.
+fn draft_counts(v: &Value) -> Option<(u64, u64)> {
+    let t = v.get("timings")?;
+    Some((
+        t.get("draft_n")?.as_u64()?,
+        t.get("draft_n_accepted")?.as_u64()?,
+    ))
+}
+
+/// Set each level's effective memory bandwidth: weight bytes × mean decode tok/s per request.
+/// Every decode step reads the weights once and gives each running request one token, so
+/// this holds at any concurrency. Dense models: a lower bound (KV-cache reads are left out).
+/// MoE models read only their active experts, so for them it overstates the bandwidth.
+pub fn add_effective_bandwidth(levels: &mut [LevelResult], weight_bytes: u64) {
+    for l in levels {
+        l.effective_bandwidth_gbs = l
+            .decode_tps
+            .as_ref()
+            .map(|d| weight_bytes as f64 * d.mean / 1e9);
+    }
+}
+
+/// Busy enough that timings would be noise: a one-minute load average above half the CPU
+/// cores (at least 2). Measured: at load 26 on 16 cores the same run gave 92–178 tok/s
+/// against a 217 tok/s quiet baseline.
+pub fn is_busy(load_1m: f64, cores: usize) -> bool {
+    load_1m > (cores as f64 * 0.5).max(2.0)
 }
 
 #[cfg(test)]
@@ -490,6 +545,67 @@ mod tests {
         );
         assert_ne!(a, b);
         assert!(a.ends_with("\nP"));
+    }
+
+    fn sample(case: &str, decode: f64, draft: Option<(u64, u64)>) -> Sample {
+        Sample {
+            case: case.into(),
+            concurrency: 1,
+            ok: true,
+            error: None,
+            ttft_s: Some(0.1),
+            e2e_s: 1.0,
+            prompt_tokens: Some(10),
+            completion_tokens: 100,
+            token_count_source: "usage".into(),
+            prefill_tps: Some(100.0),
+            decode_tps: Some(decode),
+            draft_tokens: draft.map(|d| d.0),
+            draft_accepted: draft.map(|d| d.1),
+        }
+    }
+
+    #[test]
+    fn reads_llama_server_draft_counts() {
+        let v =
+            serde_json::json!({"choices": [], "timings": {"draft_n": 48, "draft_n_accepted": 46}});
+        assert_eq!(draft_counts(&v), Some((48, 46)));
+        assert_eq!(
+            draft_counts(&serde_json::json!({"timings": {"predicted_n": 3}})),
+            None
+        );
+        assert_eq!(draft_counts(&serde_json::json!({"choices": []})), None);
+    }
+
+    #[test]
+    fn acceptance_and_bandwidth() {
+        let suite = Suite::builtin();
+        let with = [
+            sample("short", 100.0, Some((40, 30))),
+            sample("short", 100.0, Some((10, 10))),
+        ];
+        let mut levels = vec![summarise(1, &with, 2.0, None, &suite)];
+        assert_eq!(levels[0].draft_acceptance, Some(0.8));
+        assert_eq!(levels[0].effective_bandwidth_gbs, None);
+        add_effective_bandwidth(&mut levels, 4_610_000_000);
+        let bw = levels[0].effective_bandwidth_gbs.unwrap();
+        assert!((bw - 461.0).abs() < 1e-6, "{bw}");
+        let without = [sample("short", 50.0, None)];
+        assert_eq!(
+            summarise(1, &without, 1.0, None, &suite).draft_acceptance,
+            None
+        );
+    }
+
+    #[test]
+    fn busy_threshold() {
+        assert!(
+            is_busy(26.0, 16),
+            "the noisy run in docs/PHASES_16GB_AND_SPEED.md"
+        );
+        assert!(!is_busy(3.5, 16));
+        assert!(!is_busy(1.9, 2), "small machines: at least 2");
+        assert!(is_busy(2.1, 2));
     }
 
     #[test]
