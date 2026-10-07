@@ -74,6 +74,8 @@ pub struct LoadInfo {
     budget_bytes: u64,
     profile: ResolvedProfile,
     notes: Vec<String>,
+    /// Set when the other LLMario edition also has models loaded (shown to the user).
+    warning: Option<String>,
 }
 
 async fn overview_of(rt: &Runtime) -> Overview {
@@ -263,6 +265,7 @@ pub async fn load_model(state: State<'_, AppState>, name: String) -> CmdResult<L
         budget_bytes: plan.budget_bytes,
         profile: e.profile.clone(),
         notes,
+        warning: llmario_supervisor::sibling::sibling_usage(&rt.sup.paths).map(|u| u.warning()),
     })
 }
 

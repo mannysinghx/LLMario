@@ -5,6 +5,7 @@ pub mod adapter;
 pub mod engine;
 pub mod memory;
 pub mod planner;
+pub mod sibling;
 pub mod supervisor;
 
 pub use adapter::{BackendStatus, EngineAdapter, LaunchContext, LaunchSpec};

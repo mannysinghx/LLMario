@@ -10,6 +10,7 @@ pub async fn run(as_json: bool) -> anyhow::Result<()> {
     let hw = &sup.hw;
     let reg = sup.registry();
     let orphans = llmario_supervisor::engine::find_orphans(&paths.run_dir());
+    let other_app = llmario_supervisor::sibling::sibling_usage(&paths);
 
     let backends: Vec<_> = [BackendKind::LlamaCpp, BackendKind::Mlx]
         .iter()
@@ -47,6 +48,7 @@ pub async fn run(as_json: bool) -> anyhow::Result<()> {
                 "profile": p, "memory": plan,
             })).collect::<Vec<_>>(),
             "orphaned_engines": orphans.iter().map(|(pid, model, prog)| json!({"pid": pid, "model": model, "program": prog})).collect::<Vec<_>>(),
+            "other_app_engines": other_app,
             "paths": {"home": paths.home, "config": paths.config_file(), "registry": paths.registry_file()},
             "server": {"host": cfg.server.host, "port": cfg.server.port, "api_key_set": cfg.server.api_key.is_some()},
         });
@@ -180,6 +182,9 @@ pub async fn run(as_json: bool) -> anyhow::Result<()> {
                 "           pid {pid}  {model}  {prog}   → `kill {pid}` if you do not need it"
             );
         }
+    }
+    if let Some(u) = &other_app {
+        println!("Also     ⚠ {}", u.warning());
     }
     Ok(())
 }

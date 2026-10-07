@@ -291,6 +291,9 @@ impl Supervisor {
         let status = &self.statuses[&sel.backend];
         let plan = self.plan_memory(sel, reserved);
         let timeout = Duration::from_secs(self.cfg.runtime.engine_start_timeout_secs);
+        if let Some(other) = crate::sibling::sibling_usage(&self.paths) {
+            tracing::warn!(model = %sel.model.id, "{}", other.warning());
+        }
 
         let mut last_err = None;
         for attempt in 1..=2 {
