@@ -49,6 +49,12 @@ pub enum ModelCmd {
     Info { id: String },
     /// Re-hash an installed model's files against the recorded checksums.
     Verify { id: String },
+    /// Re-read installed models' headers (GGUF) or config.json (MLX) and update their recorded
+    /// shape, including the per-layer KV layout. Files are not hashed or changed.
+    Refresh {
+        /// Only this model (default: all installed models).
+        id: Option<String>,
+    },
     /// Estimate memory for a model with a profile/context, without loading it.
     Fit {
         name: String,
@@ -295,6 +301,51 @@ pub async fn run(cmd: ModelCmd) -> anyhow::Result<()> {
                 m.content_hash()
                     .unwrap_or_else(|| "(missing checksums)".into())
             );
+        }
+        ModelCmd::Refresh { id } => {
+            if let Some(id) = &id {
+                anyhow::ensure!(reg.get(id).is_some(), "model '{id}' is not registered");
+            }
+            let mut changed = 0;
+            for m in reg.models.iter_mut() {
+                if id.as_ref().is_some_and(|id| *id != m.id) || m.format == ModelFormat::Mock {
+                    continue;
+                }
+                let shape = match llmario_registry::inspect::inspect(&m.path, false) {
+                    Ok(i) => i.shape,
+                    Err(e) => {
+                        println!("✗ {}: cannot read ({e}); kept as it was", m.id);
+                        continue;
+                    }
+                };
+                if shape == m.shape {
+                    println!("  {}: unchanged", m.id);
+                    continue;
+                }
+                let layout = shape
+                    .as_ref()
+                    .filter(|s| !s.kv_groups.is_empty())
+                    .map(|s| {
+                        let full: u32 = s
+                            .kv_groups
+                            .iter()
+                            .filter(|g| g.window.is_none())
+                            .map(|g| g.layers)
+                            .sum();
+                        format!(
+                            "KV cache in {full} of {} layers grows with the context",
+                            s.n_layers
+                        )
+                    })
+                    .unwrap_or_else(|| "shape updated".into());
+                println!("✓ {}: {layout}", m.id);
+                m.shape = shape;
+                changed += 1;
+            }
+            if changed > 0 {
+                reg.save()?;
+            }
+            println!("{changed} model(s) updated");
         }
         ModelCmd::Verify { id } => {
             let m = reg
