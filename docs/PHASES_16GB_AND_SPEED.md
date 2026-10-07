@@ -25,7 +25,7 @@ Two findings shape the order:
 | # | Phase | Main outcome | Depends on | Relative effort | Risk |
 |---|---|---|---|---|---|
 | 0 | [LLMario Beta app](#phase-0--llmario-beta-app) ✅ built | A beta that installs, runs and stores data separately from production | — | S–M | Low |
-| 1 | [Measurement baseline](#phase-1--measurement-baseline) | Numbers we can trust, on real 16 GB hardware | 0 | S | Low |
+| 1 | [Measurement baseline](#phase-1--measurement-baseline) 🟡 harness built | Numbers we can trust, on real 16 GB hardware | 0 | S | Low |
 | 2 | [Accurate KV accounting](#phase-2--accurate-kv-accounting) | Gemma 4 12B and Qwen3.5 9B (MLX) fit 16 GB Macs | 1 | M | Medium |
 | 3 | [Small-machine memory profile](#phase-3--small-machine-memory-profile) | Ministral 3 14B and Phi-4 fit; cheaper long-context decode | 1, 2 | S–M | Low–medium |
 | 4 | [Speculative decoding](#phase-4--speculative-decoding) | More than one token per weight read (+12–30% measured with a draft model) | 1 | M | Low |
@@ -146,6 +146,9 @@ Still to check before Phase 0 is closed:
 
 **Goal:** trustworthy numbers before anything changes.
 
+**Status (2026-10-07): harness built and validated on `beta`; the 16 GB run is still to do.** See
+[Phase 1 results](#phase-1-results).
+
 **Why first after the shell:** during this investigation, a llama.cpp run on a busy machine (load
 average 26) gave 92–178 tok/s for the same model and flags that measured 217 tok/s in the
 [published benchmark](../benchmarks/results/2026-09-29/SUMMARY.md). llama.cpp's `ngram-mod`
@@ -170,6 +173,40 @@ replaying the previous answer. Without a protocol, later phases would be judged 
 
 **Exit:** a baseline for the reference set on 16 GB hardware in `benchmarks/results/`, for production
 and for the beta shell.
+
+### Phase 1 results
+
+Built on `beta`:
+
+- **Quiet-machine guard:** `bench` refuses to run on a busy machine unless `--allow-busy`, and the
+  report records the load.
+- **Warm-up over every prompt length.**
+- **Effective bandwidth and draft acceptance** per concurrency level, in report schema 2.
+- **Reference set:** `benchmarks/reference-16gb.toml`, with a test that every id is in the catalog.
+- **Runner:** `scripts/bench-baseline.sh`.
+  - Checks AC power and load.
+  - Benchmarks every installed reference model in the beta, and in production with
+    `--production`.
+  - Records refusals as results.
+  - Writes `SUMMARY.md` and `environment.json` with no home paths.
+  - Runs on the stock macOS bash 3.2 and python3 3.9.
+
+Validated by a dry run on the M4 Max development machine with Qwen3 1.7B GGUF, in a scratch home:
+
+- Both editions were measured and summarized.
+- The beta report shows load, bandwidth (205 GB/s at 185 tok/s) and the busy flag.
+- The outputs contain no personal paths.
+- The production comparison is not meaningful there. The runs were at load 5–8, and production
+  still warms up with only the short prompt.
+
+Open items:
+
+- **The 16 GB run** needs a 16 GB Mac and the reference models (about 66 GiB of downloads for all
+  ten files; any subset works).
+- **Calibrate the busy threshold.** At load 8.0 on 16 cores the guard let the dry run through,
+  and those numbers were 9–15% below the quiet published baseline. Measure one model at several
+  loads before tightening the threshold.
+- `main` pins the yanked `yoke-derive` 0.8.3 too (fixed on `beta`); a separate fix is proposed.
 
 ## Phase 2 — Accurate KV accounting
 
