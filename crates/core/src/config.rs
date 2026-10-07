@@ -33,7 +33,7 @@ impl Default for ServerConfig {
     fn default() -> Self {
         Self {
             host: "127.0.0.1".into(),
-            port: 11500,
+            port: crate::DEFAULT_PORT,
             api_key: None,
             allow_remote: false,
         }
@@ -134,7 +134,7 @@ impl Config {
 
     /// Apply `LLMARIO_*` overrides. Takes a lookup fn so tests do not touch process env.
     pub fn apply_env(&mut self, get: impl Fn(&str) -> Option<String>) -> anyhow::Result<()> {
-        let p = crate::APP_NAME.to_ascii_uppercase();
+        let p = crate::ENV_PREFIX;
         let var = |name: &str| get(&format!("{p}_{name}")).filter(|v| !v.is_empty());
         if let Some(v) = var("HOST") {
             self.server.host = v;
@@ -177,7 +177,7 @@ impl Config {
             if self.server.api_key.as_deref().is_none_or(str::is_empty) {
                 anyhow::bail!(
                     "remote binding requires an API key (--api-key or {}_API_KEY)",
-                    crate::APP_NAME.to_ascii_uppercase()
+                    crate::ENV_PREFIX
                 );
             }
         }
@@ -231,8 +231,12 @@ mod tests {
         .unwrap();
         assert_eq!(c.server.port, 9000);
         assert_eq!(c.runtime.profile, ProfileKind::Balanced);
-        let env: HashMap<&str, &str> =
-            [("LLMARIO_PORT", "9100"), ("LLMARIO_PROFILE", "throughput")].into();
+        let p = crate::ENV_PREFIX;
+        let env: HashMap<String, &str> = [
+            (format!("{p}_PORT"), "9100"),
+            (format!("{p}_PROFILE"), "throughput"),
+        ]
+        .into();
         c.apply_env(|k| env.get(k).map(|s| s.to_string())).unwrap();
         assert_eq!(c.server.port, 9100);
         assert_eq!(c.runtime.profile, ProfileKind::Throughput);
@@ -252,7 +256,7 @@ mod tests {
     fn bad_env_value_is_an_error() {
         let mut c = Config::default();
         assert!(c
-            .apply_env(|k| (k == "LLMARIO_PORT").then(|| "abc".into()))
+            .apply_env(|k| (k == format!("{}_PORT", crate::ENV_PREFIX)).then(|| "abc".into()))
             .is_err());
     }
 

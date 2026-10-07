@@ -8,7 +8,7 @@ pub struct Paths {
 
 impl Paths {
     pub fn from_env() -> anyhow::Result<Self> {
-        let var = format!("{}_HOME", crate::APP_NAME.to_ascii_uppercase());
+        let var = format!("{}_HOME", crate::ENV_PREFIX);
         if let Some(h) = std::env::var_os(&var).filter(|v| !v.is_empty()) {
             return Ok(Self::at(PathBuf::from(h)));
         }
@@ -63,7 +63,7 @@ impl Paths {
     /// Replace the home prefix with `~` style placeholder for routine logs (privacy).
     pub fn redact(&self, p: &Path) -> String {
         match p.strip_prefix(&self.home) {
-            Ok(rest) => format!("$LLMARIO_HOME/{}", rest.display()),
+            Ok(rest) => format!("${}_HOME/{}", crate::ENV_PREFIX, rest.display()),
             Err(_) => match dirs::home_dir()
                 .and_then(|h| p.strip_prefix(h).ok().map(|r| r.to_path_buf()))
             {

@@ -72,7 +72,10 @@ pub async fn run(cmd: ModelCmd) -> anyhow::Result<()> {
                 return Ok(());
             }
             if models.is_empty() {
-                println!("No models installed. See `llmario model catalog`.");
+                println!(
+                    "No models installed. See `{} model catalog`.",
+                    llmario_core::APP_NAME
+                );
             }
             println!(
                 "{:<26} {:<16} {:<5} {:<18} {:>10}  SOURCE",
@@ -152,7 +155,7 @@ pub async fn run(cmd: ModelCmd) -> anyhow::Result<()> {
                     status
                 );
             }
-            println!("\n★ = recommended for this computer. Pull by id, or by family for the best variant: `llmario model pull qwen3.5-9b`");
+            println!("\n★ = recommended for this computer. Pull by id, or by family for the best variant: `{} model pull qwen3.5-9b`", llmario_core::APP_NAME);
         }
         ModelCmd::Pull {
             name,
@@ -166,7 +169,8 @@ pub async fn run(cmd: ModelCmd) -> anyhow::Result<()> {
                     let variants = cat.family(&name);
                     if variants.is_empty() {
                         anyhow::bail!(
-                            "'{name}' is not in the catalog (see `llmario model catalog`)"
+                            "'{name}' is not in the catalog (see `{} model catalog`)",
+                            llmario_core::APP_NAME
                         );
                     }
                     // Use the library's recommendation: engine installed and able to load the

@@ -503,7 +503,7 @@ fn cli_doctor_json_and_config() {
     let home = tempfile::tempdir().unwrap();
     let out = std::process::Command::new(EXE)
         .args(["doctor", "--json"])
-        .env("LLMARIO_HOME", home.path())
+        .env(format!("{}_HOME", llmario_core::ENV_PREFIX), home.path())
         .output()
         .unwrap();
     assert!(
@@ -517,7 +517,7 @@ fn cli_doctor_json_and_config() {
 
     let out = std::process::Command::new(EXE)
         .args(["serve", "--host", "0.0.0.0"])
-        .env("LLMARIO_HOME", home.path())
+        .env(format!("{}_HOME", llmario_core::ENV_PREFIX), home.path())
         .output()
         .unwrap();
     assert!(
@@ -528,8 +528,8 @@ fn cli_doctor_json_and_config() {
 
     let out = std::process::Command::new(EXE)
         .args(["config"])
-        .env("LLMARIO_HOME", home.path())
-        .env("LLMARIO_API_KEY", "zzz")
+        .env(format!("{}_HOME", llmario_core::ENV_PREFIX), home.path())
+        .env(format!("{}_API_KEY", llmario_core::ENV_PREFIX), "zzz")
         .output()
         .unwrap();
     let text = String::from_utf8_lossy(&out.stdout);

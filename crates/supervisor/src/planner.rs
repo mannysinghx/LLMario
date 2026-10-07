@@ -110,8 +110,9 @@ pub fn select(
         }
     }
     Err(RuntimeError::BackendUnavailable(format!(
-        "no available backend can serve '{name}': {}. Run `llmario doctor`.",
-        rejected.join("; ")
+        "no available backend can serve '{name}': {}. Run `{} doctor`.",
+        rejected.join("; "),
+        llmario_core::APP_NAME
     )))
 }
 
