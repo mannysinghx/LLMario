@@ -513,8 +513,11 @@ pub(crate) mod tests {
 
     #[test]
     fn gemma_4_12b_fits_a_16_gb_mac_with_its_real_layout() {
-        // 16 GB Mac: GPU working set 2/3 of RAM. Weights as in the catalog (6.50 GiB, Q4_0).
-        let h = hw(16, Some(metal(16 * 2 / 3)));
+        // 16 GB Mac: GPU working set 2/3 of RAM (10.67 GiB, as hardware detection estimates it).
+        // Weights as in the catalog (6.50 GiB, Q4_0).
+        let mut gpu = metal(0);
+        gpu.memory_total_bytes = Some(16 * GIB * 2 / 3);
+        let h = hw(16, Some(gpu));
         let mut g = layered(
             48,
             vec![group(8, 1, 512, None), group(40, 8, 256, Some(1024))],
@@ -526,7 +529,8 @@ pub(crate) mod tests {
         shape.n_kv_heads = 8;
         shape.head_dim = 512;
         let cfg = Config::default();
-        let extra = 1024 * MIB_; // llama.cpp --cache-ram
+        // llama.cpp extras: --cache-ram 1 GiB + 2 context checkpoints of the 480 MiB window cache.
+        let extra = (1024 + 2 * 480) * MIB_;
         let now = estimate(&g, &latency(), BackendKind::LlamaCpp, &h, &cfg, extra, 0);
         assert!(now.fits, "{}", now.explain());
         assert!(now.notes.iter().any(|n| n.contains("KV cache per layer")));
