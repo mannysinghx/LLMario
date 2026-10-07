@@ -24,7 +24,7 @@ Two findings shape the order:
 
 | # | Phase | Main outcome | Depends on | Relative effort | Risk |
 |---|---|---|---|---|---|
-| 0 | [LLMario Beta app](#phase-0--llmario-beta-app) | A beta that installs, runs and stores data separately from production | — | S–M | Low |
+| 0 | [LLMario Beta app](#phase-0--llmario-beta-app) ✅ built | A beta that installs, runs and stores data separately from production | — | S–M | Low |
 | 1 | [Measurement baseline](#phase-1--measurement-baseline) | Numbers we can trust, on real 16 GB hardware | 0 | S | Low |
 | 2 | [Accurate KV accounting](#phase-2--accurate-kv-accounting) | Gemma 4 12B and Qwen3.5 9B (MLX) fit 16 GB Macs | 1 | M | Medium |
 | 3 | [Small-machine memory profile](#phase-3--small-machine-memory-profile) | Ministral 3 14B and Phi-4 fit; cheaper long-context decode | 1, 2 | S–M | Low–medium |
@@ -57,14 +57,17 @@ Why this order:
 **Goal:** a second app that installs, runs and keeps its data separately from production, before any
 feature work.
 
+**Status (2026-10-07): built on `beta`; real-window checks remain.** See [Phase 0 results](#phase-0-results).
+
 **What must differ.** These are the points where a beta build would collide with production today:
 
 | What | Production | Beta | Where it is set |
 |---|---|---|---|
-| Desktop app identity. Chat history and settings live in the webview's storage, which is keyed by this identity, so a new identity keeps them apart. | `dev.llmario.desktop`, "LLMario", `LLMario.app` | `dev.llmario.desktop.beta`, "LLMario Beta", `LLMario Beta.app` | [tauri.conf.json](../apps/desktop/src-tauri/tauri.conf.json); a beta overlay passed with `cargo tauri build --config` |
+| Desktop app identity. Chat history and settings live in the webview's storage, which is keyed by this identity, so a new identity keeps them apart. | `dev.llmario.desktop`, "LLMario", `LLMario.app` | `dev.llmario.desktop.beta`, "LLMario Beta", `LLMario Beta.app` | [tauri.conf.json](../apps/desktop/src-tauri/tauri.conf.json), edited on the beta branch so development builds are separate too |
 | Data home: registry, config, downloads, logs, engine records | `~/.llmario` | `~/.llmario-beta` | [paths.rs](../crates/core/src/paths.rs) (`LLMARIO_HOME` already overrides it) |
-| API port | 11500 | 11501 | [config.rs:36](../crates/core/src/config.rs) |
-| Command-line binary | `llmario` | `llmario-beta` | [crates/cli/Cargo.toml](../crates/cli/Cargo.toml) |
+| Environment variables | `LLMARIO_*` | `LLMARIO_BETA_*`; production's variables are ignored, so an exported `LLMARIO_HOME` cannot point the beta at production data | `ENV_PREFIX` in [core/src/lib.rs](../crates/core/src/lib.rs) |
+| API port | 11500 | 11501 | `DEFAULT_PORT` in [core/src/lib.rs](../crates/core/src/lib.rs) |
+| Command-line package and binary | `llmario` | `llmario-beta`, so `cargo install` tracks it separately | [crates/cli/Cargo.toml](../crates/cli/Cargo.toml) |
 | Desktop binary | `llmario-desktop` | `llmario-desktop-beta` | [apps/desktop/src-tauri/Cargo.toml](../apps/desktop/src-tauri/Cargo.toml) |
 | Installer | deletes and replaces `/Applications/LLMario.app` | must never touch `LLMario.app` | [install-macos.sh:60](../scripts/install-macos.sh) |
 | Release files | `LLMario-<version>-…`, GitHub release marked Latest | `LLMario-Beta-<version>-…`, published as a GitHub **pre-release** so `/releases/latest`, which the README and llmario.com link to, stays on production | [release-macos.sh:81](../scripts/release-macos.sh) |
@@ -98,6 +101,46 @@ feature work.
 - Production's `llmario doctor` does not report beta engines as orphans.
 
 **Undo:** delete `LLMario Beta.app` and `~/.llmario-beta`. Production is untouched.
+
+### Phase 0 results
+
+Three commits on `beta`:
+
+1. **Centralize app identity** (no behavior change; can merge to `main` as is). The env prefix,
+   default port and command name in hints come from constants in `llmario-core`.
+2. **LLMario Beta identity** (beta only). Everything in the table above, plus the installer, the
+   release script, the MLX venv script, CI on pushes to `beta`, the Windows workflow, and a README
+   notice.
+3. **Warn when the other edition has models loaded.**
+   - `doctor`, engine launches and the desktop app (as a toast) say, for example, "LLMario is also
+     running 1 model (q17, 966 MiB)".
+   - Production's engine records are only read; stale ones are never removed.
+
+Verified:
+
+- fmt, clippy with warnings as errors (workspace and desktop), `cargo test` (83 passed), UI
+  renderer tests.
+- The release bundle is `LLMario Beta.app`: identifier `dev.llmario.desktop.beta`, executable
+  `llmario-desktop-beta`, version `0.3.0-beta.1`, valid ad-hoc signature.
+- **Side by side under one scratch `HOME`**, using production `llmario` built from `main` together
+  with `llmario-beta`:
+  - Both served the same GGUF at the same time, on ports 11500 and 11501.
+  - Each kept its own registry, logs and engine records.
+  - Neither `doctor` reported the other's engine as an orphan.
+  - The beta ignored `LLMARIO_PORT` and honored `LLMARIO_BETA_PORT`.
+  - No engine was left after shutdown.
+  - The real `~/.llmario` was unchanged.
+- Pre-release versions: tauri-bundler 2.10 writes `0.3.0.0` for the Windows installer's numeric
+  version and passes the string unchanged into the macOS Info.plist.
+
+Still to check before Phase 0 is closed:
+
+- Install `LLMario Beta.app` next to `LLMario.app`. Chat in both windows and confirm chats and
+  settings stay separate. Remove the beta and confirm production still works.
+- The Windows workflow on the first push to `beta`: installer, launch and uninstall under the beta
+  names.
+- That Apple notarization accepts `0.3.0-beta.1` as `CFBundleShortVersionString`, on the first beta
+  release.
 
 ## Phase 1 — Measurement baseline
 
