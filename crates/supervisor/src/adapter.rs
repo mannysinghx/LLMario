@@ -74,7 +74,12 @@ pub trait EngineAdapter: Send + Sync {
     /// Detect the backend. May run short subprocesses; called once at startup.
     fn probe(&self, hw: &HardwareReport, cfg: &Config) -> BackendStatus;
     /// Memory the engine uses beyond weights + KV (e.g. host-side prompt caches).
-    fn extra_memory_bytes(&self, _model: &ModelEntry, _profile: &ResolvedProfile) -> u64 {
+    fn extra_memory_bytes(
+        &self,
+        _model: &ModelEntry,
+        _profile: &ResolvedProfile,
+        _cfg: &Config,
+    ) -> u64 {
         0
     }
     fn launch(&self, ctx: &LaunchContext<'_>) -> Result<LaunchSpec, RuntimeError>;

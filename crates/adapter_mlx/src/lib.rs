@@ -32,11 +32,16 @@ pub const MLX_BUFFER_CACHE_LIMIT: u64 = 1024 * 1024 * 1024;
 /// Python interpreter, tokenizer and HTTP server resident memory (measured ~0.4 GiB).
 const PYTHON_RUNTIME_BYTES: u64 = 512 * 1024 * 1024;
 
-/// Upper bound for MLX's prompt (prefix) cache: every entry can hold one request's full KV.
+/// Upper bound for MLX's prompt (prefix) cache: every entry can hold one request's full KV
+/// cache (per-layer layout when known, see `memory::kv_plan`).
 /// Measured: 8 entries of ~4.7k-token prompts held ~3.4 GiB beyond the batch KV.
-pub fn prompt_cache_bytes(model: &ModelEntry, profile: &ResolvedProfile) -> u64 {
-    let per_token = llmario_supervisor::memory::kv_bytes_per_token(model);
-    profile.prompt_cache_entries as u64 * profile.ctx_per_slot as u64 * per_token
+pub fn prompt_cache_bytes(model: &ModelEntry, profile: &ResolvedProfile, cfg: &Config) -> u64 {
+    let one_request = ResolvedProfile {
+        parallel: 1,
+        ..profile.clone()
+    };
+    let kv = llmario_supervisor::memory::kv_plan(model, &one_request, BackendKind::Mlx, cfg);
+    profile.prompt_cache_entries as u64 * kv.total
 }
 
 /// Probe: versions on line 1; on line 2, the `model_type`s this mlx-lm can load (its model
@@ -154,8 +159,13 @@ impl EngineAdapter for MlxAdapter {
         st
     }
 
-    fn extra_memory_bytes(&self, model: &ModelEntry, profile: &ResolvedProfile) -> u64 {
-        prompt_cache_bytes(model, profile) + MLX_BUFFER_CACHE_LIMIT + PYTHON_RUNTIME_BYTES
+    fn extra_memory_bytes(
+        &self,
+        model: &ModelEntry,
+        profile: &ResolvedProfile,
+        cfg: &Config,
+    ) -> u64 {
+        prompt_cache_bytes(model, profile, cfg) + MLX_BUFFER_CACHE_LIMIT + PYTHON_RUNTIME_BYTES
     }
 
     fn launch(&self, ctx: &LaunchContext<'_>) -> Result<LaunchSpec, RuntimeError> {
@@ -192,7 +202,7 @@ impl EngineAdapter for MlxAdapter {
             "--prompt-cache-size".into(),
             p.prompt_cache_entries.to_string(),
             "--prompt-cache-bytes".into(),
-            prompt_cache_bytes(ctx.model, p).to_string(),
+            prompt_cache_bytes(ctx.model, p, ctx.cfg).to_string(),
         ];
         args.extend(ctx.cfg.backends.mlx.extra_args.iter().cloned());
         Ok(LaunchSpec {
