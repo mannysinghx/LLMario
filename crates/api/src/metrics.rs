@@ -136,7 +136,7 @@ impl Metrics {
                 e.active_requests
             );
         }
-        let _ = writeln!(s, "# HELP llmario_engine_memory_bytes Engine physical footprint (macOS) or RSS (Linux).\n# TYPE llmario_engine_memory_bytes gauge");
+        let _ = writeln!(s, "# HELP llmario_engine_memory_bytes Engine memory: max(physical footprint, resident size) on macOS, RSS on Linux, working set on Windows.\n# TYPE llmario_engine_memory_bytes gauge");
         for e in engines {
             if let Some(b) = e.resident_bytes {
                 let _ = writeln!(
