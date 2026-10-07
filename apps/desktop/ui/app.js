@@ -338,6 +338,7 @@ function ensureLoaded(id) {
         setStatus("ready", `Ready · ${BACKEND[info.backend]} · loaded in ${info.readySeconds.toFixed(1)} s`);
         $("#unload").hidden = false;
       }
+      if (info.warning) toast("Memory is shared with another app", info.warning, false, 12000);
       return info;
     })
     .catch((e) => {

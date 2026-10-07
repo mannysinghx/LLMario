@@ -404,6 +404,35 @@ pub fn free_port() -> std::io::Result<u16> {
     Ok(l.local_addr()?.port())
 }
 
+/// A recorded engine process that is still running.
+#[derive(Serialize, Clone, Debug)]
+pub struct RecordedEngine {
+    pub pid: u32,
+    pub model: String,
+    pub resident_bytes: Option<u64>,
+}
+
+/// Engines recorded under `run_dir` that are still running, whoever owns them. Read only:
+/// unlike [`find_orphans`] it never removes stale records, so it is safe on another edition's
+/// directory.
+pub fn running_engines(run_dir: &Path) -> Vec<RecordedEngine> {
+    let Ok(rd) = std::fs::read_dir(run_dir) else {
+        return vec![];
+    };
+    let mut out: Vec<RecordedEngine> = rd
+        .flatten()
+        .filter_map(|e| serde_json::from_slice::<RunRecord>(&std::fs::read(e.path()).ok()?).ok())
+        .filter(|r| llmario_core::os::pid_alive(r.pid))
+        .map(|r| RecordedEngine {
+            resident_bytes: llmario_hardware::process_memory_bytes(r.pid),
+            pid: r.pid,
+            model: r.model,
+        })
+        .collect();
+    out.sort_by_key(|e| e.pid);
+    out
+}
+
 /// Engines recorded under `run_dir` whose owning llmario process is gone but which are still
 /// running. Reported by `doctor`; never killed automatically.
 pub fn find_orphans(run_dir: &Path) -> Vec<(u32, String, String)> {
@@ -428,4 +457,48 @@ pub fn find_orphans(run_dir: &Path) -> Vec<(u32, String, String)> {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn record(dir: &Path, pid: u32, owner_pid: u32, model: &str) -> PathBuf {
+        let p = dir.join(format!("{pid}.json"));
+        let r = RunRecord {
+            pid,
+            owner_pid,
+            program: "engine".into(),
+            model: model.into(),
+            started_at: String::new(),
+        };
+        std::fs::write(&p, serde_json::to_vec(&r).unwrap()).unwrap();
+        p
+    }
+
+    #[test]
+    fn running_engines_lists_live_ones_and_never_deletes() {
+        let d = tempfile::tempdir().unwrap();
+        // A process that has exited: the test binary listing its tests.
+        let dead = {
+            let mut c = std::process::Command::new(std::env::current_exe().unwrap())
+                .arg("--list")
+                .stdout(Stdio::null())
+                .spawn()
+                .unwrap();
+            let pid = c.id();
+            c.wait().unwrap();
+            pid
+        };
+        let live = std::process::id();
+        let stale = record(d.path(), dead, dead, "gone");
+        record(d.path(), live, dead, "alive");
+        std::fs::write(d.path().join("junk.json"), b"not a record").unwrap();
+
+        let found = running_engines(d.path());
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!((found[0].pid, found[0].model.as_str()), (live, "alive"));
+        assert!(stale.exists(), "read-only: stale records are left in place");
+        assert!(running_engines(&d.path().join("missing")).is_empty());
+    }
 }

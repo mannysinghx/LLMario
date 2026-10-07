@@ -21,6 +21,18 @@ impl Paths {
         Self { home: home.into() }
     }
 
+    /// Home of the other edition ([`crate::SIBLING`]) when it exists on this computer and is
+    /// not this edition's own home. For reading only.
+    pub fn sibling(&self) -> Option<Paths> {
+        let s = crate::SIBLING.as_ref()?;
+        let home = sibling_home(s, |k| std::env::var_os(k), dirs::home_dir())?;
+        let same = |a: &Path, b: &Path| match (a.canonicalize(), b.canonicalize()) {
+            (Ok(a), Ok(b)) => a == b,
+            _ => a == b,
+        };
+        (home.is_dir() && !same(&home, &self.home)).then(|| Self::at(home))
+    }
+
     pub fn config_file(&self) -> PathBuf {
         self.home.join("config.toml")
     }
@@ -70,6 +82,53 @@ impl Paths {
                 Some(rest) => format!("~/{}", rest.display()),
                 None => p.display().to_string(),
             },
+        }
+    }
+}
+
+/// Where a sibling edition keeps its data: its `<prefix>_HOME` if set, else `~/<home_dir>`.
+fn sibling_home(
+    s: &crate::Sibling,
+    env: impl Fn(&str) -> Option<std::ffi::OsString>,
+    user_home: Option<PathBuf>,
+) -> Option<PathBuf> {
+    env(&format!("{}_HOME", s.env_prefix))
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| user_home.map(|h| h.join(s.home_dir)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const S: crate::Sibling = crate::Sibling {
+        name: "Other",
+        home_dir: ".other",
+        env_prefix: "OTHER",
+    };
+
+    #[test]
+    fn sibling_home_prefers_its_env_var() {
+        let env = |k: &str| (k == "OTHER_HOME").then(|| "/data/other".into());
+        assert_eq!(
+            sibling_home(&S, env, Some("/u".into())),
+            Some(PathBuf::from("/data/other"))
+        );
+        let empty = |k: &str| (k == "OTHER_HOME").then(|| "".into());
+        assert_eq!(
+            sibling_home(&S, empty, Some("/u".into())),
+            Some(PathBuf::from("/u/.other"))
+        );
+        assert_eq!(sibling_home(&S, |_| None, None), None);
+    }
+
+    #[test]
+    fn sibling_is_never_this_editions_own_home() {
+        let d = tempfile::tempdir().unwrap();
+        // Whatever the real sibling is, a Paths at the sibling's own home has no sibling.
+        if let Some(s) = Paths::at(d.path()).sibling() {
+            assert!(s.sibling().is_none(), "{}", s.home.display());
         }
     }
 }

@@ -22,6 +22,25 @@ pub const ENV_PREFIX: &str = "LLMARIO";
 pub const DEFAULT_PORT: u16 = 11500;
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// Another edition of LLMario that may be installed on the same computer.
+pub struct Sibling {
+    /// Name shown to people.
+    pub name: &'static str,
+    /// Its home directory under the user's home (e.g. `.llmario`).
+    pub home_dir: &'static str,
+    /// Its env-var prefix; `<env_prefix>_HOME` overrides `home_dir`.
+    pub env_prefix: &'static str,
+}
+
+/// The other edition whose running engines this one warns about. Its files are only ever
+/// read: their memory is outside this edition's plan, so loading models in both can make the
+/// computer swap.
+pub const SIBLING: Option<Sibling> = Some(Sibling {
+    name: "LLMario",
+    home_dir: ".llmario",
+    env_prefix: "LLMARIO",
+});
+
 pub fn user_agent() -> String {
     format!("{APP_NAME}/{VERSION}")
 }
