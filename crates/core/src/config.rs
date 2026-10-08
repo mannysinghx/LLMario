@@ -66,6 +66,10 @@ pub struct RuntimeConfig {
     pub kv_accounting: KvAccounting,
     /// Size of llmario's fixed memory reserves (prompt caches, buffer cache).
     pub memory_profile: MemoryProfile,
+    /// Cap on the GPU memory the planner may use (Apple GPU working set or VRAM). `None` = the
+    /// detected limit. Also lets a larger machine plan like a smaller one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gpu_memory_limit_gb: Option<f64>,
 }
 
 /// Size of llmario's fixed memory reserves: llama.cpp's host prompt cache (`--cache-ram`), and
@@ -112,6 +116,7 @@ impl Default for RuntimeConfig {
             max_restarts: 3,
             kv_accounting: KvAccounting::PerLayer,
             memory_profile: MemoryProfile::Standard,
+            gpu_memory_limit_gb: None,
         }
     }
 }
@@ -136,6 +141,8 @@ pub struct LlamaCppConfig {
     pub kv_cache_type: KvCacheType,
     /// Speculative decoding (`--spec-type`).
     pub speculative: Speculative,
+    /// What to do when a model is larger than the GPU limit but fits in RAM.
+    pub offload: Offload,
     /// Registered GGUF model used as the draft for `speculative = "draft"`; it must share the
     /// main model's tokenizer.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -154,8 +161,15 @@ pub struct LlamaCppConfig {
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
 #[serde(rename_all = "kebab-case")]
 pub enum Speculative {
-    #[default]
     Off,
+    /// The default: the only mode measured not to slow any workload down, `mtp` with 1 drafted
+    /// token, for models with MTP layers; everything else runs without speculation. Measured on
+    /// Qwen3.5 9B MTP (unique prompts): prose +11%, code edit +19%, quoting +19%, quality
+    /// unchanged. n-gram and draft models are left out: n-gram slowed Qwen3.5 9B and Gemma 4 12B
+    /// (with thinking on), a llama.cpp draft model slowed Qwen3.5 9B by 34%, and an MLX draft
+    /// model changed an answer.
+    #[default]
+    Auto,
     /// Guess from repeated text in the conversation (`ngram-simple`). No extra memory; helps
     /// when the answer repeats the input (code edits, quoting), slightly slower otherwise.
     Ngram,
@@ -178,6 +192,30 @@ pub enum KvCacheType {
     /// unaffected.
     #[serde(rename = "q8_0")]
     Q8_0,
+}
+
+/// llama.cpp GPU/CPU split for models larger than the GPU limit.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum Offload {
+    /// Refuse models that do not fit the GPU limit (on Apple Silicon and with no NVIDIA GPU).
+    #[default]
+    Off,
+    /// Keep part of the model in RAM for the CPU when it fits there: MoE expert weights of the
+    /// first layers (`--n-cpu-moe`), else the first layers (`-ngl`). Runs slower.
+    Auto,
+}
+
+impl Speculative {
+    /// The mode actually used for a model: `auto` becomes `mtp` when the model has MTP layers,
+    /// otherwise `off`.
+    pub fn resolve(self, has_mtp_layers: bool) -> Self {
+        match self {
+            Self::Auto if has_mtp_layers => Self::Mtp,
+            Self::Auto => Self::Off,
+            other => other,
+        }
+    }
 }
 
 impl KvCacheType {
@@ -374,7 +412,7 @@ mod tests {
     #[test]
     fn speculative_settings_parse() {
         let c = Config::default();
-        assert_eq!(c.backends.llamacpp.speculative, Speculative::Off);
+        assert_eq!(c.backends.llamacpp.speculative, Speculative::Auto);
         assert!(c.backends.llamacpp.draft_model.is_none() && c.backends.mlx.draft_model.is_none());
         let c = Config::from_toml(
             "[backends.llamacpp]\nspeculative = \"draft\"\ndraft_model = \"small\"\ndraft_tokens = 2\n[backends.mlx]\ndraft_model = \"tiny\"",
@@ -384,10 +422,23 @@ mod tests {
         assert_eq!(c.backends.llamacpp.draft_model.as_deref(), Some("small"));
         assert_eq!(c.backends.llamacpp.draft_tokens, Some(2));
         assert_eq!(c.backends.mlx.draft_model.as_deref(), Some("tiny"));
-        for m in ["off", "ngram", "mtp"] {
+        for m in ["off", "auto", "ngram", "mtp"] {
             Config::from_toml(&format!("[backends.llamacpp]\nspeculative = \"{m}\"")).unwrap();
         }
         assert!(Config::from_toml("[backends.llamacpp]\nspeculative = \"eagle\"").is_err());
+    }
+
+    #[test]
+    fn offload_and_gpu_limit_parse() {
+        let c = Config::default();
+        assert_eq!(c.backends.llamacpp.offload, Offload::Off);
+        assert!(c.runtime.gpu_memory_limit_gb.is_none());
+        let c = Config::from_toml(
+            "[runtime]\ngpu_memory_limit_gb = 10.67\n[backends.llamacpp]\noffload = \"auto\"",
+        )
+        .unwrap();
+        assert_eq!(c.backends.llamacpp.offload, Offload::Auto);
+        assert_eq!(c.runtime.gpu_memory_limit_gb, Some(10.67));
     }
 
     #[test]

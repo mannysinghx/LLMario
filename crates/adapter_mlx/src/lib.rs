@@ -394,6 +394,8 @@ mod tests {
                 driver: None,
                 cores: None,
             }],
+            memory_bandwidth_gbs: None,
+            memory_bandwidth_source: None,
             notes: vec![],
         };
         let catalog = llmario_registry::Catalog::builtin();

@@ -48,8 +48,37 @@ pub struct HardwareReport {
     /// CPU and GPU share one memory pool (Apple Silicon).
     pub unified_memory: bool,
     pub gpus: Vec<GpuInfo>,
+    /// Peak memory bandwidth in GB/s, when known, and where the figure comes from.
+    #[serde(default)]
+    pub memory_bandwidth_gbs: Option<f64>,
+    #[serde(default)]
+    pub memory_bandwidth_source: Option<String>,
     /// Caveats about how values were obtained (estimates, missing tools, unvalidated paths).
     pub notes: Vec<String>,
+}
+
+/// Apple's published unified-memory bandwidth (GB/s) for a chip name such as "Apple M4 Max".
+/// Binned chips differ by CPU core count (M3 Max 14-core 300 / 16-core 400; M4 Max 14-core 410 /
+/// 16-core 546). `None` for chips without a published figure in this table.
+pub fn apple_memory_bandwidth(brand: &str, physical_cores: usize) -> Option<f64> {
+    let chip = brand.trim().strip_prefix("Apple ")?;
+    Some(match chip {
+        "M1" => 68.25,
+        "M1 Pro" | "M2 Pro" => 200.0,
+        "M1 Max" | "M2 Max" => 400.0,
+        "M1 Ultra" | "M2 Ultra" => 800.0,
+        "M2" | "M3" => 100.0,
+        "M3 Pro" => 150.0,
+        "M3 Max" if physical_cores <= 14 => 300.0,
+        "M3 Max" => 400.0,
+        "M3 Ultra" => 819.0,
+        "M4" => 120.0,
+        "M4 Pro" => 273.0,
+        "M4 Max" if physical_cores <= 14 => 410.0,
+        "M4 Max" => 546.0,
+        "M5" => 153.6,
+        _ => return None,
+    })
 }
 
 impl HardwareReport {
@@ -95,6 +124,8 @@ impl HardwareReport {
         if gpus.is_empty() {
             notes.push("no supported GPU detected; CPU-only execution (llama.cpp)".into());
         }
+        let bandwidth = apple_memory_bandwidth(&cpu_brand, physical_cores);
+        let cpu_brand_for_bw = cpu_brand.clone();
 
         Self {
             os,
@@ -111,6 +142,9 @@ impl HardwareReport {
             apple_silicon,
             unified_memory: apple_silicon,
             gpus,
+            memory_bandwidth_gbs: bandwidth,
+            memory_bandwidth_source: bandwidth
+                .map(|_| format!("published figure for {cpu_brand_for_bw}")),
             notes,
         }
     }
@@ -349,6 +383,16 @@ fn cpu_features() -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn apple_bandwidth_table() {
+        assert_eq!(apple_memory_bandwidth("Apple M4 Max", 16), Some(546.0));
+        assert_eq!(apple_memory_bandwidth("Apple M4 Max", 14), Some(410.0));
+        assert_eq!(apple_memory_bandwidth("Apple M4", 10), Some(120.0));
+        assert_eq!(apple_memory_bandwidth("Apple M1", 8), Some(68.25));
+        assert_eq!(apple_memory_bandwidth("Apple M9 Hyper", 64), None);
+        assert_eq!(apple_memory_bandwidth("Intel(R) Core(TM) i7", 8), None);
+    }
 
     #[test]
     fn detect_is_self_consistent() {

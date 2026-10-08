@@ -84,7 +84,7 @@ class Truncated(Exception):
     pass
 
 
-def parse_gguf(buf):
+def parse_gguf(buf, with_tensors=False):
     pos = 0
 
     def take(n):
@@ -128,12 +128,25 @@ def parse_gguf(buf):
     version = u32()
     if version not in (2, 3):
         raise ValueError(f"GGUF v{version}")
-    u64()  # tensor count
+    n_tensors = u64()
     kv = {}
     for _ in range(u64()):
         k = string()
         kv[k] = value(u32())
-    return kv
+    if not with_tensors:
+        return kv
+    tensors = []
+    for _ in range(n_tensors):
+        name = string()
+        n_dims = u32()
+        if n_dims > 8:
+            raise ValueError("bad tensor dims")
+        for _ in range(n_dims):
+            u64()
+        u32()  # type
+        tensors.append((name, u64()))
+    align = kv.get("general.alignment") or 32
+    return kv, tensors, -(-pos // align) * align
 
 
 def gguf_metadata(repo, sha, fname):
@@ -346,6 +359,12 @@ def self_test():
     assert layout_from_config({"num_hidden_layers": 36, "num_attention_heads": 32, "num_key_value_heads": 8, "head_dim": 128}) == ([], 0)
     assert layout_from_config({"num_hidden_layers": 2, "layer_types": ["conv", "full_attention"], "num_attention_heads": 2,
                                "num_key_value_heads": 1, "head_dim": 8}) == ([], 0)
+    t = [("token_embd.weight", 0), ("blk.0.attn_q.weight", 1000), ("blk.0.ffn_up_exps.weight", 1400), ("output.weight", 4600)]
+    moe = {"general.architecture": "moe", "moe.expert_count": 8, "moe.expert_used_count": 2}
+    assert gguf_speed(moe, t, 64, 64 + 5600) == (400 + 800 + 1000, 3200, 800)
+    st = [("model.embed_tokens.weight", 1000), ("lm_head.weight", 1000), ("model.layers.0.self_attn.q_proj.weight", 400),
+          ("model.layers.0.mlp.switch_mlp.up_proj.weight", 3200), ("vision_tower.patch.weight", 400)]
+    assert mlx_speed(st, {"num_experts_per_tok": 2, "num_experts": 8}) == (2200, 3200, 800)
     print("layout self-test: ok")
 
 
@@ -361,6 +380,9 @@ def shape_toml(s):
         inner += f", kv_groups = [{gs}]"
     if s.get("state_bytes_per_seq"):
         inner += f", state_bytes_per_seq = {s['state_bytes_per_seq']}"
+    for k in ("bytes_per_token", "expert_bytes", "active_expert_bytes"):
+        if s.get(k):
+            inner += f", {k} = {s[k]}"
     return f"shape = {{ {inner} }}"
 
 
@@ -398,6 +420,112 @@ def add_layouts():
         print(f"{'✓' if groups else ' '} {m['id']:<44} " + (f"{full}/{s['n_layers']} full, {len(groups)} group(s), state {state}" if groups else "plain or unknown: unchanged"))
     OUT.write_text("\n[[models]]\n".join([head] + entries))
     print(f"\n{changed} catalog entr(ies) gained a layout; nothing else changed")
+
+
+# ---------- bytes read per token (mirrors gguf.rs `bytes_per_token` / inspect.rs MLX) ----------
+
+def gguf_index(repo, sha, fname):
+    url = f"{HUB}/{urllib.parse.quote(repo, safe='/')}/resolve/{sha}/{urllib.parse.quote(fname)}"
+    for n in (4, 16, 48, 96):
+        try:
+            return parse_gguf(get_range(url, n * 1024 * 1024), with_tensors=True)
+        except Truncated:
+            continue
+    raise ValueError("GGUF header larger than 96 MB")
+
+
+def gguf_speed(kv, tensors, data_offset, file_len):
+    """(bytes read per token, expert bytes, expert bytes read per token) from a GGUF index."""
+    arch = kv.get("general.architecture")
+    by_off = sorted(tensors, key=lambda x: x[1])
+    data_len = file_len - data_offset
+    sizes = [(n, (by_off[i + 1][1] if i + 1 < len(by_off) else data_len) - off) for i, (n, off) in enumerate(by_off)]
+    used, count = kv.get(f"{arch}.expert_used_count"), kv.get(f"{arch}.expert_count")
+    share = (min(used, count), count) if used and count else None
+    has_output = any(n == "output.weight" for n, _ in sizes)
+    total = experts = active = 0
+    for n, s in sizes:
+        if has_output and n.startswith("token_embd."):
+            continue
+        read = s * share[0] // share[1] if ("_exps" in n and share) else s
+        if "_exps" in n:
+            experts += s
+            active += read
+        total += read
+    return total, experts, active
+
+
+def safetensors_header(repo, sha, fname):
+    url = f"{HUB}/{urllib.parse.quote(repo, safe='/')}/resolve/{sha}/{urllib.parse.quote(fname)}"
+    n = struct.unpack("<Q", get_range(url, 8))[0]
+    if n > 100 * 1024 * 1024:
+        raise ValueError("safetensors header too large")
+    h = json.loads(get_range(url, 8 + n)[8:])
+    return [(k, v["data_offsets"][1] - v["data_offsets"][0]) for k, v in h.items() if k != "__metadata__"]
+
+
+def mlx_speed(tensors, tc):
+    skip = ("vision", "visual", "audio", "multi_modal_projector", "embed_vision", "embed_audio")
+    used = tc.get("num_experts_per_tok") or tc.get("top_k_experts") or tc.get("moe_top_k") or tc.get("num_experts_per_token")
+    count = tc.get("num_local_experts") or tc.get("num_experts") or tc.get("n_routed_experts")
+    has_head = any("lm_head." in n for n, _ in tensors)
+    total = experts = active = 0
+    for n, s in tensors:
+        if any(k in n for k in skip) or (has_head and "embed_tokens." in n):
+            continue
+        expert = ".switch_mlp." in n or ".experts." in n
+        read = s * min(used, count) // count if (expert and used and count) else s
+        if expert:
+            experts += s
+            active += read
+        total += read
+    return total, experts, active
+
+
+def add_speed():
+    """Add bytes read per token and expert sizes to every catalog entry at its pinned revision
+    (GGUF tensor index / safetensors headers only), changing nothing else in catalog.toml."""
+    text = OUT.read_text()
+    cat = tomllib.loads(text)["models"]
+    blocks = text.split("\n[[models]]\n")
+    head, entries = blocks[0], blocks[1:]
+    assert len(entries) == len(cat), "catalog layout changed; refusing to rewrite"
+    changed = 0
+    for i, m in enumerate(cat):
+        s = m.get("shape")
+        if not s:
+            continue
+        try:
+            q = urllib.parse.quote(m["repo"], safe="/")
+            sibs = get_json(f"{HUB}/api/models/{q}/revision/{m['revision']}?blobs=true").get("siblings", [])
+            size = {x["rfilename"]: size_of(x) for x in sibs}
+            if m["format"] == "gguf":
+                if len(m["files"]) != 1:
+                    print(f"  {m['id']:44} split GGUF: skipped")
+                    continue
+                kv, tensors, data_off = gguf_index(m["repo"], m["revision"], m["files"][0])
+                facts = gguf_speed(kv, tensors, data_off, size[m["files"][0]])
+            else:
+                cfg = get_json(f"{HUB}/{q}/resolve/{m['revision']}/config.json")
+                tc = cfg.get("text_config") if isinstance(cfg.get("text_config"), dict) else cfg
+                tc = {**cfg, **tc}
+                tensors = []
+                for f in sorted(x for x in size if x.endswith(".safetensors") and "/" not in x):
+                    tensors += safetensors_header(m["repo"], m["revision"], f)
+                facts = mlx_speed(tensors, tc)
+        except Exception as e:  # keep the entry as it was
+            print(f"✗ {m['id']}: {e}")
+            continue
+        new = dict(s, bytes_per_token=facts[0], expert_bytes=facts[1], active_expert_bytes=facts[2])
+        old_line = next(l for l in entries[i].splitlines() if l.startswith("shape = "))
+        new_line = shape_toml(new)
+        if new_line != old_line:
+            entries[i] = entries[i].replace(old_line, new_line)
+            changed += 1
+        total = m.get("approx_bytes") or 1
+        print(f"✓ {m['id']:44} reads {facts[0]/2**30:6.2f} GiB/token ({facts[0]/total*100:5.1f}% of download)" + (f", experts {facts[1]/2**30:.2f} GiB" if facts[1] else ""))
+    OUT.write_text("\n[[models]]\n".join([head] + entries))
+    print(f"\n{changed} catalog entr(ies) updated; nothing else changed")
 
 
 # ---------- file selection ----------
@@ -652,6 +780,10 @@ def main():
         self_test()
         add_variants(["gguf_mtp"] if "--add-mtp" in sys.argv else ["gguf_3bit", "mlx_3bit"])
         sync_docs()
+        return 0
+    if "--speed" in sys.argv:
+        self_test()
+        add_speed()
         return 0
     if "--sync-docs" in sys.argv:
         sync_docs()

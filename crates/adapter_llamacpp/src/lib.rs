@@ -223,8 +223,9 @@ impl EngineAdapter for LlamaCppAdapter {
                 ]);
             }
         };
-        match lcfg.speculative {
-            Speculative::Off => {}
+        let has_mtp = ctx.model.shape.as_ref().is_some_and(|s| s.mtp_layers > 0);
+        match lcfg.speculative.resolve(has_mtp) {
+            Speculative::Off | Speculative::Auto => {}
             Speculative::Ngram => args.extend(["--spec-type".into(), "ngram-simple".into()]),
             Speculative::Mtp => {
                 if ctx.model.shape.as_ref().is_some_and(|s| s.mtp_layers > 0) {
@@ -261,6 +262,10 @@ impl EngineAdapter for LlamaCppAdapter {
                         .into(),
                 ),
             },
+        }
+        if let Some(n) = ctx.memory.cpu_moe_layers {
+            // GPU/CPU split planned by the memory planner (`offload = "auto"`).
+            args.extend(["--n-cpu-moe".into(), n.to_string()]);
         }
         args.extend(lcfg.extra_args.iter().cloned());
         Ok(LaunchSpec {
@@ -364,6 +369,8 @@ mod tests {
                 driver: None,
                 cores: None,
             }],
+            memory_bandwidth_gbs: None,
+            memory_bandwidth_source: None,
             notes: vec![],
         }
     }
@@ -435,6 +442,9 @@ mod tests {
                 kv_groups: vec![group(8, 1, 512, None), group(40, 8, 256, Some(1024))],
                 state_bytes_per_seq: 0,
                 mtp_layers: 0,
+                bytes_per_token: 0,
+                expert_bytes: 0,
+                active_expert_bytes: 0,
             }),
             chat_template: true,
             files: vec![FileRecord {
@@ -597,7 +607,17 @@ mod tests {
         let mut cfg = Config::default();
         assert!(
             flag(&launch(&plain, None, &cfg).args, "--spec-type").is_none(),
-            "off by default"
+            "auto by default: plain models run without speculation"
+        );
+        assert_eq!(
+            flag(&launch(&mtp, None, &cfg).args, "--spec-type").as_deref(),
+            Some("draft-mtp"),
+            "auto by default: MTP builds use their MTP layers"
+        );
+        cfg.backends.llamacpp.speculative = Speculative::Off;
+        assert!(
+            flag(&launch(&mtp, None, &cfg).args, "--spec-type").is_none(),
+            "off"
         );
 
         cfg.backends.llamacpp.speculative = Speculative::Ngram;
@@ -640,6 +660,52 @@ mod tests {
         assert!(
             flag(&s.args, "--spec-type").is_none()
                 && s.notes.iter().any(|n| n.contains("no usable draft"))
+        );
+    }
+
+    /// A GPU/CPU split planned by the memory planner reaches `--n-cpu-moe`.
+    #[test]
+    fn cpu_moe_split_reaches_the_launch() {
+        let m = llmario_registry::Catalog::builtin()
+            .get("gpt-oss-20b-gguf-mxfp4")
+            .unwrap()
+            .planning_entry();
+        let p = ResolvedProfile::resolve(llmario_core::ProfileKind::Latency, None);
+        let hw = mac(16);
+        let cfg = Config::default();
+        let status = BackendStatus {
+            kind: BackendKind::LlamaCpp,
+            available: true,
+            path: Some("/usr/bin/llama-server".into()),
+            version: None,
+            tested_version: String::new(),
+            detail: String::new(),
+            architectures: None,
+        };
+        let mut plan =
+            llmario_supervisor::memory::estimate(&m, &p, BackendKind::LlamaCpp, &hw, &cfg, 0, 0);
+        let args = |plan: &llmario_supervisor::memory::MemoryPlan| {
+            let ctx = LaunchContext {
+                model: &m,
+                profile: &p,
+                hw: &hw,
+                cfg: &cfg,
+                memory: plan,
+                status: &status,
+                port: 1,
+                draft: None,
+            };
+            LlamaCppAdapter.launch(&ctx).unwrap().args
+        };
+        let flag = |a: &[String], f: &str| a.iter().position(|x| x == f).map(|i| a[i + 1].clone());
+        assert!(flag(&args(&plan), "--n-cpu-moe").is_none());
+        plan.cpu_moe_layers = Some(9);
+        let a = args(&plan);
+        assert_eq!(flag(&a, "--n-cpu-moe").as_deref(), Some("9"));
+        assert_eq!(
+            flag(&a, "--n-gpu-layers").as_deref(),
+            Some("999"),
+            "attention stays on the GPU"
         );
     }
 

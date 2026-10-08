@@ -45,6 +45,8 @@ pub struct CatalogView {
     pub mtp: bool,
     /// A 3-bit build: smaller and faster than 4-bit, with some quality loss.
     pub low_bit: bool,
+    /// Decode speed on this computer: measured, or predicted from memory bandwidth.
+    pub speed: Option<llmario_supervisor::speed::SpeedEstimate>,
     /// The variant this machine should use for the family: supported, fits, and preferred engine.
     pub recommended: bool,
     pub installed: bool,
@@ -54,6 +56,7 @@ pub struct CatalogView {
 pub fn catalog_views(sup: &Supervisor) -> Vec<CatalogView> {
     let reg = sup.registry();
     let cat = Catalog::builtin();
+    let tuned = sup.autotune();
     let mut views: Vec<CatalogView> = cat
         .models
         .iter()
@@ -102,6 +105,7 @@ pub fn catalog_views(sup: &Supervisor) -> Vec<CatalogView> {
                 tight: plan.tight,
                 mtp: c.shape.as_ref().is_some_and(|s| s.mtp_layers > 0),
                 low_bit: is_low_bit(c.quantization.as_deref()),
+                speed: sup.speed(&sel, &tuned),
                 recommended: false,
                 installed: reg.get(&c.id).is_some(),
             }
@@ -124,13 +128,23 @@ fn is_low_bit(q: Option<&str>) -> bool {
     })
 }
 
-/// One recommended variant per family: usable here and comfortable (not tight on machines with
-/// 16 GB or less), then 4-bit before 3-bit, the preferred engine for this machine, and the plain
-/// build before the MTP one. Families with no comfortable variant get no recommendation.
+/// Slowest decode speed a recommended variant may have (about reading speed), when a measured
+/// or predicted speed exists.
+pub const MIN_RECOMMENDED_TPS: f64 = 10.0;
+
+/// One recommended variant per family: usable here, comfortable (not tight on machines with
+/// 16 GB or less) and at least [`MIN_RECOMMENDED_TPS`] when its speed is known; then 4-bit before
+/// 3-bit, the preferred engine for this machine, and the plain build before the MTP one. Families
+/// with no such variant get no recommendation.
 fn recommend(views: &mut [CatalogView], prefer_mlx: bool) {
     let mut best: std::collections::HashMap<String, ((u8, u8, u8), usize)> = Default::default();
     for (i, v) in views.iter().enumerate() {
-        if !(v.backend_available && v.fits && !v.tight && v.supported != Some(false)) {
+        let fast_enough = v
+            .speed
+            .as_ref()
+            .is_none_or(|s| s.tokens_per_second >= MIN_RECOMMENDED_TPS);
+        if !(v.backend_available && v.fits && !v.tight && fast_enough && v.supported != Some(false))
+        {
             continue;
         }
         let engine = match (v.backend, prefer_mlx) {
@@ -187,6 +201,7 @@ mod tests {
             tight,
             mtp,
             low_bit,
+            speed: None,
             recommended: false,
             installed: false,
         }
@@ -224,6 +239,15 @@ mod tests {
         assert_eq!(pick(same(), false).as_deref(), Some("q4-gguf"));
         // Only tight variants: no recommendation.
         assert_eq!(pick(vec![view("q4", L, true, false, false)], false), None);
+        // Too slow on this computer: no recommendation; unknown speed does not block.
+        let mut slow = view("q4", L, false, false, false);
+        slow.speed = Some(llmario_supervisor::speed::SpeedEstimate {
+            tokens_per_second: 6.0,
+            measured: false,
+            basis: String::new(),
+            bytes_per_token: 0,
+        });
+        assert_eq!(pick(vec![slow], false), None);
         assert!(is_low_bit(Some("Q3_K_M (3-bit: …)")) && is_low_bit(Some("3-bit (group 64): …")));
         assert!(
             !is_low_bit(Some("Q4_K_M"))

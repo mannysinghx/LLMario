@@ -11,7 +11,8 @@
 //! attention, so the estimate never drops below what the engine allocates.
 
 use llmario_core::{
-    BackendKind, Config, KvAccounting, KvCacheType, MemoryProfile, ResolvedProfile, Speculative,
+    BackendKind, Config, KvAccounting, KvCacheType, MemoryProfile, Offload, ResolvedProfile,
+    Speculative,
 };
 use llmario_hardware::{GpuApi, HardwareReport};
 use llmario_registry::ModelEntry;
@@ -69,9 +70,10 @@ pub fn speculative_bytes(
             )),
         )
     };
+    let has_mtp = model.shape.as_ref().is_some_and(|s| s.mtp_layers > 0);
     match backend {
-        BackendKind::LlamaCpp => match cfg.backends.llamacpp.speculative {
-            Speculative::Off => (0, None),
+        BackendKind::LlamaCpp => match cfg.backends.llamacpp.speculative.resolve(has_mtp) {
+            Speculative::Off | Speculative::Auto => (0, None),
             Speculative::Ngram => (
                 0,
                 Some("speculative decoding: n-gram (no extra memory)".into()),
@@ -110,6 +112,52 @@ pub fn speculative_bytes(
         BackendKind::Mlx => draft.map(with_draft).unwrap_or((0, None)),
         _ => (0, None),
     }
+}
+
+/// Room kept free inside the GPU limit when splitting a model between GPU and CPU.
+const OFFLOAD_MARGIN: u64 = 512 * MIB;
+
+/// How to fit a model that needs `need` bytes into `gpu` bytes of GPU memory: MoE expert weights
+/// of the first layers into RAM when the model has experts (attention stays on the GPU and only
+/// the active experts are read by the CPU), else the first layers. Returns
+/// `(cpu_moe_layers, gpu_layers, note)`.
+fn gpu_cpu_split(
+    model: &ModelEntry,
+    weights: u64,
+    need: u64,
+    gpu: u64,
+    kv_and_overhead: u64,
+) -> (Option<u32>, Option<u32>, String) {
+    let shape = model.shape.as_ref();
+    let layers = shape
+        .map(|s| s.n_layers.saturating_sub(s.mtp_layers))
+        .unwrap_or(0);
+    let over = (need + OFFLOAD_MARGIN).saturating_sub(gpu);
+    if let Some(s) = shape.filter(|s| s.expert_bytes > 0 && layers > 0) {
+        let per_layer = (s.expert_bytes / layers as u64).max(1);
+        let n = over.div_ceil(per_layer).min(layers as u64) as u32;
+        if n as u64 * per_layer >= over {
+            return (
+                Some(n),
+                None,
+                format!(
+                    "GPU/CPU split: MoE experts of {n} of {layers} layers ({}) stay in RAM for the CPU; slower than all-GPU",
+                    fmt_bytes(n as u64 * per_layer)
+                ),
+            );
+        }
+    }
+    let spare = gpu.saturating_sub(kv_and_overhead + OFFLOAD_MARGIN);
+    let on_gpu = if weights == 0 || layers == 0 {
+        0
+    } else {
+        ((spare as u128 * layers as u128) / weights as u128).min(layers as u128) as u32
+    };
+    (
+        None,
+        Some(on_gpu),
+        format!("GPU/CPU split: {on_gpu} of {layers} layers on the GPU, the rest on the CPU; slower than all-GPU"),
+    )
 }
 
 /// Whether the small memory profile applies (`runtime.memory_profile`).
@@ -153,6 +201,9 @@ pub struct MemoryPlan {
     pub kv_bytes_per_token: u64,
     /// llama.cpp `-ngl` when only part of the model fits in dedicated VRAM.
     pub gpu_layers: Option<u32>,
+    /// llama.cpp `--n-cpu-moe`: MoE expert weights of this many first layers stay in RAM for the
+    /// CPU, because the whole model does not fit the GPU limit (`offload = "auto"`).
+    pub cpu_moe_layers: Option<u32>,
     /// Largest per-request context that would fit with the same profile (multiple of 256).
     pub max_ctx_per_slot_that_fits: Option<u32>,
     /// Comfortable target on machines with 16 GB or less (see [`comfortable_bytes`]).
@@ -351,19 +402,44 @@ pub fn estimate(
     let limit = cfg.runtime.memory_limit_gb.map(|g| (g * GIB as f64) as u64);
 
     let gpu = hw.primary_gpu();
+    let gpu_cap = cfg
+        .runtime
+        .gpu_memory_limit_gb
+        .map(|g| (g * GIB as f64) as u64);
+    let offload =
+        backend == BackendKind::LlamaCpp && cfg.backends.llamacpp.offload == Offload::Auto;
+    let mut cpu_moe_layers = None;
     let (mut budget, mut source, mut gpu_layers) = match gpu {
         Some(g) if g.api == GpuApi::Metal => {
-            let ws = g.memory_total_bytes.unwrap_or(ram_budget);
-            (
-                ws.min(ram_budget),
-                format!(
-                    "unified memory: min(GPU working set {}, RAM {} − headroom {})",
-                    fmt_bytes(ws),
-                    fmt_bytes(hw.total_memory_bytes),
-                    fmt_bytes(headroom)
-                ),
-                None,
-            )
+            let detected = g.memory_total_bytes.unwrap_or(ram_budget);
+            let ws = gpu_cap.map_or(detected, |c| c.min(detected));
+            if offload && total > ws.min(ram_budget) && total <= ram_budget {
+                // Two limits: the GPU working set holds what the GPU uses; the rest stays in RAM.
+                let (moe, layers, note) = gpu_cpu_split(model, weights, total, ws, kv + overhead);
+                notes.push(note);
+                cpu_moe_layers = moe;
+                (
+                    ram_budget,
+                    format!(
+                        "unified memory: GPU working set {} plus RAM for the CPU part, up to RAM {} − headroom {}",
+                        fmt_bytes(ws),
+                        fmt_bytes(hw.total_memory_bytes),
+                        fmt_bytes(headroom)
+                    ),
+                    layers,
+                )
+            } else {
+                (
+                    ws.min(ram_budget),
+                    format!(
+                        "unified memory: min(GPU working set {}, RAM {} − headroom {})",
+                        fmt_bytes(ws),
+                        fmt_bytes(hw.total_memory_bytes),
+                        fmt_bytes(headroom)
+                    ),
+                    None,
+                )
+            }
         }
         Some(g) if g.api == GpuApi::Cuda && g.memory_total_bytes.is_some() => {
             let vram = g
@@ -371,11 +447,26 @@ pub fn estimate(
                 .or(g.memory_total_bytes)
                 .unwrap_or(0)
                 .saturating_sub(512 * MIB);
+            let vram = gpu_cap.map_or(vram, |c| c.min(vram));
             if total <= vram {
                 (
                     vram,
                     format!("free VRAM on {} (minus 512 MiB)", g.name),
                     None,
+                )
+            } else if offload && model.shape.as_ref().is_some_and(|s| s.expert_bytes > 0) {
+                // MoE: keep attention on the GPU and some layers' experts in RAM (unvalidated).
+                let (moe, layers, note) = gpu_cpu_split(model, weights, total, vram, kv + overhead);
+                notes.push(format!("{note} (NVIDIA path not yet validated)"));
+                cpu_moe_layers = moe;
+                (
+                    ram_budget,
+                    format!(
+                        "system RAM {} − headroom {} (hybrid CPU/GPU)",
+                        fmt_bytes(hw.total_memory_bytes),
+                        fmt_bytes(headroom)
+                    ),
+                    layers,
                 )
             } else {
                 // Hybrid offload: KV + overhead stay on GPU, remaining VRAM takes weight layers.
@@ -462,6 +553,7 @@ pub fn estimate(
         ctx_total,
         kv_bytes_per_token: kv_per_token,
         gpu_layers,
+        cpu_moe_layers,
         max_ctx_per_slot_that_fits: max_ctx,
         comfortable_bytes: comfortable,
         tight,
@@ -492,6 +584,8 @@ pub(crate) mod tests {
             apple_silicon: false,
             unified_memory: false,
             gpus: gpu.into_iter().collect(),
+            memory_bandwidth_gbs: None,
+            memory_bandwidth_source: None,
             notes: vec![],
         }
     }
@@ -518,6 +612,9 @@ pub(crate) mod tests {
                 kv_groups: vec![],
                 state_bytes_per_seq: 0,
                 mtp_layers: 0,
+                bytes_per_token: 0,
+                expert_bytes: 0,
+                active_expert_bytes: 0,
             }),
             chat_template: true,
             files: vec![FileRecord {
@@ -840,6 +937,116 @@ pub(crate) mod tests {
             speculative_bytes(&q, None, &p, BackendKind::LlamaCpp, &cfg).0,
             0
         );
+    }
+
+    /// A gpt-oss-20b-sized MoE model: 11.28 GiB, 24 layers (12 full attention, 12 sliding with a
+    /// 128-token window, 8 KV heads × 64), ~10.4 GiB of experts.
+    fn moe_model() -> ModelEntry {
+        let mut m = layered(
+            24,
+            vec![group(12, 8, 64, None), group(12, 8, 64, Some(128))],
+            0,
+        );
+        let w = (11.28 * GIB as f64) as u64;
+        m.files[0].size = w;
+        m.size_bytes = w;
+        let s = m.shape.as_mut().unwrap();
+        s.expert_bytes = 10_400_000_000;
+        s.active_expert_bytes = 10_400_000_000 / 8;
+        m
+    }
+
+    fn mac16() -> HardwareReport {
+        let mut gpu = metal(0);
+        gpu.memory_total_bytes = Some(16 * GIB * 2 / 3);
+        hw(16, Some(gpu))
+    }
+
+    /// Phase 7: with `offload = "auto"`, a model over the GPU limit but within RAM keeps some
+    /// layers' experts in RAM for the CPU; off by default; larger than RAM is refused cleanly.
+    #[test]
+    fn gpu_cpu_split_on_a_16_gb_mac() {
+        let h = mac16();
+        let p = latency();
+        let mut cfg = Config::default();
+        let off = estimate(
+            &moe_model(),
+            &p,
+            BackendKind::LlamaCpp,
+            &h,
+            &cfg,
+            256 * MIB_,
+            0,
+        );
+        assert!(
+            !off.fits && off.cpu_moe_layers.is_none(),
+            "off by default: refused"
+        );
+        cfg.backends.llamacpp.offload = Offload::Auto;
+        let on = estimate(
+            &moe_model(),
+            &p,
+            BackendKind::LlamaCpp,
+            &h,
+            &cfg,
+            256 * MIB_,
+            0,
+        );
+        assert!(on.fits, "{}", on.explain());
+        let n = on.cpu_moe_layers.unwrap();
+        let per_layer = 10_400_000_000u64 / 24;
+        // Enough experts leave the GPU to bring it under the limit with the margin.
+        assert!(on.total_bytes + 512 * MIB_ - n as u64 * per_layer <= 16 * GIB * 2 / 3);
+        assert!(
+            on.total_bytes + 512 * MIB_ - (n as u64 - 1) * per_layer > 16 * GIB * 2 / 3,
+            "no more than needed: {n}"
+        );
+        assert!(
+            on.notes.iter().any(|x| x.contains("MoE experts of")),
+            "{:?}",
+            on.notes
+        );
+        assert_eq!(on.budget_bytes, 14 * GIB, "RAM − headroom");
+        // Dense: the first layers move instead.
+        let dense = estimate(&model(11.0), &p, BackendKind::LlamaCpp, &h, &cfg, 0, 0);
+        assert!(dense.fits && dense.cpu_moe_layers.is_none());
+        assert!(dense.gpu_layers.unwrap() < 36);
+        // Larger than RAM: refused, no split.
+        let huge = estimate(&model(15.0), &p, BackendKind::LlamaCpp, &h, &cfg, 0, 0);
+        assert!(!huge.fits && huge.cpu_moe_layers.is_none() && huge.gpu_layers.is_none());
+        // MLX cannot split; unchanged.
+        let mlx = estimate(&moe_model(), &p, BackendKind::Mlx, &h, &cfg, 0, 0);
+        assert!(!mlx.fits);
+    }
+
+    /// `gpu_memory_limit_gb` lets a larger Mac plan like a smaller one.
+    #[test]
+    fn gpu_memory_limit_caps_the_working_set() {
+        let h = hw(64, Some(metal(48)));
+        let mut cfg = Config::default();
+        cfg.runtime.gpu_memory_limit_gb = Some(10.67);
+        let p = latency();
+        let capped = estimate(
+            &moe_model(),
+            &p,
+            BackendKind::LlamaCpp,
+            &h,
+            &cfg,
+            256 * MIB_,
+            0,
+        );
+        assert!(!capped.fits);
+        cfg.backends.llamacpp.offload = Offload::Auto;
+        let split = estimate(
+            &moe_model(),
+            &p,
+            BackendKind::LlamaCpp,
+            &h,
+            &cfg,
+            256 * MIB_,
+            0,
+        );
+        assert!(split.fits && split.cpu_moe_layers.is_some());
     }
 
     fn metal(ws_gib: u64) -> GpuInfo {

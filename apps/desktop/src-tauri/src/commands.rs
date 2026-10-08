@@ -60,6 +60,8 @@ pub struct ModelView {
     fits: bool,
     /// Fits, but above the comfortable target for a machine with 16 GB or less.
     tight: bool,
+    /// Decode speed on this computer: measured, or predicted from memory bandwidth.
+    speed: Option<llmario_supervisor::speed::SpeedEstimate>,
     needs_bytes: u64,
     budget_bytes: u64,
     loaded: bool,
@@ -136,6 +138,7 @@ fn model_view(rt: &Runtime, m: &ModelEntry, loaded: &[String]) -> ModelView {
         managed: m.managed,
         fits: plan.fits,
         tight: plan.tight,
+        speed: sup.speed(&sel, &sup.autotune()),
         needs_bytes: plan.total_bytes,
         budget_bytes: plan.budget_bytes,
         loaded: loaded.contains(&m.id),

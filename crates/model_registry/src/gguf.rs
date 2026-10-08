@@ -1,5 +1,6 @@
-//! Minimal, bounded GGUF metadata reader. Reads only the header key/value section — never
-//! tensor data — and enforces size limits so a malformed file cannot exhaust memory.
+//! Minimal, bounded GGUF metadata reader. Reads only the header (key/value section and the
+//! tensor index: names and offsets) — never tensor data — and enforces size limits so a
+//! malformed file cannot exhaust memory.
 //! Format reference: https://github.com/ggml-org/ggml/blob/master/docs/gguf.md
 
 use std::collections::BTreeMap;
@@ -10,6 +11,8 @@ const MAX_KEY_LEN: u64 = 64 * 1024;
 const MAX_STR_LEN: u64 = 32 * 1024 * 1024;
 const MAX_ARRAY_LEN: u64 = 16 * 1024 * 1024;
 const MAX_KV: u64 = 1 << 20;
+const MAX_TENSORS: u64 = 1 << 20;
+const MAX_DIMS: u32 = 8;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Value {
@@ -51,6 +54,11 @@ pub struct GgufMetadata {
     pub version: u32,
     pub tensor_count: u64,
     pub kv: BTreeMap<String, Value>,
+    /// Tensor names and their offsets within the data section, in header order. Empty if the
+    /// tensor index could not be read.
+    pub tensors: Vec<(String, u64)>,
+    /// Byte offset of the data section in the file (the header length, aligned).
+    pub data_offset: u64,
 }
 
 impl GgufMetadata {
@@ -66,6 +74,78 @@ impl GgufMetadata {
         self.get(&format!("{arch}.{suffix}"))
             .and_then(Value::as_u64)
     }
+
+    /// Size of every tensor in bytes, from the gaps between their offsets (the last runs to the
+    /// end of the file). `file_len` is the whole file's size. `None` if the index is missing.
+    pub fn tensor_sizes(&self, file_len: u64) -> Option<Vec<(&str, u64)>> {
+        if self.tensors.is_empty() || file_len <= self.data_offset {
+            return None;
+        }
+        let mut by_offset: Vec<&(String, u64)> = self.tensors.iter().collect();
+        by_offset.sort_by_key(|(_, off)| *off);
+        let data_len = file_len - self.data_offset;
+        let mut out = Vec::with_capacity(by_offset.len());
+        for (i, (name, off)) in by_offset.iter().enumerate() {
+            let end = by_offset.get(i + 1).map(|(_, o)| *o).unwrap_or(data_len);
+            out.push((name.as_str(), end.checked_sub(*off)?));
+        }
+        Some(out)
+    }
+
+    /// `(total, read per token)` bytes of MoE expert tensors (`*_exps`); `None` if the tensor
+    /// index is missing. Dense models give `(0, 0)`.
+    pub fn expert_bytes(&self, file_len: u64) -> Option<(u64, u64)> {
+        let total: u64 = self
+            .tensor_sizes(file_len)?
+            .iter()
+            .filter(|(n, _)| n.contains("_exps"))
+            .map(|(_, s)| s)
+            .sum();
+        let active = match (
+            self.arch_u64("expert_used_count"),
+            self.arch_u64("expert_count"),
+        ) {
+            (Some(u), Some(c)) if c > 0 => (total as u128 * u.min(c) as u128 / c as u128) as u64,
+            _ => total,
+        };
+        Some((total, active))
+    }
+
+    /// Weight bytes read to generate one token: every tensor, except that MoE expert tensors
+    /// (`*_exps`) count at the share of experts used per token, and the token-embedding table is
+    /// left out when a separate output head exists (only one row of it is read per token).
+    /// `None` if the tensor index is missing.
+    pub fn bytes_per_token(&self, file_len: u64) -> Option<u64> {
+        let sizes = self.tensor_sizes(file_len)?;
+        let has_output = sizes.iter().any(|(n, _)| *n == "output.weight");
+        let used = self.arch_u64("expert_used_count");
+        let count = self.arch_u64("expert_count").filter(|c| *c > 0);
+        let mut total = 0u64;
+        for (name, size) in sizes {
+            if has_output && name.starts_with("token_embd.") {
+                continue;
+            }
+            total += match (name.contains("_exps"), used, count) {
+                (true, Some(u), Some(c)) => (size as u128 * u.min(c) as u128 / c as u128) as u64,
+                _ => size,
+            };
+        }
+        Some(total)
+    }
+}
+
+/// Counts bytes read, so the parser knows where the header ends.
+struct Counting<R> {
+    inner: R,
+    pos: u64,
+}
+
+impl<R: Read> Read for Counting<R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let n = self.inner.read(buf)?;
+        self.pos += n as u64;
+        Ok(n)
+    }
 }
 
 pub fn read_metadata(path: &Path) -> anyhow::Result<GgufMetadata> {
@@ -74,6 +154,7 @@ pub fn read_metadata(path: &Path) -> anyhow::Result<GgufMetadata> {
 }
 
 pub fn parse(r: &mut impl Read) -> anyhow::Result<GgufMetadata> {
+    let r = &mut Counting { inner: r, pos: 0 };
     let mut magic = [0u8; 4];
     r.read_exact(&mut magic)?;
     if &magic != b"GGUF" {
@@ -95,11 +176,44 @@ pub fn parse(r: &mut impl Read) -> anyhow::Result<GgufMetadata> {
         let v = read_value(r, ty, true)?;
         kv.insert(key, v);
     }
-    Ok(GgufMetadata {
+    let mut md = GgufMetadata {
         version,
         tensor_count,
         kv,
-    })
+        ..Default::default()
+    };
+    // The tensor index is optional for callers that only need metadata: on any problem, keep
+    // the metadata and leave the index empty.
+    if let Ok(tensors) = read_tensor_index(r, tensor_count) {
+        let align = md
+            .get("general.alignment")
+            .and_then(Value::as_u64)
+            .filter(|a| *a > 0)
+            .unwrap_or(32);
+        md.data_offset = r.pos.div_ceil(align) * align;
+        md.tensors = tensors;
+    }
+    Ok(md)
+}
+
+fn read_tensor_index(r: &mut impl Read, count: u64) -> anyhow::Result<Vec<(String, u64)>> {
+    if count > MAX_TENSORS {
+        anyhow::bail!("GGUF declares {count} tensors; refusing");
+    }
+    let mut out = Vec::with_capacity(count.min(4096) as usize);
+    for _ in 0..count {
+        let name = read_string(r, MAX_KEY_LEN)?;
+        let n_dims = read_u32(r)?;
+        if n_dims > MAX_DIMS {
+            anyhow::bail!("GGUF tensor with {n_dims} dimensions");
+        }
+        for _ in 0..n_dims {
+            read_u64(r)?;
+        }
+        let _ty = read_u32(r)?;
+        out.push((name, read_u64(r)?));
+    }
+    Ok(out)
 }
 
 fn read_value(r: &mut impl Read, ty: u32, allow_array: bool) -> anyhow::Result<Value> {
@@ -299,5 +413,63 @@ pub(crate) mod tests {
             parse(&mut huge.as_slice()).is_err(),
             "absurd kv count refused"
         );
+    }
+
+    /// A header with an expert count and a tensor index: sizes come from offset gaps, experts
+    /// count at used/total, and the embedding table is skipped next to a separate output head.
+    #[test]
+    fn tensor_index_gives_bytes_per_token() {
+        fn s(out: &mut Vec<u8>, v: &str) {
+            out.extend((v.len() as u64).to_le_bytes());
+            out.extend(v.as_bytes());
+        }
+        let tensors = [
+            ("token_embd.weight", 1000u64),
+            ("blk.0.attn_q.weight", 400),
+            ("blk.0.ffn_up_exps.weight", 3200),
+            ("output.weight", 1000),
+        ];
+        let mut b = b"GGUF".to_vec();
+        b.extend(3u32.to_le_bytes());
+        b.extend((tensors.len() as u64).to_le_bytes());
+        b.extend(3u64.to_le_bytes()); // kv count
+        s(&mut b, "general.architecture");
+        b.extend(8u32.to_le_bytes());
+        s(&mut b, "moe");
+        s(&mut b, "moe.expert_count");
+        b.extend(4u32.to_le_bytes());
+        b.extend(8u32.to_le_bytes());
+        s(&mut b, "moe.expert_used_count");
+        b.extend(4u32.to_le_bytes());
+        b.extend(2u32.to_le_bytes());
+        let mut off = 0u64;
+        for (name, size) in tensors {
+            s(&mut b, name);
+            b.extend(1u32.to_le_bytes()); // 1 dimension
+            b.extend(size.to_le_bytes());
+            b.extend(0u32.to_le_bytes()); // f32
+            b.extend(off.to_le_bytes());
+            off += size;
+        }
+        let header_len = b.len() as u64;
+        let md = parse(&mut b.as_slice()).unwrap();
+        assert_eq!(md.tensors.len(), 4);
+        assert_eq!(md.data_offset, header_len.div_ceil(32) * 32);
+        let file_len = md.data_offset + off;
+        let sizes = md.tensor_sizes(file_len).unwrap();
+        assert_eq!(sizes.iter().map(|(_, s)| *s).sum::<u64>(), 5600);
+        // 400 (attention) + 3200 * 2/8 (experts) + 1000 (output); embedding skipped.
+        assert_eq!(md.bytes_per_token(file_len), Some(400 + 800 + 1000));
+        assert_eq!(md.expert_bytes(file_len), Some((3200, 800)));
+        // Without a separate output head the (tied) embedding table is read in full.
+        let mut tied = md;
+        tied.tensors.retain(|(n, _)| n != "output.weight");
+        assert_eq!(
+            tied.bytes_per_token(file_len - 1000),
+            Some(1000 + 400 + 800)
+        );
+        // Metadata-only buffers still parse, with an empty index.
+        let md = parse(&mut sample_gguf().as_slice()).unwrap();
+        assert!(md.tensors.is_empty() && md.bytes_per_token(1 << 20).is_none());
     }
 }
