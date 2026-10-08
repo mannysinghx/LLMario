@@ -168,7 +168,7 @@ impl Supervisor {
             &self.cfg,
             draft.as_ref().map(|d| d.id.as_str()),
         );
-        let cpu = speed::cpu_bytes_per_token(&sel.model, &self.plan_memory(sel, 0));
+        let plan = self.plan_memory(sel, 0);
         speed::estimate(
             &sel.model,
             &sel.profile,
@@ -178,7 +178,8 @@ impl Supervisor {
             tuned,
             &version,
             &spec,
-            cpu,
+            &speed::placement_label(&plan, &self.hw),
+            speed::cpu_bytes_per_token(&sel.model, &plan, &self.hw),
         )
     }
 
