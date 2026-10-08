@@ -164,6 +164,8 @@ def gguf_facts(kv):
             "hidden_size": hidden,
             "context_max": a("context_length"),
         }
+        shape["kv_groups"], shape["state_bytes_per_seq"] = layout_from_gguf(
+            kv, shape["n_layers"], shape["n_kv_heads"], shape["head_dim"])
     return arch, a("context_length"), shape
 
 
@@ -183,9 +185,211 @@ def mlx_facts(repo, sha):
             "hidden_size": hidden,
             "context_max": ctx,
         }
+        shape["kv_groups"], shape["state_bytes_per_seq"] = layout_from_config(tc)
     q = cfg.get("quantization") or cfg.get("quantization_config") or {}
     quant = f"{q['bits']}-bit" + (f" (group {q['group_size']})" if q.get("group_size") else "") if q.get("bits") else None
     return cfg.get("model_type"), ctx, shape, quant
+
+
+# ---------- per-layer KV layout (mirrors crates/model_registry/src/layout.rs) ----------
+# Recorded only when it differs from "every layer full attention" and can be computed exactly;
+# anything uncertain records nothing and the planner counts every layer (an overestimate).
+
+def _finish(layers, state):
+    groups = {}
+    for l in layers:
+        if l != "rec":
+            groups[l] = groups.get(l, 0) + 1
+    plain = state == 0 and len(groups) == 1 and next(iter(groups))[2] is None and "rec" not in layers
+    if plain or not groups:
+        return [], 0
+    order = sorted(groups, key=lambda g: (g[2] is not None, g[2] or 0, g[0], g[1]))
+    out = []
+    for heads, dim, window in order:
+        g = {"layers": groups[(heads, dim, window)], "n_kv_heads": heads, "head_dim": dim}
+        if window is not None:
+            g["window"] = window
+        out.append(g)
+    return out, state
+
+
+def layout_from_gguf(kv, n_layers, default_heads, default_dim):
+    arch = kv.get("general.architecture")
+    if not arch:
+        return [], 0
+    n = n_layers
+
+    def per_layer(key):
+        v = kv.get(f"{arch}.{key}")
+        if isinstance(v, list) and len(v) == n:
+            return [int(x) for x in v]
+        x = as_int(v)
+        return None if x is None else [x] * n
+
+    u = lambda k: as_int(kv.get(f"{arch}.{k}"))
+
+    def mean(k, v):
+        if k is not None and v is not None:
+            return -(-(k + v) // 2)
+        return k if k is not None else (v if v is not None else default_dim)
+
+    heads = per_layer("attention.head_count_kv") or [default_heads] * n
+    dim = mean(u("attention.key_length"), u("attention.value_length"))
+    ks, vs = u("attention.key_length_swa"), u("attention.value_length_swa")
+    dim_swa = dim if ks is None and vs is None else mean(ks, vs)
+    window = u("attention.sliding_window") or None
+    pattern = per_layer("attention.sliding_window_pattern")
+    interval = u("full_attention_interval") or None
+    layers = []
+    for i, h in enumerate(heads):
+        if not ((interval is None or (i + 1) % interval == 0) and h > 0):
+            layers.append("rec")
+            continue
+        if window is None:
+            swa = False
+        elif pattern is not None:
+            swa = pattern[i] != 0
+        elif arch == "gpt-oss":  # llama.cpp hard-codes set_swa_pattern(2): even layers slide
+            swa = i % 2 == 0
+        else:
+            return [], 0
+        layers.append((h, dim_swa, window) if swa else (h, dim, None))
+    rec = layers.count("rec")
+    state = 0
+    if rec:
+        inner, st, kernel = u("ssm.inner_size"), u("ssm.state_size"), u("ssm.conv_kernel")
+        if None in (inner, st, kernel):
+            return [], 0
+        groups = u("ssm.group_count") or 1
+        state = rec * 4 * (inner * st + max(kernel - 1, 0) * (inner + 2 * groups * st))
+    return _finish(layers, state)
+
+
+def layout_from_config(tc):
+    num = lambda k: tc.get(k) if isinstance(tc.get(k), int) and not isinstance(tc.get(k), bool) else None
+    n = num("num_hidden_layers")
+    if n is None:
+        return [], 0
+    types = tc.get("layer_types")
+    if isinstance(types, list):
+        if len(types) != n:
+            return [], 0
+    elif num("full_attention_interval"):
+        iv = num("full_attention_interval")
+        types = ["full_attention" if (i + 1) % iv == 0 else "linear_attention" for i in range(n)]
+    else:
+        return [], 0
+    heads = num("num_key_value_heads") or num("num_attention_heads")
+    dim = num("head_dim") or (num("hidden_size") // num("num_attention_heads")
+                              if num("hidden_size") and num("num_attention_heads") else None)
+    if heads is None or dim is None:
+        return [], 0
+    g_heads, g_dim = num("num_global_key_value_heads") or heads, num("global_head_dim") or dim
+    window = num("sliding_window") or None
+    layers = []
+    for t in types:
+        if t == "full_attention":
+            layers.append((g_heads, g_dim, None))
+        elif t == "sliding_attention" and window:
+            layers.append((heads, dim, window))
+        elif t == "linear_attention":
+            layers.append("rec")
+        else:
+            return [], 0
+    rec = layers.count("rec")
+    state = 0
+    if rec:
+        vals = [num(k) for k in ("linear_num_value_heads", "linear_num_key_heads", "linear_key_head_dim",
+                                 "linear_value_head_dim", "linear_conv_kernel_dim")]
+        if None in vals:
+            return [], 0
+        vh, kh, kd, vd, kernel = vals
+        state = rec * (vh * kd * vd * 4 + max(kernel - 1, 0) * (2 * kh * kd + vh * vd) * 2)
+    return _finish(layers, state)
+
+
+def self_test():
+    """Same fixtures and expected values as the Rust tests in layout.rs."""
+    q = {"general.architecture": "qwen35", "qwen35.attention.head_count_kv": 4, "qwen35.attention.key_length": 256,
+         "qwen35.attention.value_length": 256, "qwen35.full_attention_interval": 4, "qwen35.ssm.conv_kernel": 4,
+         "qwen35.ssm.state_size": 128, "qwen35.ssm.group_count": 16, "qwen35.ssm.inner_size": 4096}
+    assert layout_from_gguf(q, 32, 4, 256) == ([{"layers": 8, "n_kv_heads": 4, "head_dim": 256}], 52_690_944)
+    gm = {"general.architecture": "gemma4", "gemma4.attention.head_count_kv": [1 if i % 6 == 5 else 8 for i in range(48)],
+          "gemma4.attention.key_length": 512, "gemma4.attention.value_length": 512,
+          "gemma4.attention.key_length_swa": 256, "gemma4.attention.value_length_swa": 256,
+          "gemma4.attention.sliding_window": 1024,
+          "gemma4.attention.sliding_window_pattern": [i % 6 != 5 for i in range(48)]}
+    assert layout_from_gguf(gm, 48, 8, 512) == ([{"layers": 8, "n_kv_heads": 1, "head_dim": 512},
+                                                 {"layers": 40, "n_kv_heads": 8, "head_dim": 256, "window": 1024}], 0)
+    oss = {"general.architecture": "gpt-oss", "gpt-oss.attention.head_count_kv": 8, "gpt-oss.attention.key_length": 64,
+           "gpt-oss.attention.value_length": 64, "gpt-oss.attention.sliding_window": 128}
+    assert layout_from_gguf(oss, 24, 8, 64) == ([{"layers": 12, "n_kv_heads": 8, "head_dim": 64},
+                                                 {"layers": 12, "n_kv_heads": 8, "head_dim": 64, "window": 128}], 0)
+    assert layout_from_gguf({"general.architecture": "qwen3", "qwen3.attention.head_count_kv": 8}, 36, 8, 128) == ([], 0)
+    assert layout_from_gguf({"general.architecture": "olmo2", "olmo2.attention.sliding_window": 4096}, 32, 32, 128) == ([], 0)
+    assert layout_from_gguf({"general.architecture": "lfm2", "lfm2.attention.head_count_kv": [0, 0, 8, 0, 0, 8]}, 6, 8, 64) == ([], 0)
+    qm = {"num_hidden_layers": 64, "full_attention_interval": 4, "num_attention_heads": 24, "num_key_value_heads": 4,
+          "head_dim": 256, "linear_num_value_heads": 48, "linear_num_key_heads": 16, "linear_key_head_dim": 128,
+          "linear_value_head_dim": 128, "linear_conv_kernel_dim": 4}
+    assert layout_from_config(qm) == ([{"layers": 16, "n_kv_heads": 4, "head_dim": 256}], 153_944_064)
+    gc = {"num_hidden_layers": 48, "layer_types": ["full_attention" if i % 6 == 5 else "sliding_attention" for i in range(48)],
+          "num_attention_heads": 16, "num_key_value_heads": 8, "head_dim": 256, "num_global_key_value_heads": 1,
+          "global_head_dim": 512, "sliding_window": 1024}
+    assert layout_from_config(gc) == ([{"layers": 8, "n_kv_heads": 1, "head_dim": 512},
+                                       {"layers": 40, "n_kv_heads": 8, "head_dim": 256, "window": 1024}], 0)
+    assert layout_from_config({"num_hidden_layers": 36, "num_attention_heads": 32, "num_key_value_heads": 8, "head_dim": 128}) == ([], 0)
+    assert layout_from_config({"num_hidden_layers": 2, "layer_types": ["conv", "full_attention"], "num_attention_heads": 2,
+                               "num_key_value_heads": 1, "head_dim": 8}) == ([], 0)
+    print("layout self-test: ok")
+
+
+def shape_toml(s):
+    inner = ", ".join(f"{k} = {s[k]}" for k in ("n_layers", "n_heads", "n_kv_heads", "head_dim", "hidden_size") if s.get(k) is not None)
+    if s.get("context_max"):
+        inner += f", context_max = {s['context_max']}"
+    if s.get("kv_groups"):
+        gs = ", ".join("{ " + ", ".join(f"{k} = {g[k]}" for k in ("layers", "n_kv_heads", "head_dim", "window") if k in g) + " }"
+                       for g in s["kv_groups"])
+        inner += f", kv_groups = [{gs}]"
+    if s.get("state_bytes_per_seq"):
+        inner += f", state_bytes_per_seq = {s['state_bytes_per_seq']}"
+    return f"shape = {{ {inner} }}"
+
+
+def add_layouts():
+    """Add per-layer KV layouts to the existing catalog at each entry's pinned revision, changing
+    nothing else in catalog.toml."""
+    text = OUT.read_text()
+    cat = tomllib.loads(text)["models"]
+    blocks = text.split("\n[[models]]\n")
+    head, entries = blocks[0], blocks[1:]
+    assert len(entries) == len(cat), "catalog layout changed; refusing to rewrite"
+    changed = 0
+    for i, m in enumerate(cat):
+        s = m.get("shape")
+        if not s:
+            continue
+        try:
+            if m["format"] == "gguf":
+                groups, state = layout_from_gguf(gguf_metadata(m["repo"], m["revision"], m["files"][0]),
+                                                 s["n_layers"], s["n_kv_heads"], s["head_dim"])
+            else:
+                cfg = get_json(f"{HUB}/{urllib.parse.quote(m['repo'], safe='/')}/resolve/{m['revision']}/config.json")
+                tc = cfg.get("text_config") if isinstance(cfg.get("text_config"), dict) else cfg
+                groups, state = layout_from_config(tc)
+        except Exception as e:  # keep the entry as it was
+            print(f"✗ {m['id']}: {e}")
+            continue
+        new = dict(s, kv_groups=groups, state_bytes_per_seq=state)
+        old_line = next(l for l in entries[i].splitlines() if l.startswith("shape = "))
+        new_line = shape_toml(new)
+        if new_line != old_line:
+            entries[i] = entries[i].replace(old_line, new_line)
+            changed += 1
+        full = sum(g["layers"] for g in groups if "window" not in g)
+        print(f"{'✓' if groups else ' '} {m['id']:<44} " + (f"{full}/{s['n_layers']} full, {len(groups)} group(s), state {state}" if groups else "plain or unknown: unchanged"))
+    OUT.write_text("\n[[models]]\n".join([head] + entries))
+    print(f"\n{changed} catalog entr(ies) gained a layout; nothing else changed")
 
 
 # ---------- file selection ----------
@@ -307,11 +511,7 @@ def emit(fams, variants):
                 continue
             lines.append(f"{k} = {toml_str(val) if not isinstance(val, bool) else str(val).lower()}")
         if v["shape"]:
-            s = v["shape"]
-            inner = ", ".join(f"{k} = {s[k]}" for k in ("n_layers", "n_heads", "n_kv_heads", "head_dim", "hidden_size") if s.get(k) is not None)
-            if s.get("context_max"):
-                inner += f", context_max = {s['context_max']}"
-            lines.append(f"shape = {{ {inner} }}")
+            lines.append(shape_toml(v["shape"]))
         lines.append("")
     OUT.write_text("\n".join(lines))
 
@@ -356,6 +556,13 @@ def emit_docs(fams, variants):
 
 
 def main():
+    if "--self-test" in sys.argv:
+        self_test()
+        return 0
+    if "--layouts" in sys.argv:
+        self_test()
+        add_layouts()
+        return 0
     only = set(sys.argv[sys.argv.index("--only") + 1:]) if "--only" in sys.argv else None
     fams_list = tomllib.loads(SOURCES.read_text())["family"]
     fams = {f["id"]: f for f in fams_list}

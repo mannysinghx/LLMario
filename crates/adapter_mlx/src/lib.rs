@@ -223,3 +223,67 @@ impl EngineAdapter for MlxAdapter {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Phase 2 exit check from the catalog alone, on a 16 GB Mac (GPU working set 2/3 of RAM =
+    /// 10.67 GiB) with this adapter's extras: Qwen3.5 9B (MLX) fits (9.01 GiB; the old formula:
+    /// 11.12 GiB, refused). Gemma 4 12B (MLX) drops from 17.92 to 12.11 GiB but is still over
+    /// budget; mlx-lm 0.31.3 cannot load its `gemma4_unified` model type anyway, while the GGUF
+    /// build fits (see the llama.cpp adapter's test).
+    #[test]
+    fn catalog_models_on_a_16_gb_mac() {
+        use llmario_hardware::{GpuApi, GpuInfo};
+        const GIB: u64 = 1 << 30;
+        let hw = HardwareReport {
+            os: "macos".into(),
+            os_version: "test".into(),
+            arch: "aarch64".into(),
+            cpu_brand: "Apple M4".into(),
+            physical_cores: 10,
+            logical_cores: 10,
+            performance_cores: None,
+            efficiency_cores: None,
+            cpu_features: vec![],
+            total_memory_bytes: 16 * GIB,
+            available_memory_bytes: 8 * GIB,
+            apple_silicon: true,
+            unified_memory: true,
+            gpus: vec![GpuInfo {
+                vendor: "apple".into(),
+                name: "Apple M4".into(),
+                api: GpuApi::Metal,
+                memory_total_bytes: Some(16 * GIB * 2 / 3),
+                memory_free_bytes: None,
+                driver: None,
+                cores: None,
+            }],
+            notes: vec![],
+        };
+        let catalog = llmario_registry::Catalog::builtin();
+        let adapter = MlxAdapter::new(Path::new("/nonexistent"));
+        let plan = |id: &str, cfg: &Config| {
+            let m = catalog.get(id).unwrap().planning_entry();
+            let p = ResolvedProfile::resolve(llmario_core::ProfileKind::Latency, None);
+            let extra = adapter.extra_memory_bytes(&m, &p, cfg);
+            llmario_supervisor::memory::estimate(&m, &p, BackendKind::Mlx, &hw, cfg, extra, 0)
+        };
+        let now = Config::default();
+        let mut old = Config::default();
+        old.runtime.kv_accounting = llmario_core::KvAccounting::Conservative;
+        let qwen = plan("qwen3.5-9b-mlx-4bit", &now);
+        assert!(qwen.fits, "{}", qwen.explain());
+        assert!(!plan("qwen3.5-9b-mlx-4bit", &old).fits);
+        let (gemma, before) = (
+            plan("gemma-4-12b-mlx-4bit", &now),
+            plan("gemma-4-12b-mlx-4bit", &old),
+        );
+        assert!(
+            gemma.total_bytes < before.total_bytes * 7 / 10,
+            "{}",
+            gemma.explain()
+        );
+    }
+}
