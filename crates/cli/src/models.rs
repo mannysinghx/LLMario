@@ -149,6 +149,8 @@ pub async fn run(cmd: ModelCmd) -> anyhow::Result<()> {
                     )
                 } else if !v.fits {
                     format!("too large (needs ~{})", fmt_bytes(v.needs_bytes))
+                } else if v.tight {
+                    format!("fits, tight (needs ~{})", fmt_bytes(v.needs_bytes))
                 } else {
                     format!("fits (needs ~{})", fmt_bytes(v.needs_bytes))
                 };
@@ -395,7 +397,8 @@ pub async fn run(cmd: ModelCmd) -> anyhow::Result<()> {
             }
             if plan.fits {
                 println!(
-                    "✓ fits (largest per-request context that would fit: {} tokens)",
+                    "✓ fits{} (largest per-request context that would fit: {} tokens)",
+                    if plan.tight { ", tight" } else { "" },
                     plan.max_ctx_per_slot_that_fits.unwrap_or(0)
                 );
             } else {

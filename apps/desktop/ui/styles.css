@@ -239,6 +239,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .badge.accent { background: var(--accent-soft); color: var(--accent-strong); }
 .badge.ok { background: var(--ok-soft); color: var(--ok); }
 .badge.bad { background: var(--danger-soft); color: var(--danger); }
+.badge.warn { background: var(--warn-soft); color: var(--warn); }
 .progress { height: 6px; border-radius: 99px; background: var(--border); overflow: hidden; margin-top: 8px; }
 .progress > div { height: 100%; background: var(--accent); width: 0; transition: width 0.2s; }
 
@@ -308,6 +309,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .variant .exact { font: 11.5px/1.4 ui-monospace, "SF Mono", Menlo, "Cascadia Mono", Consolas, monospace; color: var(--muted); user-select: text; -webkit-user-select: text; word-break: break-all; }
 .fit-ok { color: var(--ok); }
 .fit-bad { color: var(--danger); }
+.fit-tight { color: var(--warn); }
 .linkish { border: 0; background: none; color: var(--accent); cursor: pointer; font-size: 11.5px; padding: 0 2px; }
 .variant .actions { display: flex; gap: 6px; align-items: center; }
 .variant .progress { grid-column: 1 / -1; margin-top: 2px; }

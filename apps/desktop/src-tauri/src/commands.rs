@@ -58,6 +58,8 @@ pub struct ModelView {
     context_max: Option<u32>,
     managed: bool,
     fits: bool,
+    /// Fits, but above the comfortable target for a machine with 16 GB or less.
+    tight: bool,
     needs_bytes: u64,
     budget_bytes: u64,
     loaded: bool,
@@ -133,6 +135,7 @@ fn model_view(rt: &Runtime, m: &ModelEntry, loaded: &[String]) -> ModelView {
         context_max: m.shape.as_ref().and_then(|s| s.context_max),
         managed: m.managed,
         fits: plan.fits,
+        tight: plan.tight,
         needs_bytes: plan.total_bytes,
         budget_bytes: plan.budget_bytes,
         loaded: loaded.contains(&m.id),

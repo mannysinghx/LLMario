@@ -39,6 +39,8 @@ pub struct CatalogView {
     pub needs_bytes: u64,
     pub budget_bytes: u64,
     pub fits: bool,
+    /// Fits, but above the comfortable target for a machine with 16 GB or less.
+    pub tight: bool,
     /// The variant this machine should use for the family: supported, fits, and preferred engine.
     pub recommended: bool,
     pub installed: bool,
@@ -93,6 +95,7 @@ pub fn catalog_views(sup: &Supervisor) -> Vec<CatalogView> {
                 needs_bytes: plan.total_bytes,
                 budget_bytes: plan.budget_bytes,
                 fits: plan.fits,
+                tight: plan.tight,
                 recommended: false,
                 installed: reg.get(&c.id).is_some(),
             }

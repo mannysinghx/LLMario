@@ -64,6 +64,24 @@ pub struct RuntimeConfig {
     pub max_restarts: u32,
     /// How the memory planner sizes the KV cache.
     pub kv_accounting: KvAccounting,
+    /// Size of llmario's fixed memory reserves (prompt caches, buffer cache).
+    pub memory_profile: MemoryProfile,
+}
+
+/// Size of llmario's fixed memory reserves: llama.cpp's host prompt cache (`--cache-ram`), and
+/// MLX's prompt-cache entries and buffer cache.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum MemoryProfile {
+    /// llama.cpp 1 GiB host prompt cache; MLX the profile's prompt-cache entries, 1 GiB buffer
+    /// cache.
+    #[default]
+    Standard,
+    /// For machines with 16 GB or less: llama.cpp 256 MiB host prompt cache; MLX 1 prompt-cache
+    /// entry, 512 MiB buffer cache. Less memory, less prompt-prefix reuse.
+    Small,
+    /// `small` on machines with 16 GB of memory or less, otherwise `standard`.
+    Auto,
 }
 
 /// How the memory planner sizes the KV cache.
@@ -93,6 +111,7 @@ impl Default for RuntimeConfig {
             idle_unload_secs: 0,
             max_restarts: 3,
             kv_accounting: KvAccounting::PerLayer,
+            memory_profile: MemoryProfile::Standard,
         }
     }
 }
@@ -113,8 +132,34 @@ pub struct LlamaCppConfig {
     pub server_path: Option<PathBuf>,
     /// Layers to offload to the GPU. `None` = computed from the memory plan.
     pub gpu_layers: Option<i32>,
+    /// KV cache element type (`-ctk`/`-ctv`).
+    pub kv_cache_type: KvCacheType,
     /// Extra flags appended verbatim (advanced; bypasses profile validation).
     pub extra_args: Vec<String>,
+}
+
+/// llama.cpp KV cache element type.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum KvCacheType {
+    /// 16-bit (llama.cpp's default).
+    #[default]
+    #[serde(rename = "f16")]
+    F16,
+    /// 8-bit: 34 bytes per 32 values, so the KV cache takes 17/32 of its f16 size. llama.cpp
+    /// turns flash attention on for it (required for a quantized V cache). Recurrent state is
+    /// unaffected.
+    #[serde(rename = "q8_0")]
+    Q8_0,
+}
+
+impl KvCacheType {
+    /// The value for `-ctk`/`-ctv`.
+    pub fn as_arg(self) -> &'static str {
+        match self {
+            Self::F16 => "f16",
+            Self::Q8_0 => "q8_0",
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
@@ -272,6 +317,22 @@ mod tests {
         let c = Config::from_toml("[runtime]\nkv_accounting = \"conservative\"").unwrap();
         assert_eq!(c.runtime.kv_accounting, KvAccounting::Conservative);
         assert!(Config::from_toml("[runtime]\nkv_accounting = \"guess\"").is_err());
+    }
+
+    #[test]
+    fn memory_profile_and_kv_cache_type_parse() {
+        let c = Config::default();
+        assert_eq!(c.runtime.memory_profile, MemoryProfile::Standard);
+        assert_eq!(c.backends.llamacpp.kv_cache_type, KvCacheType::F16);
+        let c = Config::from_toml(
+            "[runtime]\nmemory_profile = \"auto\"\n[backends.llamacpp]\nkv_cache_type = \"q8_0\"",
+        )
+        .unwrap();
+        assert_eq!(c.runtime.memory_profile, MemoryProfile::Auto);
+        assert_eq!(c.backends.llamacpp.kv_cache_type, KvCacheType::Q8_0);
+        assert_eq!(KvCacheType::Q8_0.as_arg(), "q8_0");
+        assert!(Config::from_toml("[runtime]\nmemory_profile = \"tiny\"").is_err());
+        assert!(Config::from_toml("[backends.llamacpp]\nkv_cache_type = \"q4_0\"").is_err());
     }
 
     #[test]

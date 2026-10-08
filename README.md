@@ -389,12 +389,15 @@ request_timeout_secs = 900
 engine_start_timeout_secs = 300
 idle_unload_secs = 0        # 0 = keep loaded
 max_restarts = 3
+kv_accounting = "per-layer" # per-layer | conservative (every layer counted as full attention)
+memory_profile = "standard" # standard | small | auto (small on 16 GB or less): smaller prompt caches
 
 [backends]
 # prefer = "mlx"            # llamacpp | mlx
 [backends.llamacpp]
 # server_path = "/opt/homebrew/bin/llama-server"
 # gpu_layers = 999
+kv_cache_type = "f16"       # f16 | q8_0 (8-bit KV cache: 17/32 of the memory)
 extra_args = []
 [backends.mlx]
 # python = "~/.llmario/venvs/mlx/bin/python"
