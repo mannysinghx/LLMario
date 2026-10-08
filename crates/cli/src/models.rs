@@ -311,6 +311,17 @@ pub async fn run(cmd: ModelCmd) -> anyhow::Result<()> {
                 if id.as_ref().is_some_and(|id| *id != m.id) || m.format == ModelFormat::Mock {
                     continue;
                 }
+                // macOS sidecar files ("._name") recorded by older builds are not model files.
+                let before = m.files.len();
+                m.files.retain(|f| {
+                    let name = f.name.rsplit('/').next().unwrap_or(&f.name);
+                    !llmario_registry::inspect::is_os_sidecar(name)
+                });
+                let dropped = before - m.files.len();
+                if dropped > 0 {
+                    println!("✓ {}: removed {dropped} macOS sidecar file record(s)", m.id);
+                    changed += 1;
+                }
                 let shape = match llmario_registry::inspect::inspect(&m.path, false) {
                     Ok(i) => i.shape,
                     Err(e) => {
@@ -319,7 +330,9 @@ pub async fn run(cmd: ModelCmd) -> anyhow::Result<()> {
                     }
                 };
                 if shape == m.shape {
-                    println!("  {}: unchanged", m.id);
+                    if dropped == 0 {
+                        println!("  {}: unchanged", m.id);
+                    }
                     continue;
                 }
                 let layout = shape
