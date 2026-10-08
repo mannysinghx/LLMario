@@ -19,6 +19,15 @@ pub struct Measurement {
     pub profile: String,
     /// Speculative decoding in effect: "off", "ngram", "mtp" or "draft:<model id>".
     pub speculative: String,
+    /// GPU/CPU split in effect: "" when the model is not split, else "cpu-moe:<layers>" or
+    /// "gpu-layers:<layers>" (see `speed::placement_label`). A split reads part of the model at
+    /// CPU speed, so it is a different setup and never stands for the machine's bandwidth.
+    #[serde(default)]
+    pub placement: String,
+    /// KV cache type when not the default f16 (llama.cpp "q8_0"); it changes decode speed
+    /// (gpt-oss-20b: 114 tok/s f16, 102 tok/s q8_0 on the M4 Max).
+    #[serde(default)]
+    pub kv_cache: String,
     /// Mean decode speed of one request at a time.
     pub decode_tps: f64,
     /// Weight and cache bytes read per generated token (the speed planner's model).
@@ -37,6 +46,8 @@ impl Measurement {
             && self.model_hash == o.model_hash
             && self.profile == o.profile
             && self.speculative == o.speculative
+            && self.placement == o.placement
+            && self.kv_cache == o.kv_cache
     }
 }
 
@@ -78,6 +89,8 @@ impl Autotune {
         model_hash: Option<&str>,
         profile: &str,
         speculative: &str,
+        placement: &str,
+        kv_cache: &str,
     ) -> Option<&Measurement> {
         self.measurements.iter().rev().find(|m| {
             m.hardware == hardware
@@ -87,16 +100,20 @@ impl Autotune {
                 && m.model_hash.as_deref() == model_hash
                 && m.profile == profile
                 && m.speculative == speculative
+                && m.placement == placement
+                && m.kv_cache == kv_cache
         })
     }
 
-    /// Median effective bandwidth of plain decoding (no speculation) measured on this hardware
-    /// with this engine and version: the speed planner's best estimate for other models.
+    /// Median effective bandwidth of plain decoding (no speculation, no GPU/CPU split, the same KV
+    /// cache type) measured on this hardware with this engine and version: the speed planner's
+    /// best estimate for other models.
     pub fn effective_bandwidth(
         &self,
         hardware: &str,
         backend: BackendKind,
         engine_version: &str,
+        kv_cache: &str,
     ) -> Option<f64> {
         let mut v: Vec<f64> = self
             .measurements
@@ -106,6 +123,8 @@ impl Autotune {
                     && m.backend == backend
                     && m.engine_version == engine_version
                     && m.speculative == "off"
+                    && m.placement.is_empty()
+                    && m.kv_cache == kv_cache
                     && m.effective_gbs > 0.0
             })
             .map(|m| m.effective_gbs)
@@ -151,6 +170,8 @@ mod tests {
             model_hash: None,
             profile: "latency".into(),
             speculative: spec.into(),
+            placement: String::new(),
+            kv_cache: String::new(),
             decode_tps: tps,
             bytes_per_token: (gbs * 1e9 / tps) as u64,
             effective_gbs: gbs,
@@ -171,10 +192,18 @@ mod tests {
         a.record(m("a", BackendKind::LlamaCpp, "off", 50.0, 300.0));
         a.record(m("a", BackendKind::LlamaCpp, "off", 60.0, 360.0));
         a.record(m("a", BackendKind::LlamaCpp, "mtp", 70.0, 420.0));
+        a.record(Measurement {
+            placement: "cpu-moe:8".into(),
+            ..m("a", BackendKind::LlamaCpp, "off", 40.0, 240.0)
+        });
+        a.record(Measurement {
+            kv_cache: "q8_0".into(),
+            ..m("a", BackendKind::LlamaCpp, "off", 55.0, 300.0)
+        });
         assert_eq!(
             a.measurements.len(),
-            2,
-            "same setup replaced, other mode kept"
+            4,
+            "same setup replaced; other mode, split and cache type kept"
         );
         a.save(&path).unwrap();
         let b = Autotune::load(&path);
@@ -187,8 +216,22 @@ mod tests {
             None,
             "latency",
             "off",
+            "",
+            "",
         );
         assert_eq!(hit.unwrap().decode_tps, 60.0);
+        let split = b.lookup(
+            "hw1",
+            BackendKind::LlamaCpp,
+            "v1",
+            "a",
+            None,
+            "latency",
+            "off",
+            "cpu-moe:8",
+            "",
+        );
+        assert_eq!(split.unwrap().decode_tps, 40.0, "a split is its own setup");
         assert!(
             b.lookup(
                 "hw1",
@@ -197,7 +240,9 @@ mod tests {
                 "a",
                 None,
                 "latency",
-                "off"
+                "off",
+                "",
+                ""
             )
             .is_none(),
             "other engine version"
@@ -218,15 +263,34 @@ mod tests {
         }
         a.record(m("d", BackendKind::LlamaCpp, "ngram", 50.0, 900.0));
         a.record(m("e", BackendKind::Mlx, "off", 50.0, 450.0));
+        // A GPU/CPU split reads part of the model at CPU speed: not the machine's bandwidth.
+        for (id, gbs) in [("f", 185.0), ("g", 150.0)] {
+            a.record(Measurement {
+                placement: "cpu-moe:8".into(),
+                ..m(id, BackendKind::LlamaCpp, "off", 70.0, gbs)
+            });
+        }
+        a.record(Measurement {
+            kv_cache: "q8_0".into(),
+            ..m("h", BackendKind::LlamaCpp, "off", 50.0, 280.0)
+        });
         assert_eq!(
-            a.effective_bandwidth("hw1", BackendKind::LlamaCpp, "v1"),
+            a.effective_bandwidth("hw1", BackendKind::LlamaCpp, "v1", ""),
             Some(350.0)
         );
         assert_eq!(
-            a.effective_bandwidth("hw1", BackendKind::Mlx, "v1"),
+            a.effective_bandwidth("hw1", BackendKind::LlamaCpp, "v1", "q8_0"),
+            Some(280.0),
+            "same cache type only"
+        );
+        assert_eq!(
+            a.effective_bandwidth("hw1", BackendKind::Mlx, "v1", ""),
             Some(450.0)
         );
-        assert_eq!(a.effective_bandwidth("hw2", BackendKind::Mlx, "v1"), None);
+        assert_eq!(
+            a.effective_bandwidth("hw2", BackendKind::Mlx, "v1", ""),
+            None
+        );
         assert_eq!(
             a.family_speed("hw1", &["e", "a"], BackendKind::Mlx),
             Some(50.0)
