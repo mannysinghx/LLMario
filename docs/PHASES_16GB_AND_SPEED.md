@@ -280,6 +280,54 @@ The catalog builder also takes the maximum of per-layer values (`as_int` in
 calibrate against bench peaks, keep a config switch back to the old formula, and the change reverts
 as one commit.
 
+**Status (2026-10-07):** implemented on `beta` and checked on the M4 Max development machine; not
+yet on 16 GB hardware.
+
+- **Memory measurement fixed first.** On macOS the engine's memory is now the larger of its
+  footprint and its resident size. The footprint alone left out llama.cpp's memory-mapped weights
+  (gpt-oss-20b: 0.48 GiB reported, 11.49 GiB resident).
+- **Per-layer layouts** are read from GGUF headers and MLX `config.json`
+  ([layout.rs](../crates/model_registry/src/layout.rs)). They match what the engines allocate:
+
+  | Model | Planned now | Engine allocated |
+  |---|---|---|
+  | Qwen3.5 9B (GGUF, 8k) | 256 MiB + 50.25 MiB state | 256 MiB + 50.25 MiB (llama.cpp) |
+  | Gemma 4 12B (GGUF, 8k) | 128 + 480 MiB | 128 + 480 MiB (llama.cpp) |
+  | gpt-oss-20b (GGUF, 8k) | 192 + 18 MiB | 192 + 18 MiB (llama.cpp) |
+  | Qwen3.8 27B (MLX) | 64 KiB/token + 146.8 MiB | 64 KiB/token + 146.8 MiB (mlx-lm) |
+
+- **llama.cpp context checkpoints** are capped at 2 per slot (`--ctx-checkpoints 2`) and counted.
+  The default 32 added 2.54 GiB to Gemma 4 12B in a chat; with 2 it added 0.66 GiB, and follow-up
+  turns reused the prompt just as well.
+- **Catalog:** 35 of 69 entries gained a layout (`scripts/catalog/build.py --layouts`, read at each
+  entry's pinned revision). The rest are plain full attention, or a layout the planner cannot size
+  exactly; those keep the old formula.
+- **Switch back:** `[runtime] kv_accounting = "conservative"`. `model refresh` re-reads layouts for
+  models registered before this change.
+
+Exit check:
+
+| Criterion | Result |
+|---|---|
+| Estimate at or above measured peak | Met for the three GGUF reference models: estimate ÷ peak 1.10 (Qwen3.5 9B), 1.08 (Gemma 4 12B), 1.16 (gpt-oss-20b) ([results](../benchmarks/results/2026-10-07-apple-m4-max-64gb-phase2-capped/SUMMARY.md)). MLX reference models not yet measured. |
+| Estimate ÷ peak about 1.4 or less | Met: 1.08–1.16. |
+| Gemma 4 12B and Qwen3.5 9B (MLX) fit a 16 GB Mac, from the catalog | Qwen3.5 9B (MLX): met, 9.01 GiB (was 11.12, refused). Gemma 4 12B (MLX): **not met**, 12.11 GiB (was 17.92) against 10.67 GiB; mlx-lm 0.31.3 also cannot load its `gemma4_unified` model type. The GGUF Gemma 4 12B fits: 10.16 GiB planned, 9.37 GiB measured. |
+
+Open items:
+
+- **MLX prompt-cache bound is probably high for sliding-window models.** Each saved entry is counted
+  at window + one 2048-token prefill step. mlx-lm's code trims a rotating cache back to the window
+  after the first generated token, so entries likely hold only the window (read from the code, not
+  measured). Lowering it would bring Gemma 4 12B (MLX) to about 10.9 GiB, still over 10.67. Measure
+  before changing.
+- **Layouts that over-count (safe direction):**
+  - Gemma 4 E2B/E4B share KV across layers, and every layer is counted.
+  - Nemotron 3.5 Lightning (GGUF) counts its feed-forward-only layers as recurrent state. llama.cpp
+    counts only the Mamba layers (from llama.cpp's rule; not measured).
+- **Several slots:** sliding-window caches are assumed to hold one window per slot. Not measured.
+- **Older beta builds:** the installed `LLMario Beta.app` (0.3.0-beta.1) keeps the layout fields
+  when it reads the registry but drops them if it rewrites it. `model refresh` restores them.
+
 ## Phase 3 — Small-machine memory profile
 
 **Goal:** fixed overheads scale with RAM, and the KV cache can be 8-bit.
