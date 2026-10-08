@@ -9,7 +9,7 @@
 
 use crate::autotune::Autotune;
 use crate::memory::kv_plan;
-use llmario_core::{BackendKind, Config, ResolvedProfile, Speculative};
+use llmario_core::{BackendKind, Config, KvCacheType, ResolvedProfile, Speculative};
 use llmario_hardware::HardwareReport;
 use llmario_registry::ModelEntry;
 use serde::Serialize;
@@ -43,13 +43,45 @@ pub const LLAMACPP_OVERHEAD_S: f64 = 0.004_65;
 pub const MLX_OVERHEAD_S: f64 = 0.001_22;
 
 /// Share of the published bandwidth the CPU reaches when it reads weights kept in RAM by a
-/// GPU/CPU split (Phase 7). Measured on the M4 Max: gpt-oss-20b with the experts of 8 of 24
-/// layers on the CPU ran at 69.5 tok/s, which implies the CPU read its 404 MiB per token at
-/// ~80 GB/s (15% of 546 GB/s). One measurement; unverified on other chips.
+/// GPU/CPU split (Phase 7). Measured on the M4 Max (llama.cpp build 11146, `--load-mode none`):
+/// gpt-oss-20b with the experts of 8 of 24 layers on the CPU ran at 70.7 tok/s, which implies the
+/// CPU read its 404 MiB per token at ~84 GB/s (15.5% of 546 GB/s); predicted 70.0 tok/s. One
+/// model on one chip; unverified elsewhere.
 pub const CPU_BANDWIDTH_SHARE: f64 = 0.15;
 
-/// Bytes per token the CPU reads when a plan splits the model between GPU and CPU.
-pub fn cpu_bytes_per_token(model: &ModelEntry, plan: &crate::memory::MemoryPlan) -> u64 {
+/// The GPU/CPU split an autotune measurement is keyed by: "" when the model is not split
+/// (everything on the GPU, or everything on the CPU of a computer without a GPU).
+pub fn placement_label(plan: &crate::memory::MemoryPlan, hw: &HardwareReport) -> String {
+    if hw.primary_gpu().is_none() {
+        return String::new();
+    }
+    match (plan.cpu_moe_layers, plan.gpu_layers) {
+        (Some(n), _) => format!("cpu-moe:{n}"),
+        (None, Some(g)) => format!("gpu-layers:{g}"),
+        _ => String::new(),
+    }
+}
+
+/// The KV cache type an autotune measurement is keyed by: "" for the default f16 cache.
+pub fn kv_cache_label(backend: BackendKind, cfg: &Config) -> String {
+    let kv = cfg.backends.llamacpp.kv_cache_type;
+    if backend == BackendKind::LlamaCpp && kv != KvCacheType::F16 {
+        kv.as_arg().to_string()
+    } else {
+        String::new()
+    }
+}
+
+/// Bytes per token the CPU reads when a plan splits the model between GPU and CPU (0 without a
+/// GPU: the CPU is then the only processor, and its speed is what the bandwidth describes).
+pub fn cpu_bytes_per_token(
+    model: &ModelEntry,
+    plan: &crate::memory::MemoryPlan,
+    hw: &HardwareReport,
+) -> u64 {
+    if placement_label(plan, hw).is_empty() {
+        return 0;
+    }
     let Some(s) = model.shape.as_ref() else {
         return 0;
     };
@@ -125,8 +157,8 @@ pub fn bytes_read_per_token(
 
 /// Decode speed for `model` on this computer: measured if this exact setup was benchmarked,
 /// otherwise predicted. `None` when neither a measurement nor a bandwidth figure exists.
-/// `cpu_bytes` is the part of each token's read done by the CPU after a GPU/CPU split
-/// ([`cpu_bytes_per_token`]; 0 when the model is all on the GPU).
+/// `placement` is the plan's GPU/CPU split ([`placement_label`]) and `cpu_bytes` the part of each
+/// token's read done by the CPU after it ([`cpu_bytes_per_token`]; 0 when not split).
 #[allow(clippy::too_many_arguments)]
 pub fn estimate(
     model: &ModelEntry,
@@ -137,11 +169,13 @@ pub fn estimate(
     tuned: &Autotune,
     engine_version: &str,
     speculative: &str,
+    placement: &str,
     cpu_bytes: u64,
 ) -> Option<SpeedEstimate> {
     let fp = hw.fingerprint();
     let hash = model.content_hash();
     let profile_name = profile.kind.to_string();
+    let kv = kv_cache_label(backend, cfg);
     if let Some(m) = tuned.lookup(
         &fp,
         backend,
@@ -150,6 +184,8 @@ pub fn estimate(
         hash.as_deref(),
         &profile_name,
         speculative,
+        placement,
+        &kv,
     ) {
         return Some(SpeedEstimate {
             tokens_per_second: m.decode_tps,
@@ -164,7 +200,7 @@ pub fn estimate(
     }
     let cpu = cpu_bytes.min(bytes);
     // A machine bandwidth measured end to end already includes per-token overhead.
-    let (gbs, t0, basis) = match tuned.effective_bandwidth(&fp, backend, engine_version) {
+    let (gbs, t0, basis) = match tuned.effective_bandwidth(&fp, backend, engine_version, &kv) {
         Some(e) => (
             e,
             0.0,
@@ -207,6 +243,7 @@ mod tests {
     use crate::autotune::Measurement;
     use crate::memory::tests::{hw, model};
     use llmario_core::ProfileKind;
+    use llmario_hardware::{GpuApi, GpuInfo};
 
     #[test]
     fn predicts_from_bandwidth_and_prefers_measurements() {
@@ -227,6 +264,7 @@ mod tests {
                 &tuned,
                 "v1",
                 "off",
+                "",
                 0
             )
             .is_none(),
@@ -242,6 +280,7 @@ mod tests {
             &tuned,
             "v1",
             "off",
+            "",
             0,
         )
         .unwrap();
@@ -265,6 +304,8 @@ mod tests {
             model_hash: None,
             profile: "latency".into(),
             speculative: "off".into(),
+            placement: String::new(),
+            kv_cache: String::new(),
             decode_tps: tps,
             bytes_per_token: 1,
             effective_gbs: gbs,
@@ -280,6 +321,7 @@ mod tests {
             &tuned,
             "v1",
             "off",
+            "",
             0,
         )
         .unwrap();
@@ -298,6 +340,7 @@ mod tests {
             &tuned,
             "v1",
             "off",
+            "",
             0,
         )
         .unwrap();
@@ -313,6 +356,7 @@ mod tests {
             &fresh,
             "v1",
             "off",
+            "",
             0,
         )
         .unwrap();
@@ -325,6 +369,7 @@ mod tests {
             &fresh,
             "v1",
             "off",
+            "cpu-moe:8",
             500_000_000,
         )
         .unwrap();
@@ -345,5 +390,133 @@ mod tests {
             speculative_label(&m, BackendKind::LlamaCpp, &auto, None),
             "mtp"
         );
+    }
+
+    /// A benchmark of a split model must not become the machine's bandwidth: before this was
+    /// keyed, one split run (gpt-oss-20b, 185 GB/s effective) dropped the prediction for Qwen3.5
+    /// 9B from ~66 to ~36 tok/s (it runs at 61).
+    #[test]
+    fn a_split_run_is_its_own_setup() {
+        let metal = GpuInfo {
+            vendor: "Apple".into(),
+            name: "Apple M4".into(),
+            api: GpuApi::Metal,
+            memory_total_bytes: None,
+            memory_free_bytes: None,
+            driver: None,
+            cores: None,
+        };
+        let mut h = hw(64, Some(metal));
+        h.memory_bandwidth_gbs = Some(546.0);
+        let cfg = Config::default();
+        let p = ResolvedProfile::resolve(ProfileKind::Latency, None);
+        let m = model(4.0);
+        let plain = |tuned: &Autotune| {
+            estimate(
+                &m,
+                &p,
+                BackendKind::LlamaCpp,
+                &h,
+                &cfg,
+                tuned,
+                "v1",
+                "off",
+                "",
+                0,
+            )
+            .unwrap()
+        };
+        let before = plain(&Autotune::default());
+        let mut tuned = Autotune::default();
+        tuned.record(Measurement {
+            hardware: h.fingerprint(),
+            backend: BackendKind::LlamaCpp,
+            engine_version: "v1".into(),
+            model: "big-moe".into(),
+            model_hash: None,
+            profile: "latency".into(),
+            speculative: "off".into(),
+            placement: "cpu-moe:8".into(),
+            kv_cache: String::new(),
+            decode_tps: 70.7,
+            bytes_per_token: 2_618_742_528,
+            effective_gbs: 185.0,
+            measured_at: String::new(),
+        });
+        let after = plain(&tuned);
+        assert_eq!(after, before, "other models still use the published figure");
+        // The same model measured split is not shown for an all-GPU plan, and vice versa.
+        let mut split_m = m.clone();
+        split_m.id = "big-moe".into();
+        let all_gpu = estimate(
+            &split_m,
+            &p,
+            BackendKind::LlamaCpp,
+            &h,
+            &cfg,
+            &tuned,
+            "v1",
+            "off",
+            "",
+            0,
+        )
+        .unwrap();
+        assert!(!all_gpu.measured);
+        let split = estimate(
+            &split_m,
+            &p,
+            BackendKind::LlamaCpp,
+            &h,
+            &cfg,
+            &tuned,
+            "v1",
+            "off",
+            "cpu-moe:8",
+            404 * 1024 * 1024,
+        )
+        .unwrap();
+        assert!(split.measured && split.tokens_per_second == 70.7);
+        // An 8-bit KV cache is another setup too.
+        let mut q8 = cfg.clone();
+        q8.backends.llamacpp.kv_cache_type = KvCacheType::Q8_0;
+        assert_eq!(kv_cache_label(BackendKind::LlamaCpp, &q8), "q8_0");
+        assert_eq!(kv_cache_label(BackendKind::Mlx, &q8), "");
+        assert_eq!(kv_cache_label(BackendKind::LlamaCpp, &cfg), "");
+    }
+
+    #[test]
+    fn placement_follows_the_plan() {
+        let metal = GpuInfo {
+            vendor: "Apple".into(),
+            name: "Apple M4".into(),
+            api: GpuApi::Metal,
+            memory_total_bytes: None,
+            memory_free_bytes: None,
+            driver: None,
+            cores: None,
+        };
+        let gpu_hw = hw(16, Some(metal));
+        let cpu_hw = hw(16, None);
+        let cfg = Config::default();
+        let p = ResolvedProfile::resolve(ProfileKind::Latency, None);
+        let mut m = model(4.0);
+        m.shape.as_mut().unwrap().active_expert_bytes = 1_200_000_000;
+        let mut plan = crate::memory::estimate(&m, &p, BackendKind::LlamaCpp, &gpu_hw, &cfg, 0, 0);
+        assert_eq!(placement_label(&plan, &gpu_hw), "");
+        assert_eq!(cpu_bytes_per_token(&m, &plan, &gpu_hw), 0);
+        plan.cpu_moe_layers = Some(9);
+        assert_eq!(placement_label(&plan, &gpu_hw), "cpu-moe:9");
+        assert_eq!(
+            cpu_bytes_per_token(&m, &plan, &gpu_hw),
+            1_200_000_000 * 9 / 36
+        );
+        plan.cpu_moe_layers = None;
+        plan.gpu_layers = Some(20);
+        assert_eq!(placement_label(&plan, &gpu_hw), "gpu-layers:20");
+        // Without a GPU everything runs on the CPU: not a split, and no extra CPU penalty.
+        let cpu_plan = crate::memory::estimate(&m, &p, BackendKind::LlamaCpp, &cpu_hw, &cfg, 0, 0);
+        assert_eq!(cpu_plan.gpu_layers, Some(0));
+        assert_eq!(placement_label(&cpu_plan, &cpu_hw), "");
+        assert_eq!(cpu_bytes_per_token(&m, &cpu_plan, &cpu_hw), 0);
     }
 }

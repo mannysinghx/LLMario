@@ -173,6 +173,8 @@ pub async fn run(a: BenchArgs) -> anyhow::Result<()> {
                         &sup.cfg,
                         draft.as_ref().map(|d| d.id.as_str()),
                     ),
+                    placement: speed::placement_label(&plan, &sup.hw),
+                    kv_cache: speed::kv_cache_label(sel.backend, &sup.cfg),
                     decode_tps: tps,
                     bytes_per_token: bytes,
                     effective_gbs: tps * bytes as f64 / 1e9,
