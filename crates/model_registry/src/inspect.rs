@@ -24,6 +24,18 @@ pub struct Inspected {
 /// llmario never runs model-repository code.
 pub const MLX_ALLOWED_EXT: &[&str] = &["json", "safetensors", "txt", "model", "jinja", "tiktoken"];
 
+/// macOS metadata files that are never part of a model: AppleDouble sidecars ("._name", written
+/// next to files on exFAT/FAT drives) and Finder's ".DS_Store".
+pub fn is_os_sidecar(name: &str) -> bool {
+    name.starts_with("._") || name == ".DS_Store"
+}
+
+fn sidecar(p: &Path) -> bool {
+    p.file_name()
+        .and_then(|n| n.to_str())
+        .is_some_and(is_os_sidecar)
+}
+
 pub fn inspect(path: &Path, hash: bool) -> anyhow::Result<Inspected> {
     let path = path
         .canonicalize()
@@ -43,7 +55,7 @@ pub fn inspect(path: &Path, hash: bool) -> anyhow::Result<Inspected> {
         // A directory holding exactly one GGUF (or one split set) is accepted too.
         let mut ggufs: Vec<PathBuf> = std::fs::read_dir(&path)?
             .filter_map(|e| e.ok().map(|e| e.path()))
-            .filter(|p| p.extension().is_some_and(|e| e == "gguf"))
+            .filter(|p| p.extension().is_some_and(|e| e == "gguf") && !sidecar(p))
             .collect();
         ggufs.sort();
         match ggufs.first() {
@@ -188,7 +200,7 @@ fn inspect_mlx(dir: &Path, hash: bool) -> anyhow::Result<Inspected> {
     let mut files = Vec::new();
     for entry in std::fs::read_dir(dir)? {
         let p = entry?.path();
-        if !p.is_file() {
+        if !p.is_file() || sidecar(&p) {
             continue;
         }
         let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("");
@@ -289,6 +301,28 @@ fn inspect_mlx(dir: &Path, hash: bool) -> anyhow::Result<Inspected> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// macOS sidecars on exFAT drives ("._name", ".DS_Store") are never model files.
+    #[test]
+    fn mlx_dir_ignores_os_sidecars() {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::write(
+            d.path().join("config.json"),
+            r#"{"model_type":"qwen3","num_hidden_layers":2,"num_attention_heads":4,
+                "num_key_value_heads":2,"hidden_size":64,"head_dim":16}"#,
+        )
+        .unwrap();
+        std::fs::write(d.path().join("model.safetensors"), vec![0u8; 100]).unwrap();
+        std::fs::write(d.path().join("._model.safetensors"), [0u8, 5, 22, 7, 0xb0]).unwrap();
+        std::fs::write(d.path().join("._config.json"), [0u8, 5, 22, 7]).unwrap();
+        std::fs::write(d.path().join(".DS_Store"), [0u8; 8]).unwrap();
+        let i = inspect(d.path(), true).unwrap();
+        let names: Vec<&str> = i.files.iter().map(|f| f.name.as_str()).collect();
+        assert_eq!(names, ["config.json", "model.safetensors"]);
+        assert!(
+            is_os_sidecar("._x.gguf") && is_os_sidecar(".DS_Store") && !is_os_sidecar("model.gguf")
+        );
+    }
 
     #[test]
     fn inspects_mlx_dir() {
