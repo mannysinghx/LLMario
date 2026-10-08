@@ -655,14 +655,22 @@ pub fn remove(id: &str, paths: &Paths, registry: &mut Registry) -> anyhow::Resul
         .ok_or_else(|| anyhow::anyhow!("model '{id}' is not registered"))?;
     if entry.managed {
         let dir = paths.models_dir().join(&entry.id);
-        anyhow::ensure!(
-            dir.starts_with(paths.models_dir()) && entry.path.starts_with(&dir),
-            "refusing to delete {}: not inside the managed models dir",
-            entry.path.display()
-        );
         if dir.exists() {
+            // Compare real locations: the models folder may be a link to another disk, and
+            // recorded paths are canonical. `models/<id>` must lead to a folder inside it.
+            let real = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+            let (root, real_dir) = (real(&paths.models_dir()), real(&dir));
+            anyhow::ensure!(
+                real_dir.starts_with(&root)
+                    && real_dir != root
+                    && real(&entry.path).starts_with(&real_dir),
+                "refusing to delete {}: not inside the managed models dir ({})",
+                entry.path.display(),
+                root.display()
+            );
             std::fs::remove_dir_all(&dir)?;
         }
+        // Nothing on disk (already deleted, or its drive is disconnected): only unregister.
     }
     registry.remove(id);
     registry.save()?;
@@ -840,6 +848,93 @@ mod tests {
             Registry::load(&paths.registry_file()).unwrap().models.len() == 2,
             "persisted"
         );
+    }
+
+    /// A downloaded model, recorded the way `pull` records it: `managed`, canonical path.
+    #[cfg(unix)]
+    fn managed_entry(reg: &mut Registry, id: &str, file: &Path) {
+        let mut e = add_local(file, Some(id), reg).unwrap();
+        reg.remove(id);
+        e.managed = true;
+        e.path = std::fs::canonicalize(file).unwrap();
+        reg.insert(e).unwrap();
+        reg.save().unwrap();
+    }
+
+    /// The models folder is a link to another disk (as with a beta home on an external drive):
+    /// removal deletes the model's files there and keeps the folder itself.
+    #[cfg(unix)]
+    #[test]
+    fn remove_managed_through_a_linked_models_folder() {
+        let home = tempfile::tempdir().unwrap();
+        let store = tempfile::tempdir().unwrap();
+        let paths = Paths::at(home.path());
+        paths.ensure().unwrap();
+        std::fs::remove_dir(paths.models_dir()).unwrap();
+        std::os::unix::fs::symlink(store.path(), paths.models_dir()).unwrap();
+        std::fs::create_dir(store.path().join("tiny")).unwrap();
+        let gguf = store.path().join("tiny/tiny.gguf");
+        std::fs::write(&gguf, crate::gguf::tests::sample_gguf()).unwrap();
+        let mut reg = Registry::load(&paths.registry_file()).unwrap();
+        managed_entry(&mut reg, "tiny", &gguf);
+        remove("tiny", &paths, &mut reg).unwrap();
+        assert!(
+            !store.path().join("tiny").exists(),
+            "the model's files are deleted"
+        );
+        assert!(
+            store.path().exists() && paths.models_dir().exists(),
+            "the folder stays"
+        );
+        assert!(Registry::load(&paths.registry_file())
+            .unwrap()
+            .get("tiny")
+            .is_none());
+    }
+
+    /// `models/<id>` that leads outside the models folder is never deleted.
+    #[cfg(unix)]
+    #[test]
+    fn remove_refuses_a_model_folder_that_leads_outside() {
+        let home = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let paths = Paths::at(home.path());
+        paths.ensure().unwrap();
+        let gguf = outside.path().join("tiny.gguf");
+        std::fs::write(&gguf, crate::gguf::tests::sample_gguf()).unwrap();
+        std::os::unix::fs::symlink(outside.path(), paths.models_dir().join("tiny")).unwrap();
+        let mut reg = Registry::load(&paths.registry_file()).unwrap();
+        managed_entry(&mut reg, "tiny", &gguf);
+        let err = remove("tiny", &paths, &mut reg).unwrap_err().to_string();
+        assert!(err.contains("not inside the managed models dir"), "{err}");
+        assert!(gguf.exists(), "files outside are untouched");
+        assert!(Registry::load(&paths.registry_file())
+            .unwrap()
+            .get("tiny")
+            .is_some());
+    }
+
+    /// Files already gone (or the drive is disconnected): the entry is unregistered.
+    #[cfg(unix)]
+    #[test]
+    fn remove_managed_with_missing_files_unregisters() {
+        let home = tempfile::tempdir().unwrap();
+        let elsewhere = tempfile::tempdir().unwrap();
+        let paths = Paths::at(home.path());
+        paths.ensure().unwrap();
+        let gguf = elsewhere.path().join("tiny.gguf");
+        std::fs::write(&gguf, crate::gguf::tests::sample_gguf()).unwrap();
+        let mut reg = Registry::load(&paths.registry_file()).unwrap();
+        managed_entry(&mut reg, "tiny", &gguf);
+        remove("tiny", &paths, &mut reg).unwrap();
+        assert!(
+            gguf.exists(),
+            "nothing outside the models folder is touched"
+        );
+        assert!(Registry::load(&paths.registry_file())
+            .unwrap()
+            .get("tiny")
+            .is_none());
     }
 
     #[test]
