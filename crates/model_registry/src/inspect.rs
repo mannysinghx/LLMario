@@ -161,12 +161,21 @@ fn inspect_gguf(path: &Path, hash: bool) -> anyhow::Result<Inspected> {
             kv_groups: vec![],
             state_bytes_per_seq: 0,
             mtp_layers: 0,
+            bytes_per_token: 0,
+            expert_bytes: 0,
+            active_expert_bytes: 0,
         })
     })()
     .map(|mut s| {
         (s.kv_groups, s.state_bytes_per_seq) =
             crate::layout::from_gguf(&md, s.n_layers, s.n_kv_heads, s.head_dim);
         s.mtp_layers = md.arch_u64("nextn_predict_layers").unwrap_or(0) as u32;
+        // Split GGUFs keep each shard's tensors in that shard's own header; only whole files.
+        if files.len() == 1 {
+            s.bytes_per_token = md.bytes_per_token(files[0].size).unwrap_or(0);
+            (s.expert_bytes, s.active_expert_bytes) =
+                md.expert_bytes(files[0].size).unwrap_or((0, 0));
+        }
         s
     });
     if shape.is_none() {
@@ -190,6 +199,90 @@ fn inspect_gguf(path: &Path, hash: bool) -> anyhow::Result<Inspected> {
         size_bytes,
         notes,
     })
+}
+
+/// Largest safetensors header read (the JSON index at the start of each file).
+const MAX_SAFETENSORS_HEADER: u64 = 100 * 1024 * 1024;
+
+/// Tensor names and sizes from a safetensors file's header (never its data).
+pub fn safetensors_sizes(path: &Path) -> anyhow::Result<Vec<(String, u64)>> {
+    use std::io::Read;
+    let mut f = std::fs::File::open(path)?;
+    let mut len = [0u8; 8];
+    f.read_exact(&mut len)?;
+    let len = u64::from_le_bytes(len);
+    anyhow::ensure!(
+        len <= MAX_SAFETENSORS_HEADER,
+        "safetensors header of {len} bytes"
+    );
+    let mut buf = vec![0u8; len as usize];
+    f.read_exact(&mut buf)?;
+    let header: serde_json::Map<String, Value> = serde_json::from_slice(&buf)?;
+    Ok(header
+        .into_iter()
+        .filter(|(k, _)| k != "__metadata__")
+        .filter_map(|(k, v)| {
+            let o = v.get("data_offsets")?.as_array()?;
+            Some((k, o.get(1)?.as_u64()?.checked_sub(o.first()?.as_u64()?)?))
+        })
+        .collect())
+}
+
+/// `(weight bytes read per token, total expert bytes, expert bytes read per token)` for an MLX
+/// model directory, from its
+/// safetensors headers: experts (`switch_mlp` / `experts`) at the share used per token, the
+/// embedding table left out when a separate `lm_head` exists, and vision/audio towers left out
+/// (not loaded for text).
+fn mlx_bytes_per_token(
+    dir: &Path,
+    files: &[FileRecord],
+    tc: &Value,
+    cfg: &Value,
+) -> Option<(u64, u64, u64)> {
+    let num = |k: &str| tc.get(k).or_else(|| cfg.get(k)).and_then(Value::as_u64);
+    // Experts used per token: Qwen/Mixtral-style and Gemma-style config keys.
+    let used = num("num_experts_per_tok")
+        .or_else(|| num("top_k_experts"))
+        .or_else(|| num("moe_top_k"))
+        .or_else(|| num("num_experts_per_token"));
+    let count = num("num_local_experts")
+        .or_else(|| num("num_experts"))
+        .or_else(|| num("n_routed_experts"))
+        .filter(|c| *c > 0);
+    let mut tensors = Vec::new();
+    for f in files.iter().filter(|f| f.name.ends_with(".safetensors")) {
+        tensors.extend(safetensors_sizes(&dir.join(&f.name)).ok()?);
+    }
+    let skip = |n: &str| {
+        [
+            "vision",
+            "visual",
+            "audio",
+            "multi_modal_projector",
+            "embed_vision",
+            "embed_audio",
+        ]
+        .iter()
+        .any(|k| n.contains(k))
+    };
+    let has_head = tensors.iter().any(|(n, _)| n.contains("lm_head."));
+    let (mut total, mut experts, mut active) = (0u64, 0u64, 0u64);
+    for (name, size) in &tensors {
+        if skip(name) || (has_head && name.contains("embed_tokens.")) {
+            continue;
+        }
+        let expert = name.contains(".switch_mlp.") || name.contains(".experts.");
+        let read = match (expert, used, count) {
+            (true, Some(u), Some(c)) => (*size as u128 * u.min(c) as u128 / c as u128) as u64,
+            _ => *size,
+        };
+        if expert {
+            experts += size;
+            active += read;
+        }
+        total += read;
+    }
+    (total > 0).then_some((total, experts, active))
 }
 
 fn inspect_mlx(dir: &Path, hash: bool) -> anyhow::Result<Inspected> {
@@ -246,10 +339,18 @@ fn inspect_mlx(dir: &Path, hash: bool) -> anyhow::Result<Inspected> {
             kv_groups: vec![],
             state_bytes_per_seq: 0,
             mtp_layers: 0,
+            bytes_per_token: 0,
+            expert_bytes: 0,
+            active_expert_bytes: 0,
         })
     })()
     .map(|mut s| {
         (s.kv_groups, s.state_bytes_per_seq) = crate::layout::from_config(tc);
+        if let Some((per_token, experts, active)) = mlx_bytes_per_token(dir, &files, tc, &cfg) {
+            s.bytes_per_token = per_token;
+            s.expert_bytes = experts;
+            s.active_expert_bytes = active;
+        }
         s
     });
     if shape.is_none() {
@@ -301,6 +402,58 @@ fn inspect_mlx(dir: &Path, hash: bool) -> anyhow::Result<Inspected> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// MLX bytes read per token from safetensors headers (experts at the used share, embedding
+    /// skipped next to `lm_head`, vision tower skipped); macOS sidecars are never model files.
+    #[test]
+    fn mlx_bytes_per_token_and_sidecars() {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::write(
+            d.path().join("config.json"),
+            r#"{"model_type":"qwen3_moe","num_hidden_layers":1,"num_attention_heads":4,
+                "num_key_value_heads":2,"hidden_size":64,"head_dim":16,
+                "num_experts_per_tok":2,"num_experts":8}"#,
+        )
+        .unwrap();
+        let tensors = [
+            ("model.embed_tokens.weight", 1000u64),
+            ("lm_head.weight", 1000),
+            ("model.layers.0.self_attn.q_proj.weight", 400),
+            ("model.layers.0.mlp.switch_mlp.up_proj.weight", 3200),
+            ("vision_tower.patch.weight", 400),
+        ];
+        let mut header = serde_json::Map::new();
+        let mut off = 0u64;
+        for (name, size) in tensors {
+            header.insert(
+                name.into(),
+                serde_json::json!({"dtype": "U8", "shape": [size], "data_offsets": [off, off + size]}),
+            );
+            off += size;
+        }
+        let h = serde_json::to_vec(&header).unwrap();
+        let mut file = (h.len() as u64).to_le_bytes().to_vec();
+        file.extend(&h);
+        file.extend(vec![0u8; off as usize]);
+        std::fs::write(d.path().join("model.safetensors"), file).unwrap();
+        // AppleDouble sidecars, as macOS writes them on exFAT drives: not valid model files.
+        std::fs::write(d.path().join("._model.safetensors"), [0u8, 5, 22, 7, 0xb0]).unwrap();
+        std::fs::write(d.path().join("._config.json"), [0u8, 5, 22, 7]).unwrap();
+        std::fs::write(d.path().join(".DS_Store"), [0u8; 8]).unwrap();
+        let i = inspect(d.path(), false).unwrap();
+        assert!(
+            i.files.iter().all(|f| !is_os_sidecar(&f.name)),
+            "{:?}",
+            i.files
+        );
+        // 1000 (lm_head) + 400 (attention) + 3200 × 2/8 (experts); embedding and vision skipped.
+        let s = i.shape.unwrap();
+        assert_eq!(s.bytes_per_token, 2200);
+        assert_eq!((s.expert_bytes, s.active_expert_bytes), (3200, 800));
+        assert!(
+            is_os_sidecar("._x.gguf") && is_os_sidecar(".DS_Store") && !is_os_sidecar("model.gguf")
+        );
+    }
 
     /// macOS sidecars on exFAT drives ("._name", ".DS_Store") are never model files.
     #[test]

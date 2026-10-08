@@ -5,6 +5,8 @@ use crate::{util, RuntimeArgs};
 use clap::Args;
 use llmario_benchmark::report::{Environment, Report};
 use llmario_benchmark::{Settings, Suite, Target};
+use llmario_supervisor::autotune::{Autotune, Measurement};
+use llmario_supervisor::speed;
 use std::path::PathBuf;
 
 #[derive(Args)]
@@ -83,7 +85,8 @@ pub async fn run(a: BenchArgs) -> anyhow::Result<()> {
         logical_cores: Some(hw.logical_cores),
         ..Default::default()
     };
-    if env.busy() {
+    let busy = env.busy();
+    if busy {
         let msg = format!(
             "the machine is busy (1-minute load average {:.1} on {} cores); timings would not be comparable. Close other work and retry, or pass --allow-busy to run anyway (the report is then marked busy)",
             env.load_average_1m.unwrap_or_default(),
@@ -148,6 +151,44 @@ pub async fn run(a: BenchArgs) -> anyhow::Result<()> {
             eprintln!("benchmarking {} ({})", sel.model.id, sel.backend);
             let (l, q, s) =
                 llmario_benchmark::run(&t, &suite, &settings, Some(pid), progress).await?;
+            // Record plain one-at-a-time decode speed for the speed planner (never busy runs).
+            let one = l.iter().find(|x| x.concurrency == 1 && x.errors == 0);
+            if let (false, Some(tps)) = (
+                busy,
+                one.and_then(|x| x.decode_tps.as_ref()).map(|s| s.mean),
+            ) {
+                let (draft, _) = sup.draft_for(&sel);
+                let bytes =
+                    speed::bytes_read_per_token(&sel.model, &sel.profile, sel.backend, &sup.cfg);
+                let m = Measurement {
+                    hardware: sup.hw.fingerprint(),
+                    backend: sel.backend,
+                    engine_version: status.version.clone().unwrap_or_default(),
+                    model: sel.model.id.clone(),
+                    model_hash: sel.model.content_hash(),
+                    profile: sel.profile.kind.to_string(),
+                    speculative: speed::speculative_label(
+                        &sel.model,
+                        sel.backend,
+                        &sup.cfg,
+                        draft.as_ref().map(|d| d.id.as_str()),
+                    ),
+                    decode_tps: tps,
+                    bytes_per_token: bytes,
+                    effective_gbs: tps * bytes as f64 / 1e9,
+                    measured_at: chrono::Utc::now().to_rfc3339(),
+                };
+                let file = paths.autotune_file();
+                let mut tuned = Autotune::load(&file);
+                tuned.record(m);
+                match tuned.save(&file) {
+                    Ok(()) => eprintln!(
+                        "recorded {tps:.1} tok/s for the speed planner ({})",
+                        file.display()
+                    ),
+                    Err(e) => eprintln!("warning: could not save {}: {e}", file.display()),
+                }
+            }
             let label = a.label.clone().unwrap_or_else(|| {
                 format!(
                     "{} via llmario/{} ({} profile)",

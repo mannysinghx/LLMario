@@ -2,10 +2,12 @@
 //! model, and admits requests. Inference never runs in this process.
 
 pub mod adapter;
+pub mod autotune;
 pub mod engine;
 pub mod memory;
 pub mod planner;
 pub mod sibling;
+pub mod speed;
 pub mod supervisor;
 
 pub use adapter::{BackendStatus, EngineAdapter, LaunchContext, LaunchSpec};

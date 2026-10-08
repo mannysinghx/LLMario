@@ -3,10 +3,13 @@
 //! Rules (no silent substitution):
 //! - An exact model id is served by the backend for its format, or refused with the reason.
 //! - A family name (e.g. `qwen3-1.7b`) picks among installed variants: the configured
-//!   `backends.prefer` first, then MLX on Apple Silicon, then llama.cpp. The chosen concrete id
-//!   is reported back in the response `model` field and headers.
+//!   `backends.prefer` first, then MLX on Apple Silicon, then llama.cpp, except that when two or
+//!   more installed variants have decode speeds measured on this computer (`bench`), the faster
+//!   one goes first. The chosen concrete id is reported back in the response `model` field and
+//!   headers.
 
 use crate::adapter::BackendStatus;
+use crate::autotune::Autotune;
 use llmario_core::{BackendKind, Config, ModelFormat, ProfileKind, ResolvedProfile, RuntimeError};
 use llmario_hardware::HardwareReport;
 use llmario_registry::{ModelEntry, Registry};
@@ -51,6 +54,29 @@ pub fn select(
     cfg: &Config,
     profile: ProfileKind,
 ) -> Result<Selection, RuntimeError> {
+    select_measured(
+        name,
+        registry,
+        statuses,
+        hw,
+        cfg,
+        profile,
+        &Autotune::default(),
+    )
+}
+
+/// [`select`], but when no engine preference is configured and two or more installed variants
+/// have plain decode speeds measured on this computer (`tuned`), the faster one goes first.
+/// A single measurement never reorders anything.
+pub fn select_measured(
+    name: &str,
+    registry: &Registry,
+    statuses: &HashMap<BackendKind, BackendStatus>,
+    hw: &HardwareReport,
+    cfg: &Config,
+    profile: ProfileKind,
+    tuned: &Autotune,
+) -> Result<Selection, RuntimeError> {
     let candidates = registry.resolve(name);
     if candidates.is_empty() {
         return Err(RuntimeError::ModelNotFound(name.to_string()));
@@ -71,6 +97,28 @@ pub fn select(
     };
     let mut sorted: Vec<&ModelEntry> = candidates;
     sorted.sort_by_key(|m| (rank(m), m.id.clone()));
+    let mut by_measurement = false;
+    if cfg.backends.prefer.is_none() {
+        let fp = hw.fingerprint();
+        let speed =
+            |m: &ModelEntry| tuned.family_speed(&fp, &[m.id.as_str()], backend_for(m.format));
+        let measured: Vec<(usize, f64)> = sorted
+            .iter()
+            .enumerate()
+            .filter_map(|(i, m)| speed(m).map(|s| (i, s)))
+            .collect();
+        if measured.len() >= 2 {
+            // Reorder only the measured candidates, within the positions they already hold.
+            let slots: Vec<usize> = measured.iter().map(|(i, _)| *i).collect();
+            let mut fastest = measured.clone();
+            fastest.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+            let reordered: Vec<&ModelEntry> = fastest.iter().map(|(i, _)| sorted[*i]).collect();
+            by_measurement = reordered.first() != slots.first().map(|i| &sorted[*i]);
+            for (slot, m) in slots.into_iter().zip(reordered) {
+                sorted[slot] = m;
+            }
+        }
+    }
 
     let mut rejected = Vec::new();
     for m in sorted {
@@ -91,8 +139,13 @@ pub fn select(
                     format!("{} requested explicitly → {backend}", m.id)
                 } else {
                     format!(
-                        "family '{name}' → {} via {backend} (ranked by preference/hardware)",
-                        m.id
+                        "family '{name}' → {} via {backend} ({})",
+                        m.id,
+                        if by_measurement {
+                            "fastest measured on this computer"
+                        } else {
+                            "ranked by preference/hardware"
+                        }
                     )
                 };
                 return Ok(Selection {
