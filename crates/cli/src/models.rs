@@ -320,12 +320,12 @@ pub async fn run(cmd: ModelCmd) -> anyhow::Result<()> {
                 let dropped = before - m.files.len();
                 if dropped > 0 {
                     println!("✓ {}: removed {dropped} macOS sidecar file record(s)", m.id);
-                    changed += 1;
                 }
                 let shape = match llmario_registry::inspect::inspect(&m.path, false) {
                     Ok(i) => i.shape,
                     Err(e) => {
-                        println!("✗ {}: cannot read ({e}); kept as it was", m.id);
+                        println!("✗ {}: cannot read ({e}); shape kept as it was", m.id);
+                        changed += usize::from(dropped > 0);
                         continue;
                     }
                 };
@@ -333,6 +333,7 @@ pub async fn run(cmd: ModelCmd) -> anyhow::Result<()> {
                     if dropped == 0 {
                         println!("  {}: unchanged", m.id);
                     }
+                    changed += usize::from(dropped > 0);
                     continue;
                 }
                 let layout = shape
