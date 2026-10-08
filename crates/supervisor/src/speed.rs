@@ -44,9 +44,9 @@ pub const MLX_OVERHEAD_S: f64 = 0.001_22;
 
 /// Share of the published bandwidth the CPU reaches when it reads weights kept in RAM by a
 /// GPU/CPU split (Phase 7). Measured on the M4 Max (llama.cpp build 11146, `--load-mode none`):
-/// gpt-oss-20b with the experts of 8 of 24 layers on the CPU ran at 70.7 tok/s, which implies the
-/// CPU read its 404 MiB per token at ~84 GB/s (15.5% of 546 GB/s); predicted 70.0 tok/s. One
-/// model on one chip; unverified elsewhere.
+/// gpt-oss-20b with the experts of 8 of 24 layers on the CPU ran at 70.7 and 61.2 tok/s in two runs,
+/// which implies the CPU read its 404 MiB per token at ~84 and ~59 GB/s (15.4% and 10.7% of 546
+/// GB/s); predicted 70.0 tok/s. One model on one chip; unverified elsewhere.
 pub const CPU_BANDWIDTH_SHARE: f64 = 0.15;
 
 /// The GPU/CPU split an autotune measurement is keyed by: "" when the model is not split
