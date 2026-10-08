@@ -29,6 +29,9 @@ DOCS = ROOT / "docs/MODELS.md"
 HUB = "https://huggingface.co"
 UA = {"User-Agent": "llmario-catalog-builder/0.1"}
 GGUF_QUANT_PREFERENCE = ["Q4_K_M", "Q4_0", "MXFP4", "Q4_K_S", "IQ4_XS", "Q4_K_L", "Q5_K_M", "Q8_0"]
+# 3-bit builds (Phase 5): best quality first, then smaller.
+GGUF_3BIT_PREFERENCE = ["Q3_K_M", "Q3_K_XL", "IQ3_M", "Q3_K_S", "IQ3_XXS"]
+QUALITY_3BIT = "3-bit: smaller and faster than 4-bit, with some quality loss"
 GGUF_EXCLUDE = re.compile(r"mmproj|imatrix|draft|(^|/)mtp[-_/]|[-_]mtp[-_.]", re.I)
 MLX_ALLOWED_EXT = {"json", "safetensors", "txt", "model", "jinja", "tiktoken"}
 LICENSES = {
@@ -166,6 +169,7 @@ def gguf_facts(kv):
         }
         shape["kv_groups"], shape["state_bytes_per_seq"] = layout_from_gguf(
             kv, shape["n_layers"], shape["n_kv_heads"], shape["head_dim"])
+        shape["mtp_layers"] = a("nextn_predict_layers") or 0
     return arch, a("context_length"), shape
 
 
@@ -234,6 +238,7 @@ def layout_from_gguf(kv, n_layers, default_heads, default_dim):
         return k if k is not None else (v if v is not None else default_dim)
 
     heads = per_layer("attention.head_count_kv") or [default_heads] * n
+    main_layers = n - (u("nextn_predict_layers") or 0)  # MTP draft layers come last
     dim = mean(u("attention.key_length"), u("attention.value_length"))
     ks, vs = u("attention.key_length_swa"), u("attention.value_length_swa")
     dim_swa = dim if ks is None and vs is None else mean(ks, vs)
@@ -241,7 +246,7 @@ def layout_from_gguf(kv, n_layers, default_heads, default_dim):
     pattern = per_layer("attention.sliding_window_pattern")
     interval = u("full_attention_interval") or None
     layers = []
-    for i, h in enumerate(heads):
+    for i, h in enumerate(heads[:main_layers]):
         if not ((interval is None or (i + 1) % interval == 0) and h > 0):
             layers.append("rec")
             continue
@@ -325,6 +330,7 @@ def self_test():
            "gpt-oss.attention.value_length": 64, "gpt-oss.attention.sliding_window": 128}
     assert layout_from_gguf(oss, 24, 8, 64) == ([{"layers": 12, "n_kv_heads": 8, "head_dim": 64},
                                                  {"layers": 12, "n_kv_heads": 8, "head_dim": 64, "window": 128}], 0)
+    assert layout_from_gguf(dict(q, **{"qwen35.nextn_predict_layers": 1}), 33, 4, 256) == layout_from_gguf(q, 32, 4, 256)
     assert layout_from_gguf({"general.architecture": "qwen3", "qwen3.attention.head_count_kv": 8}, 36, 8, 128) == ([], 0)
     assert layout_from_gguf({"general.architecture": "olmo2", "olmo2.attention.sliding_window": 4096}, 32, 32, 128) == ([], 0)
     assert layout_from_gguf({"general.architecture": "lfm2", "lfm2.attention.head_count_kv": [0, 0, 8, 0, 0, 8]}, 6, 8, 64) == ([], 0)
@@ -347,6 +353,8 @@ def shape_toml(s):
     inner = ", ".join(f"{k} = {s[k]}" for k in ("n_layers", "n_heads", "n_kv_heads", "head_dim", "hidden_size") if s.get(k) is not None)
     if s.get("context_max"):
         inner += f", context_max = {s['context_max']}"
+    if s.get("mtp_layers"):
+        inner += f", mtp_layers = {s['mtp_layers']}"
     if s.get("kv_groups"):
         gs = ", ".join("{ " + ", ".join(f"{k} = {g[k]}" for k in ("layers", "n_kv_heads", "head_dim", "window") if k in g) + " }"
                        for g in s["kv_groups"])
@@ -396,9 +404,9 @@ def add_layouts():
 SHARD = re.compile(r"^(?P<prefix>.*)-(?P<i>\d{5})-of-(?P<n>\d{5})\.gguf$")
 
 
-def pick_gguf(siblings):
+def pick_gguf(siblings, preference=None):
     files = [s for s in siblings if s["rfilename"].lower().endswith(".gguf") and not GGUF_EXCLUDE.search(s["rfilename"])]
-    for quant in GGUF_QUANT_PREFERENCE:
+    for quant in preference or GGUF_QUANT_PREFERENCE:
         tok = re.compile(rf"(^|[-_./]){re.escape(quant)}([-_.]|$)", re.I)
         cands = [s for s in files if tok.search(s["rfilename"])]
         if not cands:
@@ -444,10 +452,10 @@ def build_variant(fam, fmt, repos):
             errors.append(f"{repo}: {err}")
             continue
         sha, sibs, card = info["sha"], info.get("siblings", []), info["_card"]
-        if fmt == "gguf":
-            quant, group = pick_gguf(sibs)
+        if fmt in ("gguf", "gguf_mtp", "gguf_3bit"):
+            quant, group = pick_gguf(sibs, GGUF_3BIT_PREFERENCE if fmt == "gguf_3bit" else None)
             if not group:
-                errors.append(f"{repo}: no 4-bit GGUF file")
+                errors.append(f"{repo}: no {'3' if fmt == 'gguf_3bit' else '4'}-bit GGUF file")
                 continue
             try:
                 arch, ctx, shape = gguf_facts(gguf_metadata(repo, sha, group[0]["rfilename"]))
@@ -457,6 +465,13 @@ def build_variant(fam, fmt, repos):
             files = [s["rfilename"] for s in group]
             vid = f"{fam['id']}-gguf-{quant_slug(quant)}"
             quant_label = quant
+            if fmt == "gguf_mtp":
+                if not (shape or {}).get("mtp_layers"):
+                    errors.append(f"{repo}: no MTP (nextn) layers in the header")
+                    continue
+                vid += "-mtp"
+            if fmt == "gguf_3bit":
+                quant_label = f"{quant} ({QUALITY_3BIT})"
         else:
             chosen = [s for s in sibs if "/" not in s["rfilename"]
                       and s["rfilename"].rsplit(".", 1)[-1] in MLX_ALLOWED_EXT]
@@ -470,8 +485,13 @@ def build_variant(fam, fmt, repos):
                 continue
             group, files = chosen, []  # MLX: whole directory (allowlisted files)
             vid = f"{fam['id']}-mlx-{mlx_suffix(repo)}"
+            if fmt == "mlx_3bit":
+                if not mlx_suffix(repo).startswith("3bit"):
+                    errors.append(f"{repo}: not a 3-bit build")
+                    continue
+                quant_label = f"{quant_label}: {QUALITY_3BIT.split(': ', 1)[1]}"
         return {
-            "id": vid, "family": fam["id"], "format": fmt, "repo": repo, "revision": sha,
+            "id": vid, "family": fam["id"], "format": {"gguf_mtp": "gguf", "gguf_3bit": "gguf", "mlx_3bit": "mlx"}.get(fmt, fmt), "repo": repo, "revision": sha,
             "files": files, "approx_bytes": sum(size_of(s) for s in group),
             "license": license_label(card), "gated": info["_gated"],
             "architecture": arch, "context_max": ctx, "quantization": quant_label, "shape": shape,
@@ -492,33 +512,100 @@ def emit(fams, variants):
         "",
     ]
     for v in variants:
-        f = fams[v["family"]]
-        lines.append("[[models]]")
-        fields = [
-            ("id", v["id"]), ("family", f["id"]), ("name", f["name"]), ("publisher", f["publisher"]),
-            ("released", f["released"]), ("params", f["params"]), ("tasks", f["tasks"]),
-            ("format", v["format"]), ("repo", v["repo"]), ("revision", v["revision"]),
-            ("files", v["files"]), ("approx_bytes", v["approx_bytes"]),
-            ("license", v["license"] or f.get("license") or "See model card"),
-            ("gated", v["gated"]), ("architecture", v["architecture"]),
-            ("quantization", v["quantization"]), ("context_max", v["context_max"]),
-            ("description", f["summary"]), ("notes", f.get("notes")),
-        ]
-        for k, val in fields:
-            if val is None or val == []:
-                if k == "files":
-                    lines.append("files = []")
-                continue
-            lines.append(f"{k} = {toml_str(val) if not isinstance(val, bool) else str(val).lower()}")
-        if v["shape"]:
-            lines.append(shape_toml(v["shape"]))
-        lines.append("")
+        lines.extend(variant_lines(fams[v["family"]], v))
     OUT.write_text("\n".join(lines))
+
+
+def variant_lines(f, v):
+    """One `[[models]]` block (with its trailing blank line) as catalog.toml lines."""
+    lines = ["[[models]]"]
+    fields = [
+        ("id", v["id"]), ("family", f["id"]), ("name", f["name"]), ("publisher", f["publisher"]),
+        ("released", f["released"]), ("params", f["params"]), ("tasks", f["tasks"]),
+        ("format", v["format"]), ("repo", v["repo"]), ("revision", v["revision"]),
+        ("files", v["files"]), ("approx_bytes", v["approx_bytes"]),
+        ("license", v["license"] or f.get("license") or "See model card"),
+        ("gated", v["gated"]), ("architecture", v["architecture"]),
+        ("quantization", v["quantization"]), ("context_max", v["context_max"]),
+        ("description", f["summary"]), ("notes", f.get("notes")),
+    ]
+    for k, val in fields:
+        if val is None or val == []:
+            if k == "files":
+                lines.append("files = []")
+            continue
+        lines.append(f"{k} = {toml_str(val) if not isinstance(val, bool) else str(val).lower()}")
+    if v["shape"]:
+        lines.append(shape_toml(v["shape"]))
+    lines.append("")
+    return lines
+
+
+def doc_row(v):
+    """One download row of docs/MODELS.md (catalog entry or freshly built variant)."""
+    engine = {"gguf": "llama.cpp", "mlx": "MLX"}[v["format"]]
+    if (v.get("shape") or {}).get("mtp_layers"):
+        engine += " (MTP)"
+    files = (v["files"][0] + (f" (+{len(v['files']) - 1} parts)" if len(v["files"]) > 1 else "")) if v["files"] else "MLX folder"
+    ctx = f"{v['context_max'] // 1024}K" if v.get("context_max") else "?"
+    return f"| {engine} | `{v['id']}` | [{v['repo']}](https://huggingface.co/{v['repo']}/tree/{v['revision']}) · `{files}` | {v.get('quantization') or '?'} | {v['approx_bytes'] / 1e9:.1f} GB | {ctx} |"
+
+
+def sync_docs():
+    """Add a docs/MODELS.md row for every catalog entry that lacks one (after its family's other
+    rows), and refresh the download count. Offline: uses the pinned catalog data."""
+    cat = tomllib.loads(OUT.read_text())["models"]
+    lines = DOCS.read_text().split("\n")
+    added = 0
+    for m in cat:
+        if any(f"`{m['id']}`" in l for l in lines):
+            continue
+        fam_rows = [i for i, l in enumerate(lines) if l.startswith("| ") and f"| `{m['family']}-" in l]
+        assert fam_rows, f"no docs rows for family {m['family']}"
+        lines.insert(fam_rows[-1] + 1, doc_row(m))
+        added += 1
+    n = len(cat)
+    lines = [re.sub(r"· \d+ downloads\.", f"· {n} downloads.", l) for l in lines]
+    DOCS.write_text("\n".join(lines))
+    print(f"docs/MODELS.md: {added} row(s) added; {n} downloads")
+
+
+def add_variants(kinds):
+    """Append the variants of the given kinds (`gguf_mtp`, `gguf_3bit`, `mlx_3bit`) that the
+    catalog lacks, right after their family's last entry, pinned at the repo's current commit.
+    Nothing else in catalog.toml changes."""
+    fams_list = tomllib.loads(SOURCES.read_text())["family"]
+    text = OUT.read_text()
+    have = {m["id"] for m in tomllib.loads(text)["models"]}
+    added = 0
+    for f in fams_list:
+        for kind in kinds:
+            if not f.get(kind):
+                continue
+            v, errs = build_variant(f, kind, f[kind])
+            if not v:
+                print(f"✗ {f['id']} [{kind}]  " + "; ".join(errs))
+                continue
+            if v["id"] in have:
+                print(f"  {v['id']:44} already in the catalog")
+                continue
+            v["license"] = v["license"] or f.get("license")
+            blocks = text.split("\n[[models]]\n")
+            fam_line = 'family = "' + f["id"] + '"'
+            last = max((i for i, b in enumerate(blocks) if fam_line in b.splitlines()), default=None)
+            assert last is not None, f"family {f['id']} has no entry to insert after"
+            new = "\n".join(variant_lines(f, v)[1:])
+            blocks.insert(last + 1, new.rstrip("\n") + "\n")
+            text = "\n[[models]]\n".join(blocks)
+            have.add(v["id"])
+            added += 1
+            print(f"✓ {v['id']:44} {v['repo']:40} {v['approx_bytes']/1e9:6.2f} GB  {v['quantization']}")
+    OUT.write_text(text)
+    print(f"\n{added} variant(s) added; nothing else changed")
 
 
 def emit_docs(fams, variants):
     """Human-readable library for GitHub readers (same verified data as the app)."""
-    engines = {"gguf": "llama.cpp", "mlx": "MLX"}
     fam_order, by_fam = [], {}
     for v in variants:
         if v["family"] not in by_fam:
@@ -548,9 +635,7 @@ def emit_docs(fams, variants):
             out += [f"*{f['notes']}*", ""]
         out += ["| Engine | Download id | Exact Hugging Face files | Quantization | Size | Context |", "|---|---|---|---|---|---|"]
         for v in by_fam[fid]:
-            files = (v["files"][0] + (f" (+{len(v['files']) - 1} parts)" if len(v["files"]) > 1 else "")) if v["files"] else "MLX folder"
-            ctx = f"{v['context_max'] // 1024}K" if v.get("context_max") else "?"
-            out.append(f"| {engines[v['format']]} | `{v['id']}` | [{v['repo']}](https://huggingface.co/{v['repo']}/tree/{v['revision']}) · `{files}` | {v['quantization'] or '?'} | {v['approx_bytes'] / 1e9:.1f} GB | {ctx} |")
+            out.append(doc_row(v))
         out += ["", f"Download: `llmario model pull {fid}` (best variant for your machine) or pick an id above."]
     DOCS.write_text("\n".join(out) + "\n")
 
@@ -563,6 +648,14 @@ def main():
         self_test()
         add_layouts()
         return 0
+    if "--add-mtp" in sys.argv or "--add-3bit" in sys.argv:
+        self_test()
+        add_variants(["gguf_mtp"] if "--add-mtp" in sys.argv else ["gguf_3bit", "mlx_3bit"])
+        sync_docs()
+        return 0
+    if "--sync-docs" in sys.argv:
+        sync_docs()
+        return 0
     only = set(sys.argv[sys.argv.index("--only") + 1:]) if "--only" in sys.argv else None
     fams_list = tomllib.loads(SOURCES.read_text())["family"]
     fams = {f["id"]: f for f in fams_list}
@@ -570,7 +663,7 @@ def main():
     for f in fams_list:
         if only and f["id"] not in only:
             continue
-        for fmt in ("mlx", "gguf"):
+        for fmt in ("mlx", "gguf", "gguf_mtp", "gguf_3bit", "mlx_3bit"):
             if not f.get(fmt):
                 continue
             v, errs = build_variant(f, fmt, f[fmt])
