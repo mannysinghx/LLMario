@@ -23,7 +23,7 @@ quantization = "4-bit (group 64)"
 context_max = 262144
 description = "Qwen's most capable open model (Aug 2026): strong at coding, research and multi-step agent tasks, with thinking that can be switched off per request."
 notes = "Vision-language model; LLMario uses its text abilities."
-shape = { n_layers = 64, n_heads = 24, n_kv_heads = 4, head_dim = 256, hidden_size = 5120, context_max = 262144, kv_groups = [{ layers = 16, n_kv_heads = 4, head_dim = 256 }], state_bytes_per_seq = 153944064 }
+shape = { n_layers = 64, n_heads = 24, n_kv_heads = 4, head_dim = 256, hidden_size = 5120, context_max = 262144, kv_groups = [{ layers = 16, n_kv_heads = 4, head_dim = 256 }], state_bytes_per_seq = 153944064, bytes_per_token = 14417640448 }
 
 [[models]]
 id = "qwen3.8-27b-gguf-q4km"
@@ -45,7 +45,7 @@ quantization = "Q4_K_M"
 context_max = 262144
 description = "Qwen's most capable open model (Aug 2026): strong at coding, research and multi-step agent tasks, with thinking that can be switched off per request."
 notes = "Vision-language model; LLMario uses its text abilities."
-shape = { n_layers = 64, n_heads = 24, n_kv_heads = 4, head_dim = 256, hidden_size = 5120, context_max = 262144, kv_groups = [{ layers = 16, n_kv_heads = 4, head_dim = 256 }], state_bytes_per_seq = 156893184 }
+shape = { n_layers = 64, n_heads = 24, n_kv_heads = 4, head_dim = 256, hidden_size = 5120, context_max = 262144, kv_groups = [{ layers = 16, n_kv_heads = 4, head_dim = 256 }], state_bytes_per_seq = 156893184, bytes_per_token = 18247714816 }
 
 [[models]]
 id = "qwen3.8-27b-gguf-q3kxl"
@@ -67,7 +67,7 @@ quantization = "Q3_K_XL (3-bit: smaller and faster than 4-bit, with some quality
 context_max = 262144
 description = "Qwen's most capable open model (Aug 2026): strong at coding, research and multi-step agent tasks, with thinking that can be switched off per request."
 notes = "Vision-language model; LLMario uses its text abilities."
-shape = { n_layers = 65, n_heads = 24, n_kv_heads = 4, head_dim = 256, hidden_size = 5120, context_max = 262144, mtp_layers = 1, kv_groups = [{ layers = 16, n_kv_heads = 4, head_dim = 256 }], state_bytes_per_seq = 156893184 }
+shape = { n_layers = 65, n_heads = 24, n_kv_heads = 4, head_dim = 256, hidden_size = 5120, context_max = 262144, mtp_layers = 1, kv_groups = [{ layers = 16, n_kv_heads = 4, head_dim = 256 }], state_bytes_per_seq = 156893184, bytes_per_token = 12589092864 }
 
 [[models]]
 id = "qwen3.8-flash-next-mlx-4bit"
@@ -89,7 +89,7 @@ quantization = "4-bit (group 32)"
 context_max = 262144
 description = "Experimental preview of the architecture behind Qwen4: sparse attention built for fast long-context and agent workloads."
 notes = "Experimental architecture; Qwen community license (not Apache-2.0). Vision-language model; LLMario uses text."
-shape = { n_layers = 48, n_heads = 24, n_kv_heads = 2, head_dim = 256, hidden_size = 2560, context_max = 262144, kv_groups = [{ layers = 12, n_kv_heads = 2, head_dim = 256 }], state_bytes_per_seq = 115458048 }
+shape = { n_layers = 48, n_heads = 24, n_kv_heads = 2, head_dim = 256, hidden_size = 2560, context_max = 262144, kv_groups = [{ layers = 12, n_kv_heads = 2, head_dim = 256 }], state_bytes_per_seq = 115458048, bytes_per_token = 36200807960, expert_bytes = 75497472000, active_expert_bytes = 1474560000 }
 
 [[models]]
 id = "qwen3.8-flash-next-gguf-iq4_xs"
@@ -133,7 +133,7 @@ quantization = "4-bit (group 64)"
 context_max = 262144
 description = "Mixture-of-experts model: 35B knowledge with only 3B parameters active per token, so it answers much faster than dense models of similar quality."
 notes = "Vision-language model; LLMario uses its text abilities."
-shape = { n_layers = 40, n_heads = 16, n_kv_heads = 2, head_dim = 256, hidden_size = 2048, context_max = 262144, kv_groups = [{ layers = 10, n_kv_heads = 2, head_dim = 256 }], state_bytes_per_seq = 64389120 }
+shape = { n_layers = 40, n_heads = 16, n_kv_heads = 2, head_dim = 256, hidden_size = 2048, context_max = 262144, kv_groups = [{ layers = 10, n_kv_heads = 2, head_dim = 256 }], state_bytes_per_seq = 64389120, bytes_per_token = 1669560576, expert_bytes = 18119393280, active_expert_bytes = 566231040 }
 
 [[models]]
 id = "qwen3.6-35b-a3b-gguf-q4km"
@@ -155,7 +155,7 @@ quantization = "Q4_K_M"
 context_max = 262144
 description = "Mixture-of-experts model: 35B knowledge with only 3B parameters active per token, so it answers much faster than dense models of similar quality."
 notes = "Vision-language model; LLMario uses its text abilities."
-shape = { n_layers = 40, n_heads = 16, n_kv_heads = 2, head_dim = 256, hidden_size = 2048, context_max = 262144, kv_groups = [{ layers = 10, n_kv_heads = 2, head_dim = 256 }], state_bytes_per_seq = 65863680 }
+shape = { n_layers = 40, n_heads = 16, n_kv_heads = 2, head_dim = 256, hidden_size = 2048, context_max = 262144, kv_groups = [{ layers = 10, n_kv_heads = 2, head_dim = 256 }], state_bytes_per_seq = 65863680, bytes_per_token = 2569349632, expert_bytes = 18119393280, active_expert_bytes = 566231040 }
 
 [[models]]
 id = "qwen3.6-35b-a3b-gguf-q4km-mtp"
@@ -177,7 +177,7 @@ quantization = "Q4_K_M"
 context_max = 262144
 description = "Mixture-of-experts model: 35B knowledge with only 3B parameters active per token, so it answers much faster than dense models of similar quality."
 notes = "Vision-language model; LLMario uses its text abilities."
-shape = { n_layers = 41, n_heads = 16, n_kv_heads = 2, head_dim = 256, hidden_size = 2048, context_max = 262144, mtp_layers = 1, kv_groups = [{ layers = 10, n_kv_heads = 2, head_dim = 256 }], state_bytes_per_seq = 65863680 }
+shape = { n_layers = 41, n_heads = 16, n_kv_heads = 2, head_dim = 256, hidden_size = 2048, context_max = 262144, mtp_layers = 1, kv_groups = [{ layers = 10, n_kv_heads = 2, head_dim = 256 }], state_bytes_per_seq = 65863680, bytes_per_token = 2683707904, expert_bytes = 20055064576, active_expert_bytes = 626720768 }
 
 [[models]]
 id = "qwen3.6-27b-mlx-4bit"
@@ -199,7 +199,7 @@ quantization = "4-bit (group 64)"
 context_max = 262144
 description = "Dense 27B general model from the Qwen3.6 generation; steady all-rounder for writing, analysis and code."
 notes = "Vision-language model; LLMario uses its text abilities."
-shape = { n_layers = 64, n_heads = 24, n_kv_heads = 4, head_dim = 256, hidden_size = 5120, context_max = 262144, kv_groups = [{ layers = 16, n_kv_heads = 4, head_dim = 256 }], state_bytes_per_seq = 153944064 }
+shape = { n_layers = 64, n_heads = 24, n_kv_heads = 4, head_dim = 256, hidden_size = 5120, context_max = 262144, kv_groups = [{ layers = 16, n_kv_heads = 4, head_dim = 256 }], state_bytes_per_seq = 153944064, bytes_per_token = 14417640448 }
 
 [[models]]
 id = "qwen3.6-27b-gguf-q4km"
@@ -221,7 +221,7 @@ quantization = "Q4_K_M"
 context_max = 262144
 description = "Dense 27B general model from the Qwen3.6 generation; steady all-rounder for writing, analysis and code."
 notes = "Vision-language model; LLMario uses its text abilities."
-shape = { n_layers = 64, n_heads = 24, n_kv_heads = 4, head_dim = 256, hidden_size = 5120, context_max = 262144, kv_groups = [{ layers = 16, n_kv_heads = 4, head_dim = 256 }], state_bytes_per_seq = 156893184 }
+shape = { n_layers = 64, n_heads = 24, n_kv_heads = 4, head_dim = 256, hidden_size = 5120, context_max = 262144, kv_groups = [{ layers = 16, n_kv_heads = 4, head_dim = 256 }], state_bytes_per_seq = 156893184, bytes_per_token = 16091088896 }
 
 [[models]]
 id = "qwen3.6-27b-gguf-q4km-mtp"
@@ -243,7 +243,7 @@ quantization = "Q4_K_M"
 context_max = 262144
 description = "Dense 27B general model from the Qwen3.6 generation; steady all-rounder for writing, analysis and code."
 notes = "Vision-language model; LLMario uses its text abilities."
-shape = { n_layers = 65, n_heads = 24, n_kv_heads = 4, head_dim = 256, hidden_size = 5120, context_max = 262144, mtp_layers = 1, kv_groups = [{ layers = 16, n_kv_heads = 4, head_dim = 256 }], state_bytes_per_seq = 156893184 }
+shape = { n_layers = 65, n_heads = 24, n_kv_heads = 4, head_dim = 256, hidden_size = 5120, context_max = 262144, mtp_layers = 1, kv_groups = [{ layers = 16, n_kv_heads = 4, head_dim = 256 }], state_bytes_per_seq = 156893184, bytes_per_token = 16380616704 }
 
 [[models]]
 id = "qwen3.6-27b-gguf-q3km"
@@ -265,7 +265,7 @@ quantization = "Q3_K_M (3-bit: smaller and faster than 4-bit, with some quality 
 context_max = 262144
 description = "Dense 27B general model from the Qwen3.6 generation; steady all-rounder for writing, analysis and code."
 notes = "Vision-language model; LLMario uses its text abilities."
-shape = { n_layers = 64, n_heads = 24, n_kv_heads = 4, head_dim = 256, hidden_size = 5120, context_max = 262144, kv_groups = [{ layers = 16, n_kv_heads = 4, head_dim = 256 }], state_bytes_per_seq = 156893184 }
+shape = { n_layers = 64, n_heads = 24, n_kv_heads = 4, head_dim = 256, hidden_size = 5120, context_max = 262144, kv_groups = [{ layers = 16, n_kv_heads = 4, head_dim = 256 }], state_bytes_per_seq = 156893184, bytes_per_token = 13028919296 }
 
 [[models]]
 id = "qwen3.5-9b-mlx-4bit"
@@ -287,7 +287,7 @@ quantization = "4-bit (group 64)"
 context_max = 262144
 description = "Efficient 9B model covering 201 languages, with good reasoning and coding for its size. A strong default for mid-range laptops."
 notes = "Vision-language model; LLMario uses its text abilities."
-shape = { n_layers = 32, n_heads = 16, n_kv_heads = 4, head_dim = 256, hidden_size = 4096, context_max = 262144, kv_groups = [{ layers = 8, n_kv_heads = 4, head_dim = 256 }], state_bytes_per_seq = 51511296 }
+shape = { n_layers = 32, n_heads = 16, n_kv_heads = 4, head_dim = 256, hidden_size = 4096, context_max = 262144, kv_groups = [{ layers = 8, n_kv_heads = 4, head_dim = 256 }], state_bytes_per_seq = 51511296, bytes_per_token = 4465912320 }
 
 [[models]]
 id = "qwen3.5-9b-gguf-q4km"
@@ -309,7 +309,7 @@ quantization = "Q4_K_M"
 context_max = 262144
 description = "Efficient 9B model covering 201 languages, with good reasoning and coding for its size. A strong default for mid-range laptops."
 notes = "Vision-language model; LLMario uses its text abilities."
-shape = { n_layers = 32, n_heads = 16, n_kv_heads = 4, head_dim = 256, hidden_size = 4096, context_max = 262144, kv_groups = [{ layers = 8, n_kv_heads = 4, head_dim = 256 }], state_bytes_per_seq = 52690944 }
+shape = { n_layers = 32, n_heads = 16, n_kv_heads = 4, head_dim = 256, hidden_size = 4096, context_max = 262144, kv_groups = [{ layers = 8, n_kv_heads = 4, head_dim = 256 }], state_bytes_per_seq = 52690944, bytes_per_token = 5097424896 }
 
 [[models]]
 id = "qwen3.5-9b-gguf-q4km-mtp"
@@ -331,7 +331,7 @@ quantization = "Q4_K_M"
 context_max = 262144
 description = "Efficient 9B model covering 201 languages, with good reasoning and coding for its size. A strong default for mid-range laptops."
 notes = "Vision-language model; LLMario uses its text abilities."
-shape = { n_layers = 33, n_heads = 16, n_kv_heads = 4, head_dim = 256, hidden_size = 4096, context_max = 262144, mtp_layers = 1, kv_groups = [{ layers = 8, n_kv_heads = 4, head_dim = 256 }], state_bytes_per_seq = 52690944 }
+shape = { n_layers = 33, n_heads = 16, n_kv_heads = 4, head_dim = 256, hidden_size = 4096, context_max = 262144, mtp_layers = 1, kv_groups = [{ layers = 8, n_kv_heads = 4, head_dim = 256 }], state_bytes_per_seq = 52690944, bytes_per_token = 5285728256 }
 
 [[models]]
 id = "qwen3.5-4b-mlx-4bit"
@@ -353,7 +353,7 @@ quantization = "4-bit (group 64)"
 context_max = 262144
 description = "Compact Qwen3.5 model for small laptops: quick answers, summaries and light coding help."
 notes = "Vision-language model; LLMario uses its text abilities."
-shape = { n_layers = 32, n_heads = 16, n_kv_heads = 4, head_dim = 256, hidden_size = 2560, context_max = 262144, kv_groups = [{ layers = 8, n_kv_heads = 4, head_dim = 256 }], state_bytes_per_seq = 51511296 }
+shape = { n_layers = 32, n_heads = 16, n_kv_heads = 4, head_dim = 256, hidden_size = 2560, context_max = 262144, kv_groups = [{ layers = 8, n_kv_heads = 4, head_dim = 256 }], state_bytes_per_seq = 51511296, bytes_per_token = 2367118848 }
 
 [[models]]
 id = "qwen3.5-4b-gguf-q4km"
@@ -375,7 +375,7 @@ quantization = "Q4_K_M"
 context_max = 262144
 description = "Compact Qwen3.5 model for small laptops: quick answers, summaries and light coding help."
 notes = "Vision-language model; LLMario uses its text abilities."
-shape = { n_layers = 32, n_heads = 16, n_kv_heads = 4, head_dim = 256, hidden_size = 2560, context_max = 262144, kv_groups = [{ layers = 8, n_kv_heads = 4, head_dim = 256 }], state_bytes_per_seq = 52690944 }
+shape = { n_layers = 32, n_heads = 16, n_kv_heads = 4, head_dim = 256, hidden_size = 2560, context_max = 262144, kv_groups = [{ layers = 8, n_kv_heads = 4, head_dim = 256 }], state_bytes_per_seq = 52690944, bytes_per_token = 2729969664 }
 
 [[models]]
 id = "qwen3.5-4b-gguf-q4km-mtp"
@@ -397,7 +397,7 @@ quantization = "Q4_K_M"
 context_max = 262144
 description = "Compact Qwen3.5 model for small laptops: quick answers, summaries and light coding help."
 notes = "Vision-language model; LLMario uses its text abilities."
-shape = { n_layers = 33, n_heads = 16, n_kv_heads = 4, head_dim = 256, hidden_size = 2560, context_max = 262144, mtp_layers = 1, kv_groups = [{ layers = 8, n_kv_heads = 4, head_dim = 256 }], state_bytes_per_seq = 52690944 }
+shape = { n_layers = 33, n_heads = 16, n_kv_heads = 4, head_dim = 256, hidden_size = 2560, context_max = 262144, mtp_layers = 1, kv_groups = [{ layers = 8, n_kv_heads = 4, head_dim = 256 }], state_bytes_per_seq = 52690944, bytes_per_token = 2824005632 }
 
 [[models]]
 id = "qwen3.5-2b-mlx-4bit"
@@ -419,7 +419,7 @@ quantization = "4-bit (group 64)"
 context_max = 262144
 description = "Small and fast; good for simple chat, rewriting and classification on any machine."
 notes = "Vision-language model; LLMario uses its text abilities."
-shape = { n_layers = 24, n_heads = 8, n_kv_heads = 2, head_dim = 256, hidden_size = 2048, context_max = 262144, kv_groups = [{ layers = 6, n_kv_heads = 2, head_dim = 256 }], state_bytes_per_seq = 19537920 }
+shape = { n_layers = 24, n_heads = 8, n_kv_heads = 2, head_dim = 256, hidden_size = 2048, context_max = 262144, kv_groups = [{ layers = 6, n_kv_heads = 2, head_dim = 256 }], state_bytes_per_seq = 19537920, bytes_per_token = 1059315904 }
 
 [[models]]
 id = "qwen3.5-2b-gguf-q4km"
@@ -441,7 +441,7 @@ quantization = "Q4_K_M"
 context_max = 262144
 description = "Small and fast; good for simple chat, rewriting and classification on any machine."
 notes = "Vision-language model; LLMario uses its text abilities."
-shape = { n_layers = 24, n_heads = 8, n_kv_heads = 2, head_dim = 256, hidden_size = 2048, context_max = 262144, kv_groups = [{ layers = 6, n_kv_heads = 2, head_dim = 256 }], state_bytes_per_seq = 20201472 }
+shape = { n_layers = 24, n_heads = 8, n_kv_heads = 2, head_dim = 256, hidden_size = 2048, context_max = 262144, kv_groups = [{ layers = 6, n_kv_heads = 2, head_dim = 256 }], state_bytes_per_seq = 20201472, bytes_per_token = 1269873920 }
 
 [[models]]
 id = "qwen3.5-2b-gguf-q4km-mtp"
@@ -463,7 +463,7 @@ quantization = "Q4_K_M"
 context_max = 262144
 description = "Small and fast; good for simple chat, rewriting and classification on any machine."
 notes = "Vision-language model; LLMario uses its text abilities."
-shape = { n_layers = 25, n_heads = 8, n_kv_heads = 2, head_dim = 256, hidden_size = 2048, context_max = 262144, mtp_layers = 1, kv_groups = [{ layers = 6, n_kv_heads = 2, head_dim = 256 }], state_bytes_per_seq = 20201472 }
+shape = { n_layers = 25, n_heads = 8, n_kv_heads = 2, head_dim = 256, hidden_size = 2048, context_max = 262144, mtp_layers = 1, kv_groups = [{ layers = 6, n_kv_heads = 2, head_dim = 256 }], state_bytes_per_seq = 20201472, bytes_per_token = 1318888704 }
 
 [[models]]
 id = "qwen3.5-0.8b-mlx-4bit"
@@ -485,7 +485,7 @@ quantization = "4-bit (group 64)"
 context_max = 262144
 description = "Tiny model for testing, embedded use and very low-memory devices. Expect simple answers."
 notes = "Vision-language model; LLMario uses its text abilities."
-shape = { n_layers = 24, n_heads = 8, n_kv_heads = 2, head_dim = 256, hidden_size = 1024, context_max = 262144, kv_groups = [{ layers = 6, n_kv_heads = 2, head_dim = 256 }], state_bytes_per_seq = 19537920 }
+shape = { n_layers = 24, n_heads = 8, n_kv_heads = 2, head_dim = 256, hidden_size = 1024, context_max = 262144, kv_groups = [{ layers = 6, n_kv_heads = 2, head_dim = 256 }], state_bytes_per_seq = 19537920, bytes_per_token = 423938240 }
 
 [[models]]
 id = "qwen3.5-0.8b-gguf-q4_0"
@@ -507,7 +507,7 @@ quantization = "Q4_0"
 context_max = 262144
 description = "Tiny model for testing, embedded use and very low-memory devices. Expect simple answers."
 notes = "Vision-language model; LLMario uses its text abilities."
-shape = { n_layers = 24, n_heads = 8, n_kv_heads = 2, head_dim = 256, hidden_size = 1024, context_max = 262144, kv_groups = [{ layers = 6, n_kv_heads = 2, head_dim = 256 }], state_bytes_per_seq = 20201472 }
+shape = { n_layers = 24, n_heads = 8, n_kv_heads = 2, head_dim = 256, hidden_size = 1024, context_max = 262144, kv_groups = [{ layers = 6, n_kv_heads = 2, head_dim = 256 }], state_bytes_per_seq = 20201472, bytes_per_token = 552074496 }
 
 [[models]]
 id = "qwen3.5-0.8b-gguf-q4km-mtp"
@@ -529,7 +529,7 @@ quantization = "Q4_K_M"
 context_max = 262144
 description = "Tiny model for testing, embedded use and very low-memory devices. Expect simple answers."
 notes = "Vision-language model; LLMario uses its text abilities."
-shape = { n_layers = 25, n_heads = 8, n_kv_heads = 2, head_dim = 256, hidden_size = 1024, context_max = 262144, mtp_layers = 1, kv_groups = [{ layers = 6, n_kv_heads = 2, head_dim = 256 }], state_bytes_per_seq = 20201472 }
+shape = { n_layers = 25, n_heads = 8, n_kv_heads = 2, head_dim = 256, hidden_size = 1024, context_max = 262144, mtp_layers = 1, kv_groups = [{ layers = 6, n_kv_heads = 2, head_dim = 256 }], state_bytes_per_seq = 20201472, bytes_per_token = 538735872 }
 
 [[models]]
 id = "qwen3-coder-30b-a3b-mlx-4bit"
@@ -550,7 +550,7 @@ architecture = "qwen3_moe"
 quantization = "4-bit (group 64)"
 context_max = 262144
 description = "Coding specialist: writes, explains and edits code and works well with coding agents. Fast thanks to 3B active parameters."
-shape = { n_layers = 48, n_heads = 32, n_kv_heads = 4, head_dim = 128, hidden_size = 2048, context_max = 262144 }
+shape = { n_layers = 48, n_heads = 32, n_kv_heads = 4, head_dim = 128, hidden_size = 2048, context_max = 262144, bytes_per_token = 1717645312, expert_bytes = 16307453952, active_expert_bytes = 1019215872 }
 
 [[models]]
 id = "qwen3-coder-30b-a3b-gguf-q4km"
@@ -571,7 +571,7 @@ architecture = "qwen3moe"
 quantization = "Q4_K_M"
 context_max = 262144
 description = "Coding specialist: writes, explains and edits code and works well with coding agents. Fast thanks to 3B active parameters."
-shape = { n_layers = 48, n_heads = 32, n_kv_heads = 4, head_dim = 128, hidden_size = 2048, context_max = 262144 }
+shape = { n_layers = 48, n_heads = 32, n_kv_heads = 4, head_dim = 128, hidden_size = 2048, context_max = 262144, bytes_per_token = 1919596544, expert_bytes = 17553162240, active_expert_bytes = 1097072640 }
 
 [[models]]
 id = "qwen3-8b-mlx-4bit"
@@ -592,7 +592,7 @@ architecture = "qwen3"
 quantization = "4-bit (group 64)"
 context_max = 40960
 description = "Well-tested 2025 all-rounder with switchable thinking mode; widely supported by every engine."
-shape = { n_layers = 36, n_heads = 32, n_kv_heads = 8, head_dim = 128, hidden_size = 4096, context_max = 40960 }
+shape = { n_layers = 36, n_heads = 32, n_kv_heads = 8, head_dim = 128, hidden_size = 4096, context_max = 40960, bytes_per_token = 4257671168 }
 
 [[models]]
 id = "qwen3-8b-gguf-q4km"
@@ -613,7 +613,7 @@ architecture = "qwen3"
 quantization = "Q4_K_M"
 context_max = 40960
 description = "Well-tested 2025 all-rounder with switchable thinking mode; widely supported by every engine."
-shape = { n_layers = 36, n_heads = 32, n_kv_heads = 8, head_dim = 128, hidden_size = 4096, context_max = 40960 }
+shape = { n_layers = 36, n_heads = 32, n_kv_heads = 8, head_dim = 128, hidden_size = 4096, context_max = 40960, bytes_per_token = 4671766528 }
 
 [[models]]
 id = "qwen3-1.7b-mlx-4bit"
@@ -634,7 +634,7 @@ architecture = "qwen3"
 quantization = "4-bit (group 64)"
 context_max = 40960
 description = "Small, fast and reliable; good first model and the one LLMario is benchmarked with."
-shape = { n_layers = 28, n_heads = 16, n_kv_heads = 8, head_dim = 128, hidden_size = 2048, context_max = 40960 }
+shape = { n_layers = 28, n_heads = 16, n_kv_heads = 8, head_dim = 128, hidden_size = 2048, context_max = 40960, bytes_per_token = 968001536 }
 
 [[models]]
 id = "qwen3-1.7b-gguf-q4km"
@@ -655,7 +655,7 @@ architecture = "qwen3"
 quantization = "Q4_K_M"
 context_max = 40960
 description = "Small, fast and reliable; good first model and the one LLMario is benchmarked with."
-shape = { n_layers = 28, n_heads = 16, n_kv_heads = 8, head_dim = 128, hidden_size = 2048, context_max = 40960 }
+shape = { n_layers = 28, n_heads = 16, n_kv_heads = 8, head_dim = 128, hidden_size = 2048, context_max = 40960, bytes_per_token = 1101457408 }
 
 [[models]]
 id = "gemma-4-31b-mlx-4bit"
@@ -677,7 +677,7 @@ quantization = "4-bit (group 64)"
 context_max = 262144
 description = "Google's largest Gemma 4: high-quality writing, reasoning and code, 140+ languages, up to 256K context."
 notes = "Multimodal model; LLMario uses its text abilities."
-shape = { n_layers = 60, n_heads = 32, n_kv_heads = 16, head_dim = 256, hidden_size = 5376, context_max = 262144, kv_groups = [{ layers = 10, n_kv_heads = 4, head_dim = 512 }, { layers = 50, n_kv_heads = 16, head_dim = 256, window = 1024 }] }
+shape = { n_layers = 60, n_heads = 32, n_kv_heads = 16, head_dim = 256, hidden_size = 5376, context_max = 262144, kv_groups = [{ layers = 10, n_kv_heads = 4, head_dim = 512 }, { layers = 50, n_kv_heads = 16, head_dim = 256, window = 1024 }], bytes_per_token = 17269170808 }
 
 [[models]]
 id = "gemma-4-31b-gguf-q4_0"
@@ -699,7 +699,7 @@ quantization = "Q4_0"
 context_max = 262144
 description = "Google's largest Gemma 4: high-quality writing, reasoning and code, 140+ languages, up to 256K context."
 notes = "Multimodal model; LLMario uses its text abilities."
-shape = { n_layers = 60, n_heads = 32, n_kv_heads = 16, head_dim = 512, hidden_size = 5376, context_max = 262144, kv_groups = [{ layers = 10, n_kv_heads = 4, head_dim = 512 }, { layers = 50, n_kv_heads = 16, head_dim = 256, window = 1024 }] }
+shape = { n_layers = 60, n_heads = 32, n_kv_heads = 16, head_dim = 512, hidden_size = 5376, context_max = 262144, kv_groups = [{ layers = 10, n_kv_heads = 4, head_dim = 512 }, { layers = 50, n_kv_heads = 16, head_dim = 256, window = 1024 }], bytes_per_token = 17635168128 }
 
 [[models]]
 id = "gemma-4-26b-a4b-mlx-4bit"
@@ -721,7 +721,7 @@ quantization = "4-bit (group 64)"
 context_max = 262144
 description = "Mixture-of-experts Gemma 4: near-31B quality at the speed of a 4B model. 256K context."
 notes = "Multimodal model; LLMario uses its text abilities."
-shape = { n_layers = 30, n_heads = 16, n_kv_heads = 8, head_dim = 256, hidden_size = 2816, context_max = 262144, kv_groups = [{ layers = 5, n_kv_heads = 2, head_dim = 512 }, { layers = 25, n_kv_heads = 8, head_dim = 256, window = 1024 }] }
+shape = { n_layers = 30, n_heads = 16, n_kv_heads = 8, head_dim = 256, hidden_size = 2816, context_max = 262144, kv_groups = [{ layers = 5, n_kv_heads = 2, head_dim = 512 }, { layers = 25, n_kv_heads = 8, head_dim = 256, window = 1024 }], bytes_per_token = 2156587068, expert_bytes = 12846366720, active_expert_bytes = 802897920 }
 
 [[models]]
 id = "gemma-4-26b-a4b-gguf-q4_0"
@@ -743,7 +743,7 @@ quantization = "Q4_0"
 context_max = 262144
 description = "Mixture-of-experts Gemma 4: near-31B quality at the speed of a 4B model. 256K context."
 notes = "Multimodal model; LLMario uses its text abilities."
-shape = { n_layers = 30, n_heads = 16, n_kv_heads = 8, head_dim = 512, hidden_size = 2816, context_max = 262144, kv_groups = [{ layers = 5, n_kv_heads = 2, head_dim = 512 }, { layers = 25, n_kv_heads = 8, head_dim = 256, window = 1024 }] }
+shape = { n_layers = 30, n_heads = 16, n_kv_heads = 8, head_dim = 512, hidden_size = 2816, context_max = 262144, kv_groups = [{ layers = 5, n_kv_heads = 2, head_dim = 512 }, { layers = 25, n_kv_heads = 8, head_dim = 256, window = 1024 }], bytes_per_token = 2558838656, expert_bytes = 12846382080, active_expert_bytes = 802898880 }
 
 [[models]]
 id = "gemma-4-26b-a4b-gguf-q3km"
@@ -765,7 +765,7 @@ quantization = "Q3_K_M (3-bit: smaller and faster than 4-bit, with some quality 
 context_max = 262144
 description = "Mixture-of-experts Gemma 4: near-31B quality at the speed of a 4B model. 256K context."
 notes = "Multimodal model; LLMario uses its text abilities."
-shape = { n_layers = 30, n_heads = 16, n_kv_heads = 8, head_dim = 512, hidden_size = 2816, context_max = 262144, kv_groups = [{ layers = 5, n_kv_heads = 2, head_dim = 512 }, { layers = 25, n_kv_heads = 8, head_dim = 256, window = 1024 }] }
+shape = { n_layers = 30, n_heads = 16, n_kv_heads = 8, head_dim = 512, hidden_size = 2816, context_max = 262144, kv_groups = [{ layers = 5, n_kv_heads = 2, head_dim = 512 }, { layers = 25, n_kv_heads = 8, head_dim = 256, window = 1024 }], bytes_per_token = 3044429696, expert_bytes = 10312793088, active_expert_bytes = 644549568 }
 
 [[models]]
 id = "gemma-4-12b-mlx-4bit"
@@ -787,7 +787,7 @@ quantization = "4-bit (group 64)"
 context_max = 262144
 description = "Balanced Gemma 4 for mid-range machines: good writing and multilingual chat, 256K context."
 notes = "Multimodal model; LLMario uses its text abilities."
-shape = { n_layers = 48, n_heads = 16, n_kv_heads = 8, head_dim = 256, hidden_size = 3840, context_max = 262144, kv_groups = [{ layers = 8, n_kv_heads = 1, head_dim = 512 }, { layers = 40, n_kv_heads = 8, head_dim = 256, window = 1024 }] }
+shape = { n_layers = 48, n_heads = 16, n_kv_heads = 8, head_dim = 256, hidden_size = 3840, context_max = 262144, kv_groups = [{ layers = 8, n_kv_heads = 1, head_dim = 512 }, { layers = 40, n_kv_heads = 8, head_dim = 256, window = 1024 }], bytes_per_token = 6698991200 }
 
 [[models]]
 id = "gemma-4-12b-gguf-q4_0"
@@ -809,7 +809,7 @@ quantization = "Q4_0"
 context_max = 262144
 description = "Balanced Gemma 4 for mid-range machines: good writing and multilingual chat, 256K context."
 notes = "Multimodal model; LLMario uses its text abilities."
-shape = { n_layers = 48, n_heads = 16, n_kv_heads = 8, head_dim = 512, hidden_size = 3840, context_max = 262144, kv_groups = [{ layers = 8, n_kv_heads = 1, head_dim = 512 }, { layers = 40, n_kv_heads = 8, head_dim = 256, window = 1024 }] }
+shape = { n_layers = 48, n_heads = 16, n_kv_heads = 8, head_dim = 512, hidden_size = 3840, context_max = 262144, kv_groups = [{ layers = 8, n_kv_heads = 1, head_dim = 512 }, { layers = 40, n_kv_heads = 8, head_dim = 256, window = 1024 }], bytes_per_token = 6960055808 }
 
 [[models]]
 id = "gemma-4-e4b-mlx-4bit"
@@ -831,7 +831,7 @@ quantization = "4-bit (group 64)"
 context_max = 131072
 description = "On-device Gemma 4 designed for laptops and phones: capable chat in little memory."
 notes = "Multimodal model; LLMario uses its text abilities."
-shape = { n_layers = 42, n_heads = 8, n_kv_heads = 2, head_dim = 256, hidden_size = 2560, context_max = 131072, kv_groups = [{ layers = 7, n_kv_heads = 2, head_dim = 512 }, { layers = 35, n_kv_heads = 2, head_dim = 256, window = 512 }] }
+shape = { n_layers = 42, n_heads = 8, n_kv_heads = 2, head_dim = 256, hidden_size = 2560, context_max = 131072, kv_groups = [{ layers = 7, n_kv_heads = 2, head_dim = 512 }, { layers = 35, n_kv_heads = 2, head_dim = 256, window = 512 }], bytes_per_token = 4198750292 }
 
 [[models]]
 id = "gemma-4-e4b-gguf-q4_0"
@@ -853,7 +853,7 @@ quantization = "Q4_0"
 context_max = 131072
 description = "On-device Gemma 4 designed for laptops and phones: capable chat in little memory."
 notes = "Multimodal model; LLMario uses its text abilities."
-shape = { n_layers = 42, n_heads = 8, n_kv_heads = 2, head_dim = 512, hidden_size = 2560, context_max = 131072, kv_groups = [{ layers = 7, n_kv_heads = 2, head_dim = 512 }, { layers = 35, n_kv_heads = 2, head_dim = 256, window = 512 }] }
+shape = { n_layers = 42, n_heads = 8, n_kv_heads = 2, head_dim = 512, hidden_size = 2560, context_max = 131072, kv_groups = [{ layers = 7, n_kv_heads = 2, head_dim = 512 }, { layers = 35, n_kv_heads = 2, head_dim = 256, window = 512 }], bytes_per_token = 4574984512 }
 
 [[models]]
 id = "gemma-4-e2b-mlx-4bit"
@@ -875,7 +875,7 @@ quantization = "4-bit (group 64)"
 context_max = 131072
 description = "Smallest Gemma 4, for quick replies on low-memory machines."
 notes = "Multimodal model; LLMario uses its text abilities."
-shape = { n_layers = 35, n_heads = 8, n_kv_heads = 1, head_dim = 256, hidden_size = 1536, context_max = 131072, kv_groups = [{ layers = 7, n_kv_heads = 1, head_dim = 512 }, { layers = 28, n_kv_heads = 1, head_dim = 256, window = 512 }] }
+shape = { n_layers = 35, n_heads = 8, n_kv_heads = 1, head_dim = 256, hidden_size = 1536, context_max = 131072, kv_groups = [{ layers = 7, n_kv_heads = 1, head_dim = 512 }, { layers = 28, n_kv_heads = 1, head_dim = 256, window = 512 }], bytes_per_token = 2603981382 }
 
 [[models]]
 id = "gemma-4-e2b-gguf-q4_0"
@@ -897,7 +897,7 @@ quantization = "Q4_0"
 context_max = 131072
 description = "Smallest Gemma 4, for quick replies on low-memory machines."
 notes = "Multimodal model; LLMario uses its text abilities."
-shape = { n_layers = 35, n_heads = 8, n_kv_heads = 1, head_dim = 512, hidden_size = 1536, context_max = 131072, kv_groups = [{ layers = 7, n_kv_heads = 1, head_dim = 512 }, { layers = 28, n_kv_heads = 1, head_dim = 256, window = 512 }] }
+shape = { n_layers = 35, n_heads = 8, n_kv_heads = 1, head_dim = 512, hidden_size = 1536, context_max = 131072, kv_groups = [{ layers = 7, n_kv_heads = 1, head_dim = 512 }, { layers = 28, n_kv_heads = 1, head_dim = 256, window = 512 }], bytes_per_token = 2825665632 }
 
 [[models]]
 id = "gpt-oss-20b-mlx-mxfp4-q8"
@@ -918,7 +918,7 @@ architecture = "gpt_oss"
 quantization = "4-bit (group 32)"
 context_max = 131072
 description = "OpenAI's open-weight reasoning model: strong at math, code and tool use, adjustable reasoning effort."
-shape = { n_layers = 24, n_heads = 64, n_kv_heads = 8, head_dim = 64, hidden_size = 2880, context_max = 131072, kv_groups = [{ layers = 12, n_kv_heads = 8, head_dim = 64 }, { layers = 12, n_kv_heads = 8, head_dim = 64, window = 128 }] }
+shape = { n_layers = 24, n_heads = 64, n_kv_heads = 8, head_dim = 64, hidden_size = 2880, context_max = 131072, kv_groups = [{ layers = 12, n_kv_heads = 8, head_dim = 64 }, { layers = 12, n_kv_heads = 8, head_dim = 64, window = 128 }], bytes_per_token = 2565875328, expert_bytes = 10165616640, active_expert_bytes = 1270702080 }
 
 [[models]]
 id = "gpt-oss-20b-gguf-mxfp4"
@@ -939,7 +939,7 @@ architecture = "gpt-oss"
 quantization = "MXFP4"
 context_max = 131072
 description = "OpenAI's open-weight reasoning model: strong at math, code and tool use, adjustable reasoning effort."
-shape = { n_layers = 24, n_heads = 64, n_kv_heads = 8, head_dim = 64, hidden_size = 2880, context_max = 131072, kv_groups = [{ layers = 12, n_kv_heads = 8, head_dim = 64 }, { layers = 12, n_kv_heads = 8, head_dim = 64, window = 128 }] }
+shape = { n_layers = 24, n_heads = 64, n_kv_heads = 8, head_dim = 64, hidden_size = 2880, context_max = 131072, kv_groups = [{ layers = 12, n_kv_heads = 8, head_dim = 64 }, { layers = 12, n_kv_heads = 8, head_dim = 64, window = 128 }], bytes_per_token = 2574702336, expert_bytes = 10178887680, active_expert_bytes = 1272360960 }
 
 [[models]]
 id = "gpt-oss-120b-mlx-mxfp4-q8"
@@ -960,7 +960,7 @@ architecture = "gpt_oss"
 quantization = "4-bit (group 32)"
 context_max = 131072
 description = "The larger gpt-oss: near-frontier reasoning for high-memory workstations."
-shape = { n_layers = 36, n_heads = 64, n_kv_heads = 8, head_dim = 64, hidden_size = 2880, context_max = 131072, kv_groups = [{ layers = 18, n_kv_heads = 8, head_dim = 64 }, { layers = 18, n_kv_heads = 8, head_dim = 64, window = 128 }] }
+shape = { n_layers = 36, n_heads = 64, n_kv_heads = 8, head_dim = 64, hidden_size = 2880, context_max = 131072, kv_groups = [{ layers = 18, n_kv_heads = 8, head_dim = 64 }, { layers = 18, n_kv_heads = 8, head_dim = 64, window = 128 }], bytes_per_token = 3647643264, expert_bytes = 60993699840, active_expert_bytes = 1906053120 }
 
 [[models]]
 id = "gpt-oss-120b-gguf-mxfp4"
@@ -981,7 +981,7 @@ architecture = "gpt-oss"
 quantization = "MXFP4"
 context_max = 131072
 description = "The larger gpt-oss: near-frontier reasoning for high-memory workstations."
-shape = { n_layers = 36, n_heads = 64, n_kv_heads = 8, head_dim = 64, hidden_size = 2880, context_max = 131072, kv_groups = [{ layers = 18, n_kv_heads = 8, head_dim = 64 }, { layers = 18, n_kv_heads = 8, head_dim = 64, window = 128 }] }
+shape = { n_layers = 36, n_heads = 64, n_kv_heads = 8, head_dim = 64, hidden_size = 2880, context_max = 131072, kv_groups = [{ layers = 18, n_kv_heads = 8, head_dim = 64 }, { layers = 18, n_kv_heads = 8, head_dim = 64, window = 128 }], bytes_per_token = 3594210048, expert_bytes = 61073326080, active_expert_bytes = 1908541440 }
 
 [[models]]
 id = "glm-4.7-flash-mlx-4bit"
@@ -1002,7 +1002,7 @@ architecture = "glm4_moe_lite"
 quantization = "4-bit (group 64)"
 context_max = 202752
 description = "Fast mixture-of-experts model that leads the 30B class on math and science reasoning; MIT licensed."
-shape = { n_layers = 47, n_heads = 20, n_kv_heads = 20, head_dim = 102, hidden_size = 2048, context_max = 202752 }
+shape = { n_layers = 47, n_heads = 20, n_kv_heads = 20, head_dim = 102, hidden_size = 2048, context_max = 202752, bytes_per_token = 2022552576, expert_bytes = 15627976704, active_expert_bytes = 976748544 }
 
 [[models]]
 id = "glm-4.7-flash-gguf-q4km"
@@ -1023,7 +1023,7 @@ architecture = "deepseek2"
 quantization = "Q4_K_M"
 context_max = 202752
 description = "Fast mixture-of-experts model that leads the 30B class on math and science reasoning; MIT licensed."
-shape = { n_layers = 47, n_heads = 20, n_kv_heads = 1, head_dim = 576, hidden_size = 2048, context_max = 202752 }
+shape = { n_layers = 47, n_heads = 20, n_kv_heads = 1, head_dim = 576, hidden_size = 2048, context_max = 202752, bytes_per_token = 2402683392, expert_bytes = 16769875968, active_expert_bytes = 1048117248 }
 
 [[models]]
 id = "nemotron-3.5-lightning-30b-a3b-mlx-4bit"
@@ -1045,7 +1045,7 @@ quantization = "4-bit (group 64)"
 context_max = 262144
 description = "Hybrid Mamba-2 + attention mixture-of-experts built for speed and very long context (up to 1M tokens)."
 notes = "OpenMDW-1.1 license."
-shape = { n_layers = 52, n_heads = 32, n_kv_heads = 2, head_dim = 128, hidden_size = 2688, context_max = 262144 }
+shape = { n_layers = 52, n_heads = 32, n_kv_heads = 2, head_dim = 128, hidden_size = 2688, context_max = 262144, bytes_per_token = 2026540928, expert_bytes = 16523329536, active_expert_bytes = 774531072 }
 
 [[models]]
 id = "nemotron-3.5-lightning-30b-a3b-gguf-q4_0"
@@ -1067,7 +1067,7 @@ quantization = "Q4_0"
 context_max = 1048576
 description = "Hybrid Mamba-2 + attention mixture-of-experts built for speed and very long context (up to 1M tokens)."
 notes = "OpenMDW-1.1 license."
-shape = { n_layers = 52, n_heads = 32, n_kv_heads = 2, head_dim = 128, hidden_size = 2688, context_max = 1048576, kv_groups = [{ layers = 6, n_kv_heads = 2, head_dim = 128 }], state_bytes_per_seq = 99860480 }
+shape = { n_layers = 52, n_heads = 32, n_kv_heads = 2, head_dim = 128, hidden_size = 2688, context_max = 1048576, kv_groups = [{ layers = 6, n_kv_heads = 2, head_dim = 128 }], state_bytes_per_seq = 99860480, bytes_per_token = 2767055616, expert_bytes = 16523329536, active_expert_bytes = 774531072 }
 
 [[models]]
 id = "ministral-3-14b-mlx-4bit"
@@ -1089,7 +1089,7 @@ quantization = "4-bit (group 64)"
 context_max = 262144
 description = "Mistral's edge model: close to Mistral Small quality in 14B, good at instructions and European languages."
 notes = "Includes a small vision encoder; LLMario uses text."
-shape = { n_layers = 40, n_heads = 32, n_kv_heads = 8, head_dim = 128, hidden_size = 5120, context_max = 262144 }
+shape = { n_layers = 40, n_heads = 32, n_kv_heads = 8, head_dim = 128, hidden_size = 5120, context_max = 262144, bytes_per_token = 7220275200 }
 
 [[models]]
 id = "ministral-3-14b-gguf-q4km"
@@ -1111,7 +1111,7 @@ quantization = "Q4_K_M"
 context_max = 262144
 description = "Mistral's edge model: close to Mistral Small quality in 14B, good at instructions and European languages."
 notes = "Includes a small vision encoder; LLMario uses text."
-shape = { n_layers = 40, n_heads = 32, n_kv_heads = 8, head_dim = 128, hidden_size = 5120, context_max = 262144 }
+shape = { n_layers = 40, n_heads = 32, n_kv_heads = 8, head_dim = 128, hidden_size = 5120, context_max = 262144, bytes_per_token = 7853690880 }
 
 [[models]]
 id = "ministral-3-14b-gguf-q3km"
@@ -1133,7 +1133,7 @@ quantization = "Q3_K_M (3-bit: smaller and faster than 4-bit, with some quality 
 context_max = 262144
 description = "Mistral's edge model: close to Mistral Small quality in 14B, good at instructions and European languages."
 notes = "Includes a small vision encoder; LLMario uses text."
-shape = { n_layers = 40, n_heads = 32, n_kv_heads = 8, head_dim = 128, hidden_size = 5120, context_max = 262144 }
+shape = { n_layers = 40, n_heads = 32, n_kv_heads = 8, head_dim = 128, hidden_size = 5120, context_max = 262144, bytes_per_token = 6385848320 }
 
 [[models]]
 id = "devstral-small-2-24b-mlx-4bit"
@@ -1154,7 +1154,7 @@ architecture = "mistral3"
 quantization = "4-bit (group 64)"
 context_max = 393216
 description = "Agentic coding model: explores codebases, edits multiple files and powers software-engineering agents."
-shape = { n_layers = 40, n_heads = 32, n_kv_heads = 8, head_dim = 128, hidden_size = 5120, context_max = 393216 }
+shape = { n_layers = 40, n_heads = 32, n_kv_heads = 8, head_dim = 128, hidden_size = 5120, context_max = 393216, bytes_per_token = 13847275520 }
 
 [[models]]
 id = "devstral-small-2-24b-gguf-q4km"
@@ -1175,7 +1175,7 @@ architecture = "mistral3"
 quantization = "Q4_K_M"
 context_max = 393216
 description = "Agentic coding model: explores codebases, edits multiple files and powers software-engineering agents."
-shape = { n_layers = 40, n_heads = 32, n_kv_heads = 8, head_dim = 128, hidden_size = 5120, context_max = 393216 }
+shape = { n_layers = 40, n_heads = 32, n_kv_heads = 8, head_dim = 128, hidden_size = 5120, context_max = 393216, bytes_per_token = 13948538880 }
 
 [[models]]
 id = "devstral-small-2-24b-gguf-q3km"
@@ -1196,7 +1196,7 @@ architecture = "mistral3"
 quantization = "Q3_K_M (3-bit: smaller and faster than 4-bit, with some quality loss)"
 context_max = 393216
 description = "Agentic coding model: explores codebases, edits multiple files and powers software-engineering agents."
-shape = { n_layers = 40, n_heads = 32, n_kv_heads = 8, head_dim = 128, hidden_size = 5120, context_max = 393216 }
+shape = { n_layers = 40, n_heads = 32, n_kv_heads = 8, head_dim = 128, hidden_size = 5120, context_max = 393216, bytes_per_token = 11177840640 }
 
 [[models]]
 id = "mistral-small-3.2-24b-mlx-4bit"
@@ -1217,7 +1217,7 @@ architecture = "mistral3"
 quantization = "4-bit (group 64)"
 context_max = 131072
 description = "Reliable general assistant with strong instruction following and function calling; Apache-2.0."
-shape = { n_layers = 40, n_heads = 32, n_kv_heads = 8, head_dim = 128, hidden_size = 5120, context_max = 131072 }
+shape = { n_layers = 40, n_heads = 32, n_kv_heads = 8, head_dim = 128, hidden_size = 5120, context_max = 131072, bytes_per_token = 12882585600 }
 
 [[models]]
 id = "mistral-small-3.2-24b-gguf-q4km"
@@ -1238,7 +1238,7 @@ architecture = "llama"
 quantization = "Q4_K_M"
 context_max = 131072
 description = "Reliable general assistant with strong instruction following and function calling; Apache-2.0."
-shape = { n_layers = 40, n_heads = 32, n_kv_heads = 8, head_dim = 128, hidden_size = 5120, context_max = 131072 }
+shape = { n_layers = 40, n_heads = 32, n_kv_heads = 8, head_dim = 128, hidden_size = 5120, context_max = 131072, bytes_per_token = 13948538880 }
 
 [[models]]
 id = "mistral-small-3.2-24b-gguf-q3km"
@@ -1259,7 +1259,7 @@ architecture = "llama"
 quantization = "Q3_K_M (3-bit: smaller and faster than 4-bit, with some quality loss)"
 context_max = 131072
 description = "Reliable general assistant with strong instruction following and function calling; Apache-2.0."
-shape = { n_layers = 40, n_heads = 32, n_kv_heads = 8, head_dim = 128, hidden_size = 5120, context_max = 131072 }
+shape = { n_layers = 40, n_heads = 32, n_kv_heads = 8, head_dim = 128, hidden_size = 5120, context_max = 131072, bytes_per_token = 11177840640 }
 
 [[models]]
 id = "phi-4-mlx-4bit"
@@ -1280,7 +1280,7 @@ architecture = "phi3"
 quantization = "4-bit (group 64)"
 context_max = 16384
 description = "Trained heavily on high-quality synthetic data; excellent at math and logic for its size. MIT licensed."
-shape = { n_layers = 40, n_heads = 40, n_kv_heads = 10, head_dim = 128, hidden_size = 5120, context_max = 16384 }
+shape = { n_layers = 40, n_heads = 40, n_kv_heads = 10, head_dim = 128, hidden_size = 5120, context_max = 16384, bytes_per_token = 7957555200 }
 
 [[models]]
 id = "phi-4-gguf-q4_0"
@@ -1301,7 +1301,7 @@ architecture = "phi3"
 quantization = "Q4_0"
 context_max = 16384
 description = "Trained heavily on high-quality synthetic data; excellent at math and logic for its size. MIT licensed."
-shape = { n_layers = 40, n_heads = 40, n_kv_heads = 10, head_dim = 128, hidden_size = 5120, context_max = 16384 }
+shape = { n_layers = 40, n_heads = 40, n_kv_heads = 10, head_dim = 128, hidden_size = 5120, context_max = 16384, bytes_per_token = 8090849280 }
 
 [[models]]
 id = "phi-4-gguf-q3km"
@@ -1322,7 +1322,7 @@ architecture = "llama"
 quantization = "Q3_K_M (3-bit: smaller and faster than 4-bit, with some quality loss)"
 context_max = 16384
 description = "Trained heavily on high-quality synthetic data; excellent at math and logic for its size. MIT licensed."
-shape = { n_layers = 40, n_heads = 40, n_kv_heads = 10, head_dim = 128, hidden_size = 5120, context_max = 16384 }
+shape = { n_layers = 40, n_heads = 40, n_kv_heads = 10, head_dim = 128, hidden_size = 5120, context_max = 16384, bytes_per_token = 6966497280 }
 
 [[models]]
 id = "phi-4-mlx-3bit"
@@ -1343,7 +1343,7 @@ architecture = "phi3"
 quantization = "3-bit (group 64): smaller and faster than 4-bit, with some quality loss"
 context_max = 16384
 description = "Trained heavily on high-quality synthetic data; excellent at math and logic for its size. MIT licensed."
-shape = { n_layers = 40, n_heads = 40, n_kv_heads = 10, head_dim = 128, hidden_size = 5120, context_max = 16384 }
+shape = { n_layers = 40, n_heads = 40, n_kv_heads = 10, head_dim = 128, hidden_size = 5120, context_max = 16384, bytes_per_token = 6189393920 }
 
 [[models]]
 id = "phi-4-mini-mlx-4bit"
@@ -1364,7 +1364,7 @@ architecture = "phi3"
 quantization = "4-bit (group 64)"
 context_max = 131072
 description = "Small Phi with good reasoning and a 128K context; MIT licensed."
-shape = { n_layers = 32, n_heads = 24, n_kv_heads = 8, head_dim = 128, hidden_size = 3072, context_max = 131072 }
+shape = { n_layers = 32, n_heads = 24, n_kv_heads = 8, head_dim = 128, hidden_size = 3072, context_max = 131072, bytes_per_token = 2158049280 }
 
 [[models]]
 id = "phi-4-mini-gguf-q4km"
@@ -1385,7 +1385,7 @@ architecture = "phi3"
 quantization = "Q4_K_M"
 context_max = 131072
 description = "Small Phi with good reasoning and a 128K context; MIT licensed."
-shape = { n_layers = 32, n_heads = 24, n_kv_heads = 8, head_dim = 128, hidden_size = 3072, context_max = 131072 }
+shape = { n_layers = 32, n_heads = 24, n_kv_heads = 8, head_dim = 128, hidden_size = 3072, context_max = 131072, bytes_per_token = 2483623296 }
 
 [[models]]
 id = "llama3.1-8b-mlx-4bit"
@@ -1407,7 +1407,7 @@ quantization = "4-bit (group 64)"
 context_max = 131072
 description = "Meta's widely used 8B assistant with 128K context; huge ecosystem of fine-tunes and tools."
 notes = "Llama 3.1 Community License."
-shape = { n_layers = 32, n_heads = 32, n_kv_heads = 8, head_dim = 128, hidden_size = 4096, context_max = 131072 }
+shape = { n_layers = 32, n_heads = 32, n_kv_heads = 8, head_dim = 128, hidden_size = 4096, context_max = 131072, bytes_per_token = 4221902848 }
 
 [[models]]
 id = "llama3.1-8b-gguf-q4km"
@@ -1429,7 +1429,7 @@ quantization = "Q4_K_M"
 context_max = 131072
 description = "Meta's widely used 8B assistant with 128K context; huge ecosystem of fine-tunes and tools."
 notes = "Llama 3.1 Community License."
-shape = { n_layers = 32, n_heads = 32, n_kv_heads = 8, head_dim = 128, hidden_size = 4096, context_max = 131072 }
+shape = { n_layers = 32, n_heads = 32, n_kv_heads = 8, head_dim = 128, hidden_size = 4096, context_max = 131072, bytes_per_token = 4617396480 }
 
 [[models]]
 id = "llama3.2-3b-mlx-4bit"
@@ -1451,7 +1451,7 @@ quantization = "4-bit (group 64)"
 context_max = 131072
 description = "Small Llama for summaries, rewriting and simple assistants on modest hardware."
 notes = "Llama 3.2 Community License."
-shape = { n_layers = 28, n_heads = 24, n_kv_heads = 8, head_dim = 128, hidden_size = 3072, context_max = 131072 }
+shape = { n_layers = 28, n_heads = 24, n_kv_heads = 8, head_dim = 128, hidden_size = 3072, context_max = 131072, bytes_per_token = 1807423488 }
 
 [[models]]
 id = "llama3.2-3b-gguf-q4km"
@@ -1473,7 +1473,7 @@ quantization = "Q4_K_M"
 context_max = 131072
 description = "Small Llama for summaries, rewriting and simple assistants on modest hardware."
 notes = "Llama 3.2 Community License."
-shape = { n_layers = 28, n_heads = 24, n_kv_heads = 8, head_dim = 128, hidden_size = 3072, context_max = 131072 }
+shape = { n_layers = 28, n_heads = 24, n_kv_heads = 8, head_dim = 128, hidden_size = 3072, context_max = 131072, bytes_per_token = 2011539712 }
 
 [[models]]
 id = "llama3.2-1b-mlx-4bit"
@@ -1495,7 +1495,7 @@ quantization = "4-bit (group 64)"
 context_max = 131072
 description = "Tiny Llama for very fast, simple tasks."
 notes = "Llama 3.2 Community License."
-shape = { n_layers = 16, n_heads = 32, n_kv_heads = 8, head_dim = 64, hidden_size = 2048, context_max = 131072 }
+shape = { n_layers = 16, n_heads = 32, n_kv_heads = 8, head_dim = 64, hidden_size = 2048, context_max = 131072, bytes_per_token = 695242752 }
 
 [[models]]
 id = "llama3.2-1b-gguf-q4km"
@@ -1517,7 +1517,7 @@ quantization = "Q4_K_M"
 context_max = 131072
 description = "Tiny Llama for very fast, simple tasks."
 notes = "Llama 3.2 Community License."
-shape = { n_layers = 16, n_heads = 32, n_kv_heads = 8, head_dim = 64, hidden_size = 2048, context_max = 131072 }
+shape = { n_layers = 16, n_heads = 32, n_kv_heads = 8, head_dim = 64, hidden_size = 2048, context_max = 131072, bytes_per_token = 799862912 }
 
 [[models]]
 id = "granite-4.2-8b-gguf-q4km"
@@ -1538,7 +1538,7 @@ architecture = "granite"
 quantization = "Q4_K_M"
 context_max = 131072
 description = "IBM's enterprise-oriented model: dependable instruction following, tool use and RAG; Apache-2.0."
-shape = { n_layers = 40, n_heads = 32, n_kv_heads = 8, head_dim = 128, hidden_size = 4096, context_max = 131072 }
+shape = { n_layers = 40, n_heads = 32, n_kv_heads = 8, head_dim = 128, hidden_size = 4096, context_max = 131072, bytes_per_token = 5113135104 }
 
 [[models]]
 id = "granite-4.2-3b-gguf-q4km"
@@ -1559,7 +1559,7 @@ architecture = "granite"
 quantization = "Q4_K_M"
 context_max = 131072
 description = "Small Granite for tool calling and structured tasks on modest hardware; Apache-2.0."
-shape = { n_layers = 40, n_heads = 40, n_kv_heads = 8, head_dim = 64, hidden_size = 2560, context_max = 131072 }
+shape = { n_layers = 40, n_heads = 40, n_kv_heads = 8, head_dim = 64, hidden_size = 2560, context_max = 131072, bytes_per_token = 2095933440 }
 
 [[models]]
 id = "lfm2.5-8b-a1b-gguf-q4km"
@@ -1581,7 +1581,7 @@ quantization = "Q4_K_M"
 context_max = 128000
 description = "Hybrid on-device mixture-of-experts: very fast on laptops CPUs and GPUs, tuned for agent workflows."
 notes = "LFM Open License v1.0."
-shape = { n_layers = 24, n_heads = 32, n_kv_heads = 8, head_dim = 64, hidden_size = 2048, context_max = 128000 }
+shape = { n_layers = 24, n_heads = 32, n_kv_heads = 8, head_dim = 64, hidden_size = 2048, context_max = 128000, bytes_per_token = 1067415296, expert_bytes = 4662755328, active_expert_bytes = 582844416 }
 
 [[models]]
 id = "lfm2.5-2.6b-mlx-4bit"
@@ -1603,7 +1603,7 @@ quantization = "4-bit (group 64)"
 context_max = 128000
 description = "On-device model competitive with much larger ones on tool use and instruction following; 128K context."
 notes = "LFM Open License v1.0."
-shape = { n_layers = 30, n_heads = 32, n_kv_heads = 8, head_dim = 64, hidden_size = 2048, context_max = 128000 }
+shape = { n_layers = 30, n_heads = 32, n_kv_heads = 8, head_dim = 64, hidden_size = 2048, context_max = 128000, bytes_per_token = 1517549568 }
 
 [[models]]
 id = "lfm2.5-2.6b-gguf-q4km"
@@ -1625,7 +1625,7 @@ quantization = "Q4_K_M"
 context_max = 131072
 description = "On-device model competitive with much larger ones on tool use and instruction following; 128K context."
 notes = "LFM Open License v1.0."
-shape = { n_layers = 30, n_heads = 32, n_kv_heads = 8, head_dim = 64, hidden_size = 2048, context_max = 131072 }
+shape = { n_layers = 30, n_heads = 32, n_kv_heads = 8, head_dim = 64, hidden_size = 2048, context_max = 131072, bytes_per_token = 1666215936 }
 
 [[models]]
 id = "lfm2.5-1.2b-mlx-4bit"
@@ -1647,7 +1647,7 @@ quantization = "4-bit (group 64)"
 context_max = 128000
 description = "Very small hybrid model for fast on-device replies."
 notes = "LFM Open License v1.0."
-shape = { n_layers = 16, n_heads = 32, n_kv_heads = 8, head_dim = 64, hidden_size = 2048, context_max = 128000 }
+shape = { n_layers = 16, n_heads = 32, n_kv_heads = 8, head_dim = 64, hidden_size = 2048, context_max = 128000, bytes_per_token = 658503168 }
 
 [[models]]
 id = "lfm2.5-1.2b-gguf-q4km"
@@ -1669,7 +1669,7 @@ quantization = "Q4_K_M"
 context_max = 128000
 description = "Very small hybrid model for fast on-device replies."
 notes = "LFM Open License v1.0."
-shape = { n_layers = 16, n_heads = 32, n_kv_heads = 8, head_dim = 64, hidden_size = 2048, context_max = 128000 }
+shape = { n_layers = 16, n_heads = 32, n_kv_heads = 8, head_dim = 64, hidden_size = 2048, context_max = 128000, bytes_per_token = 728509440 }
 
 [[models]]
 id = "ornith-1.5-9b-gguf-q4km"
@@ -1690,7 +1690,7 @@ architecture = "qwen35"
 quantization = "Q4_K_M"
 context_max = 262144
 description = "Self-improving model built on Qwen3.5/Gemma 4 foundations with heavy reinforcement learning; strong reasoning for 9B. MIT."
-shape = { n_layers = 33, n_heads = 16, n_kv_heads = 4, head_dim = 256, hidden_size = 4096, context_max = 262144, kv_groups = [{ layers = 8, n_kv_heads = 4, head_dim = 256 }], state_bytes_per_seq = 54886400 }
+shape = { n_layers = 33, n_heads = 16, n_kv_heads = 4, head_dim = 256, hidden_size = 4096, context_max = 262144, kv_groups = [{ layers = 8, n_kv_heads = 4, head_dim = 256 }], state_bytes_per_seq = 54886400, bytes_per_token = 5196992512 }
 
 [[models]]
 id = "ornith-1.5-35b-a3b-gguf-q4km"
@@ -1711,7 +1711,7 @@ architecture = "qwen35moe"
 quantization = "Q4_K_M"
 context_max = 262144
 description = "Larger mixture-of-experts Ornith: stronger reasoning and agent performance with 3B active parameters. MIT."
-shape = { n_layers = 41, n_heads = 16, n_kv_heads = 2, head_dim = 256, hidden_size = 2048, context_max = 262144, kv_groups = [{ layers = 10, n_kv_heads = 2, head_dim = 256 }], state_bytes_per_seq = 68059136 }
+shape = { n_layers = 41, n_heads = 16, n_kv_heads = 2, head_dim = 256, hidden_size = 2048, context_max = 262144, kv_groups = [{ layers = 10, n_kv_heads = 2, head_dim = 256 }], state_bytes_per_seq = 68059136, bytes_per_token = 2016506368, expert_bytes = 20025704448, active_expert_bytes = 625803264 }
 
 [[models]]
 id = "olmo-3-7b-mlx-4bit"
@@ -1732,7 +1732,7 @@ architecture = "olmo3"
 quantization = "4-bit (group 64)"
 context_max = 65536
 description = "Fully open model: weights, training data, code and logs are all public. Good for research and transparency."
-shape = { n_layers = 32, n_heads = 32, n_kv_heads = 32, head_dim = 128, hidden_size = 4096, context_max = 65536, kv_groups = [{ layers = 8, n_kv_heads = 32, head_dim = 128 }, { layers = 24, n_kv_heads = 32, head_dim = 128, window = 4096 }] }
+shape = { n_layers = 32, n_heads = 32, n_kv_heads = 32, head_dim = 128, hidden_size = 4096, context_max = 65536, kv_groups = [{ layers = 8, n_kv_heads = 32, head_dim = 128 }, { layers = 24, n_kv_heads = 32, head_dim = 128, window = 4096 }], bytes_per_token = 3874850304 }
 
 [[models]]
 id = "olmo-3-7b-gguf-q4km"
@@ -1753,7 +1753,7 @@ architecture = "olmo2"
 quantization = "Q4_K_M"
 context_max = 65536
 description = "Fully open model: weights, training data, code and logs are all public. Good for research and transparency."
-shape = { n_layers = 32, n_heads = 32, n_kv_heads = 32, head_dim = 128, hidden_size = 4096, context_max = 65536, kv_groups = [{ layers = 8, n_kv_heads = 32, head_dim = 128 }, { layers = 24, n_kv_heads = 32, head_dim = 128, window = 4096 }] }
+shape = { n_layers = 32, n_heads = 32, n_kv_heads = 32, head_dim = 128, hidden_size = 4096, context_max = 65536, kv_groups = [{ layers = 8, n_kv_heads = 32, head_dim = 128 }, { layers = 24, n_kv_heads = 32, head_dim = 128, window = 4096 }], bytes_per_token = 4236997824 }
 
 [[models]]
 id = "smollm3-3b-mlx-4bit"
@@ -1774,7 +1774,7 @@ architecture = "smollm3"
 quantization = "4-bit (group 64)"
 context_max = 65536
 description = "Fully open small model with switchable reasoning and long context; punches above its size."
-shape = { n_layers = 36, n_heads = 16, n_kv_heads = 4, head_dim = 128, hidden_size = 2048, context_max = 65536 }
+shape = { n_layers = 36, n_heads = 16, n_kv_heads = 4, head_dim = 128, hidden_size = 2048, context_max = 65536, bytes_per_token = 1729957888 }
 
 [[models]]
 id = "smollm3-3b-gguf-q4km"
@@ -1795,4 +1795,4 @@ architecture = "smollm3"
 quantization = "Q4_K_M"
 context_max = 65536
 description = "Fully open small model with switchable reasoning and long context; punches above its size."
-shape = { n_layers = 36, n_heads = 16, n_kv_heads = 4, head_dim = 128, hidden_size = 2048, context_max = 65536 }
+shape = { n_layers = 36, n_heads = 16, n_kv_heads = 4, head_dim = 128, hidden_size = 2048, context_max = 65536, bytes_per_token = 1907462144 }

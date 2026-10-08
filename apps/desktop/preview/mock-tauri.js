@@ -17,7 +17,7 @@
   const installed = () => catalog.filter((c) => c.installed).map((c) => ({
     id: c.id, family: c.family, format: c.format, backend: c.backend, backendAvailable: c.backendAvailable,
     quantization: c.quantization, sizeBytes: c.approxBytes, license: c.license, source: c.repo, contextMax: c.contextMax,
-    managed: true, fits: c.fits, tight: c.tight, needsBytes: c.needsBytes, budgetBytes: c.budgetBytes, loaded: false,
+    managed: true, fits: c.fits, tight: c.tight, speed: c.speed, needsBytes: c.needsBytes, budgetBytes: c.budgetBytes, loaded: false,
   }));
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   class Channel { constructor() { this.onmessage = () => {}; } }

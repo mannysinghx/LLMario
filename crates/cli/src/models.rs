@@ -164,13 +164,17 @@ pub async fn run(cmd: ModelCmd) -> anyhow::Result<()> {
                 } else {
                     format!("fits (needs ~{})", fmt_bytes(v.needs_bytes))
                 };
+                let speed = v
+                    .speed
+                    .as_ref()
+                    .map(|s| format!(" · ~{:.0} tok/s", s.tokens_per_second))
+                    .unwrap_or_default();
                 println!(
-                    "  {} {:<40} {:<9} {:>9}  {}",
+                    "  {} {:<40} {:<9} {:>9}  {status}{speed}",
                     if v.recommended { "★" } else { " " },
                     v.id,
                     v.backend.to_string(),
                     v.approx_bytes.map(fmt_bytes).unwrap_or_default(),
-                    status
                 );
             }
             println!("\n★ = recommended for this computer. Pull by id, or by family for the best variant: `{} model pull qwen3.5-9b`", llmario_core::APP_NAME);
@@ -407,6 +411,17 @@ pub async fn run(cmd: ModelCmd) -> anyhow::Result<()> {
             );
             println!("overhead  {}", fmt_bytes(plan.overhead_bytes));
             println!("total     {}", fmt_bytes(plan.total_bytes));
+            if let Some(s) = sup.speed(&sel, &sup.autotune()) {
+                let reads = if s.bytes_per_token > 0 {
+                    format!("; reads ~{} per token", fmt_bytes(s.bytes_per_token))
+                } else {
+                    String::new()
+                };
+                println!(
+                    "speed     ~{:.0} tok/s ({}{reads})",
+                    s.tokens_per_second, s.basis
+                );
+            }
             println!(
                 "budget    {} ({})",
                 fmt_bytes(plan.budget_bytes),

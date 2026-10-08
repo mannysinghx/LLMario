@@ -25,6 +25,18 @@ pub struct ModelShape {
     /// `n_layers`; not part of `kv_groups`.
     #[serde(default, skip_serializing_if = "is_zero_u32")]
     pub mtp_layers: u32,
+    /// Weight bytes read to generate one token: MoE experts at the share used per token, the
+    /// token-embedding table left out when a separate output head exists, and vision/audio
+    /// weights left out. 0 = unknown (planners then use the whole file size).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub bytes_per_token: u64,
+    /// Total bytes of MoE expert weights (0 = dense or unknown). Lets the planner keep some
+    /// layers' experts in RAM for the CPU when the GPU limit is too small (Phase 7).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub expert_bytes: u64,
+    /// Expert bytes read per token (experts used per token ÷ experts in total × `expert_bytes`).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub active_expert_bytes: u64,
 }
 
 fn is_zero(v: &u64) -> bool {
@@ -300,6 +312,9 @@ mod tests {
             kv_groups: vec![],
             state_bytes_per_seq: 0,
             mtp_layers: 0,
+            bytes_per_token: 0,
+            expert_bytes: 0,
+            active_expert_bytes: 0,
         };
         assert_eq!(s.kv_bytes_per_token(2), 2 * 28 * 8 * 128 * 2);
         assert_eq!(

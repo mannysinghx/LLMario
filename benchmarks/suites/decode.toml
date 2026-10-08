@@ -1,0 +1,11 @@
+# Decode-speed suite (Phase 6): one free-writing prompt with a long answer, for measuring plain
+# decode speed (tokens per second) when calibrating or checking the speed planner. Run with
+# --no-quality. Original synthetic prompt.
+
+name = "decode"
+version = 1
+
+[[perf]]
+id = "prose"
+max_tokens = 256
+prompt = "Write a detailed, vivid short story about a lighthouse keeper who discovers a message in a bottle. Use at least five paragraphs."

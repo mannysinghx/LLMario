@@ -1,9 +1,11 @@
 //! The supervisor: model lifecycle (load / LRU evict / crash relaunch) and request admission.
 
 use crate::adapter::{BackendStatus, EngineAdapter, LaunchContext};
+use crate::autotune::Autotune;
 use crate::engine::{self, Engine, EngineInfo};
 use crate::memory::{self, MemoryPlan};
 use crate::planner::{self, Selection};
+use crate::speed::{self, SpeedEstimate};
 use llmario_core::{
     BackendKind, Config, ModelFormat, Paths, ProfileKind, RuntimeError, Speculative,
 };
@@ -120,28 +122,64 @@ impl Supervisor {
     }
 
     pub fn select(&self, name: &str) -> Result<Selection, RuntimeError> {
-        let first = planner::select(
+        let tuned = self.autotune();
+        let first = planner::select_measured(
             name,
             &self.registry.read().unwrap(),
             &self.statuses,
             &self.hw,
             &self.cfg,
             self.profile,
+            &tuned,
         );
         match first {
             Err(RuntimeError::ModelNotFound(_)) => {
                 self.reload_registry()?;
-                planner::select(
+                planner::select_measured(
                     name,
                     &self.registry.read().unwrap(),
                     &self.statuses,
                     &self.hw,
                     &self.cfg,
                     self.profile,
+                    &tuned,
                 )
             }
             other => other,
         }
+    }
+
+    /// Speeds measured on this computer (`autotune.json`).
+    pub fn autotune(&self) -> Autotune {
+        Autotune::load(&self.paths.autotune_file())
+    }
+
+    /// Decode speed for a selection: measured on this exact setup, or predicted.
+    pub fn speed(&self, sel: &Selection, tuned: &Autotune) -> Option<SpeedEstimate> {
+        let version = self
+            .statuses
+            .get(&sel.backend)
+            .and_then(|s| s.version.clone())
+            .unwrap_or_default();
+        let (draft, _) = self.draft_for(sel);
+        let spec = speed::speculative_label(
+            &sel.model,
+            sel.backend,
+            &self.cfg,
+            draft.as_ref().map(|d| d.id.as_str()),
+        );
+        let cpu = speed::cpu_bytes_per_token(&sel.model, &self.plan_memory(sel, 0));
+        speed::estimate(
+            &sel.model,
+            &sel.profile,
+            sel.backend,
+            &self.hw,
+            &self.cfg,
+            tuned,
+            &version,
+            &spec,
+            cpu,
+        )
     }
 
     /// Memory plan for a selection, accounting for engines that would stay loaded and for

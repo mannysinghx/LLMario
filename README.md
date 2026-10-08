@@ -391,6 +391,7 @@ idle_unload_secs = 0        # 0 = keep loaded
 max_restarts = 3
 kv_accounting = "per-layer" # per-layer | conservative (every layer counted as full attention)
 memory_profile = "standard" # standard | small | auto (small on 16 GB or less): smaller prompt caches
+# gpu_memory_limit_gb = 10  # cap on GPU memory the planner may use (default: detected)
 
 [backends]
 # prefer = "mlx"            # llamacpp | mlx
@@ -398,8 +399,11 @@ memory_profile = "standard" # standard | small | auto (small on 16 GB or less): 
 # server_path = "/opt/homebrew/bin/llama-server"
 # gpu_layers = 999
 kv_cache_type = "f16"       # f16 | q8_0 (8-bit KV cache: 17/32 of the memory)
-speculative = "off"         # off | ngram | mtp | draft: guess tokens ahead (same output; faster
-                            # when the answer repeats its input, can be slower on free writing)
+speculative = "auto"        # auto | off | ngram | mtp | draft: guess tokens ahead (same output).
+                            # auto = mtp for models with MTP layers (catalog ids ending in -mtp),
+                            # else off; ngram helps when answers repeat the input
+offload = "off"             # off | auto: keep part of a model in RAM for the CPU when it is too big
+                            # for the GPU but fits in memory (MoE experts first; slower)
 # draft_model = "qwen3.5-0.8b-gguf-q4_0"   # for speculative = "draft"
 # draft_tokens = 1          # tokens guessed per step (default: 1 for mtp, 3 for draft)
 extra_args = []

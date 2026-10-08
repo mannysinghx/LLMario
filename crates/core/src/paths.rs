@@ -53,6 +53,10 @@ impl Paths {
     pub fn bench_dir(&self) -> PathBuf {
         self.home.join("bench")
     }
+    /// Measured speeds on this computer (written by `bench`, read by the speed planner).
+    pub fn autotune_file(&self) -> PathBuf {
+        self.home.join("autotune.json")
+    }
     pub fn tmp_dir(&self) -> PathBuf {
         self.home.join("tmp")
     }

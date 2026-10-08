@@ -383,7 +383,7 @@ function renderInstalled() {
       name.append(b);
     }
     info.append(name);
-    const bits = [m.quantization, fmtDisk(m.sizeBytes), `needs ~${fmtMem(m.needsBytes)} of ${fmtMem(m.budgetBytes)} memory`];
+    const bits = [m.quantization, fmtDisk(m.sizeBytes), `needs ~${fmtMem(m.needsBytes)} of ${fmtMem(m.budgetBytes)} memory`, fmtSpeed(m.speed)];
     if (m.license) bits.push(m.license);
     info.append(el("div", "meta", bits.filter(Boolean).join(" · ")));
     const actions = el("div", "actions");
@@ -439,6 +439,12 @@ const TASK_LABELS = {
   "long-context": "Long context",
   small: "Small & fast",
 };
+// "~N tok/s" (measured or predicted decode speed on this computer), or null.
+function fmtSpeed(s) {
+  if (!s || !s.tokens_per_second) return null;
+  return `~${Math.round(s.tokens_per_second)} tok/s${s.measured ? " (measured)" : ""}`;
+}
+
 const lib = { query: "", task: null, fits: false, comfortable: false, works: false };
 const usable = (c) => c.backendAvailable && c.supported !== false;
 const fmtCtx = (n) => (n % 1024 === 0 ? `${n >= 1048576 ? n / 1048576 + "M" : n / 1024 + "K"}` : `${Math.round(n / 1000)}K`);
@@ -456,6 +462,7 @@ function variantRow(c, { compact = false } = {}) {
     c.quantization,
     c.approxBytes ? `${fmtDisk(c.approxBytes)} download` : null,
     c.contextMax ? `${fmtCtx(c.contextMax)} context` : null,
+    fmtSpeed(c.speed),
   ];
   line.append(el("span", null, bits.filter(Boolean).join(" · ")));
   const fit = el(
