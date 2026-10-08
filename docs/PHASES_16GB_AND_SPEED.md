@@ -613,7 +613,8 @@ the exit check run on a simulated 16 GB Mac. Not run on 16 GB hardware or on NVI
   Memory-mapped, Metal maps the whole file as one GPU buffer (over a 16 GB Mac's 10.67 GiB limit)
   and the CPU's repacked copy of its experts comes on top.
 - **Speed:** the CPU's part of each token's read counts at 15% of the published bandwidth
-  (predicted 70.0 tok/s, measured 70.7). `model fit` notes the split and that it is slower.
+  (predicted 70.0 tok/s, measured 61.2 and 70.7 in two runs). `model fit` notes the split and that
+  it is slower.
 - **Autotune:** a split run is its own setup and never stands for the machine's bandwidth. Before
   this was keyed, one split run lowered every other prediction (Qwen3.5 9B: 66 → 36 tok/s; it
   runs at 61).
@@ -628,11 +629,11 @@ gpt-oss-20b (11.28 GiB of weights) on the M4 Max with the GPU limited to a 16 GB
 |---|---:|---:|---:|
 | `offload` off | refused (13.29 GiB over the 10.67 GiB GPU limit) | – | – |
 | split, memory-mapped (first run) | 13.29 GiB | **14.75 GiB** | 69.5 tok/s |
-| split, `--load-mode none` (final) | 13.29 GiB | 12.56 GiB | 70.7 tok/s |
+| split, `--load-mode none` (two runs) | 13.29 GiB | 12.56 / 12.51 GiB | 70.7 / 61.2 tok/s |
 | all on the GPU, no limit, standard profile (Phase 6, for comparison) | 14.04 GiB | 11.51 GiB | 105.6 tok/s |
 
-**Met on the simulation:** it loads, the estimate stays above the measured peak, and decode is 70.7
-tok/s (a third slower than all on the GPU). The first run's peak exceeded the estimate; that led to
+**Met on the simulation:** it loads, the estimate stays above the measured peak, and decode is
+61–71 tok/s (a third to two fifths slower than all on the GPU; the split varies more between runs). The first run's peak exceeded the estimate; that led to
 the loading change. On a real 16 GB Mac the plan's 14 GiB budget (RAM minus 2 GiB) is the swap
 guard: a larger load is refused (unit-tested). Open: the run on 16 GB hardware, where macOS's
 own memory use decides whether 12.6 GiB stays out of swap.
