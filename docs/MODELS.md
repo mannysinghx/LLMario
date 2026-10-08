@@ -5,7 +5,7 @@ Hub and is pinned to an exact commit. Sizes are download sizes. The desktop app 
 `llmario model catalog` also show, for **your** computer, how much memory each model needs and
 whether your installed engines can run it.
 
-37 model families · 69 downloads.
+37 model families · 75 downloads.
 
 | Model | Publisher | Released | Parameters | Good at | License |
 |---|---|---|---|---|---|
@@ -86,6 +86,7 @@ Mixture-of-experts model: 35B knowledge with only 3B parameters active per token
 |---|---|---|---|---|---|
 | MLX | `qwen3.6-35b-a3b-mlx-4bit` | [mlx-community/Qwen3.6-35B-A3B-4bit](https://huggingface.co/mlx-community/Qwen3.6-35B-A3B-4bit/tree/38740b847e4cb78f352aba30aa41c76e08e6eb46) · `MLX folder` | 4-bit (group 64) | 20.4 GB | 256K |
 | llama.cpp | `qwen3.6-35b-a3b-gguf-q4km` | [ggml-org/Qwen3.6-35B-A3B-GGUF](https://huggingface.co/ggml-org/Qwen3.6-35B-A3B-GGUF/tree/baec3ebee244827cda0f4557eafa8b28f7545fa6) · `Qwen3.6-35B-A3B-Q4_K_M.gguf` | Q4_K_M | 20.4 GB | 256K |
+| llama.cpp (MTP) | `qwen3.6-35b-a3b-gguf-q4km-mtp` | [unsloth/Qwen3.6-35B-A3B-MTP-GGUF](https://huggingface.co/unsloth/Qwen3.6-35B-A3B-MTP-GGUF/tree/5bc3e238d916f48a861bac2f8a1990a0e9b7e98d) · `Qwen3.6-35B-A3B-UD-Q4_K_M.gguf` | Q4_K_M | 22.7 GB | 256K |
 
 Download: `llmario model pull qwen3.6-35b-a3b` (best variant for your machine) or pick an id above.
 
@@ -100,6 +101,7 @@ Dense 27B general model from the Qwen3.6 generation; steady all-rounder for writ
 |---|---|---|---|---|---|
 | MLX | `qwen3.6-27b-mlx-4bit` | [mlx-community/Qwen3.6-27B-4bit](https://huggingface.co/mlx-community/Qwen3.6-27B-4bit/tree/c000ac2c2057d94be3fa931000c31723aac53282) · `MLX folder` | 4-bit (group 64) | 16.1 GB | 256K |
 | llama.cpp | `qwen3.6-27b-gguf-q4km` | [unsloth/Qwen3.6-27B-GGUF](https://huggingface.co/unsloth/Qwen3.6-27B-GGUF/tree/82d411acf4a06cfb8d9b073a5211bf410bfc29bf) · `Qwen3.6-27B-Q4_K_M.gguf` | Q4_K_M | 16.8 GB | 256K |
+| llama.cpp (MTP) | `qwen3.6-27b-gguf-q4km-mtp` | [unsloth/Qwen3.6-27B-MTP-GGUF](https://huggingface.co/unsloth/Qwen3.6-27B-MTP-GGUF/tree/5cb35eb3dcbf52dbce5f87dbc64df6aaffadcace) · `Qwen3.6-27B-Q4_K_M.gguf` | Q4_K_M | 17.1 GB | 256K |
 
 Download: `llmario model pull qwen3.6-27b` (best variant for your machine) or pick an id above.
 
@@ -114,6 +116,7 @@ Efficient 9B model covering 201 languages, with good reasoning and coding for it
 |---|---|---|---|---|---|
 | MLX | `qwen3.5-9b-mlx-4bit` | [mlx-community/Qwen3.5-9B-4bit](https://huggingface.co/mlx-community/Qwen3.5-9B-4bit/tree/8b2b98c00a6b4d291155e4890773ca8f769aee53) · `MLX folder` | 4-bit (group 64) | 6.0 GB | 256K |
 | llama.cpp | `qwen3.5-9b-gguf-q4km` | [unsloth/Qwen3.5-9B-GGUF](https://huggingface.co/unsloth/Qwen3.5-9B-GGUF/tree/3885219b6810b007914f3a7950a8d1b469d598a5) · `Qwen3.5-9B-Q4_K_M.gguf` | Q4_K_M | 5.7 GB | 256K |
+| llama.cpp (MTP) | `qwen3.5-9b-gguf-q4km-mtp` | [unsloth/Qwen3.5-9B-MTP-GGUF](https://huggingface.co/unsloth/Qwen3.5-9B-MTP-GGUF/tree/9716a636ee4bddc3fed678220b7a33dd2a4160ae) · `Qwen3.5-9B-Q4_K_M.gguf` | Q4_K_M | 5.9 GB | 256K |
 
 Download: `llmario model pull qwen3.5-9b` (best variant for your machine) or pick an id above.
 
@@ -128,6 +131,7 @@ Compact Qwen3.5 model for small laptops: quick answers, summaries and light codi
 |---|---|---|---|---|---|
 | MLX | `qwen3.5-4b-mlx-4bit` | [mlx-community/Qwen3.5-4B-4bit](https://huggingface.co/mlx-community/Qwen3.5-4B-4bit/tree/0e7ffd5c629ef7719d4cbc04069232580bfa9d9c) · `MLX folder` | 4-bit (group 64) | 3.1 GB | 256K |
 | llama.cpp | `qwen3.5-4b-gguf-q4km` | [unsloth/Qwen3.5-4B-GGUF](https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/tree/e87f176479d0855a907a41277aca2f8ee7a09523) · `Qwen3.5-4B-Q4_K_M.gguf` | Q4_K_M | 2.7 GB | 256K |
+| llama.cpp (MTP) | `qwen3.5-4b-gguf-q4km-mtp` | [unsloth/Qwen3.5-4B-MTP-GGUF](https://huggingface.co/unsloth/Qwen3.5-4B-MTP-GGUF/tree/86835bf9949e4d14d6860f7910b1340ad4f271a9) · `Qwen3.5-4B-Q4_K_M.gguf` | Q4_K_M | 2.8 GB | 256K |
 
 Download: `llmario model pull qwen3.5-4b` (best variant for your machine) or pick an id above.
 
@@ -142,6 +146,7 @@ Small and fast; good for simple chat, rewriting and classification on any machin
 |---|---|---|---|---|---|
 | MLX | `qwen3.5-2b-mlx-4bit` | [mlx-community/Qwen3.5-2B-4bit](https://huggingface.co/mlx-community/Qwen3.5-2B-4bit/tree/674aaa7240b91e8012fcad5d791b7dfe5ba90207) · `MLX folder` | 4-bit (group 64) | 1.7 GB | 256K |
 | llama.cpp | `qwen3.5-2b-gguf-q4km` | [unsloth/Qwen3.5-2B-GGUF](https://huggingface.co/unsloth/Qwen3.5-2B-GGUF/tree/f6d5376be1edb4d416d56da11e5397a961aca8ae) · `Qwen3.5-2B-Q4_K_M.gguf` | Q4_K_M | 1.3 GB | 256K |
+| llama.cpp (MTP) | `qwen3.5-2b-gguf-q4km-mtp` | [unsloth/Qwen3.5-2B-MTP-GGUF](https://huggingface.co/unsloth/Qwen3.5-2B-MTP-GGUF/tree/e05864f8066d874d5f85aaff007ae57a2a7d1efe) · `Qwen3.5-2B-Q4_K_M.gguf` | Q4_K_M | 1.3 GB | 256K |
 
 Download: `llmario model pull qwen3.5-2b` (best variant for your machine) or pick an id above.
 
@@ -156,6 +161,7 @@ Tiny model for testing, embedded use and very low-memory devices. Expect simple 
 |---|---|---|---|---|---|
 | MLX | `qwen3.5-0.8b-mlx-4bit` | [mlx-community/Qwen3.5-0.8B-4bit](https://huggingface.co/mlx-community/Qwen3.5-0.8B-4bit/tree/da28692b5f139cb0ec58a356b437486b7dac7462) · `MLX folder` | 4-bit (group 64) | 0.7 GB | 256K |
 | llama.cpp | `qwen3.5-0.8b-gguf-q4_0` | [ggml-org/Qwen3.5-0.8B-GGUF](https://huggingface.co/ggml-org/Qwen3.5-0.8B-GGUF/tree/8fea620810c4afa23dd6443f999a48574c1611a3) · `Qwen3.5-0.8B-Q4_0.gguf` | Q4_0 | 0.6 GB | 256K |
+| llama.cpp (MTP) | `qwen3.5-0.8b-gguf-q4km-mtp` | [unsloth/Qwen3.5-0.8B-MTP-GGUF](https://huggingface.co/unsloth/Qwen3.5-0.8B-MTP-GGUF/tree/cf8a611f6ed2c2060046219a19f12cd3d5ecd67c) · `Qwen3.5-0.8B-Q4_K_M.gguf` | Q4_K_M | 0.5 GB | 256K |
 
 Download: `llmario model pull qwen3.5-0.8b` (best variant for your machine) or pick an id above.
 

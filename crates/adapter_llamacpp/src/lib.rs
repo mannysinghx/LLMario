@@ -10,13 +10,16 @@
 //! | prefix reuse         | `--cache-reuse 256`   |
 //! Host-side prompt cache is capped with `--cache-ram` so it is inside the memory estimate
 //! (smaller with `memory_profile = "small"`). `backends.llamacpp.kv_cache_type` sets `-ctk`/`-ctv`.
+//! `backends.llamacpp.speculative` sets `--spec-type` (n-gram, the model's MTP layers, or a draft
+//! model); a quantized KV cache applies to the draft's cache too.
 //! Context checkpoints (copies of sliding-window caches and recurrent state, kept so a prompt
 //! prefix can be reused) are capped with `--ctx-checkpoints` and counted too.
 
 use llmario_core::os::background_command;
-use llmario_core::{BackendKind, Config, ModelFormat, ResolvedProfile, RuntimeError};
+use llmario_core::{BackendKind, Config, ModelFormat, ResolvedProfile, RuntimeError, Speculative};
 use llmario_hardware::HardwareReport;
 use llmario_supervisor::adapter::{which, BackendStatus, EngineAdapter, LaunchContext, LaunchSpec};
+use llmario_supervisor::memory::MTP_DEFAULT_DRAFT_TOKENS;
 use std::path::PathBuf;
 
 pub const TESTED_BUILD: u32 = 11146;
@@ -200,7 +203,8 @@ impl EngineAdapter for LlamaCppAdapter {
             "--no-webui".into(),
         ];
         let kv = lcfg.kv_cache_type;
-        if kv != llmario_core::KvCacheType::F16 {
+        let quantized = kv != llmario_core::KvCacheType::F16;
+        if quantized {
             // A quantized V cache needs flash attention; llama.cpp turns it on with `auto`.
             args.extend([
                 "-ctk".into(),
@@ -208,6 +212,55 @@ impl EngineAdapter for LlamaCppAdapter {
                 "-ctv".into(),
                 kv.as_arg().into(),
             ]);
+        }
+        let draft_cache = |args: &mut Vec<String>| {
+            if quantized {
+                args.extend([
+                    "-ctkd".into(),
+                    kv.as_arg().into(),
+                    "-ctvd".into(),
+                    kv.as_arg().into(),
+                ]);
+            }
+        };
+        match lcfg.speculative {
+            Speculative::Off => {}
+            Speculative::Ngram => args.extend(["--spec-type".into(), "ngram-simple".into()]),
+            Speculative::Mtp => {
+                if ctx.model.shape.as_ref().is_some_and(|s| s.mtp_layers > 0) {
+                    let n = lcfg.draft_tokens.unwrap_or(MTP_DEFAULT_DRAFT_TOKENS);
+                    args.extend([
+                        "--spec-type".into(),
+                        "draft-mtp".into(),
+                        "--spec-draft-n-max".into(),
+                        n.to_string(),
+                    ]);
+                    draft_cache(&mut args);
+                } else {
+                    notes.push(
+                        "speculative = \"mtp\", but this model has no MTP layers; running without speculation"
+                            .into(),
+                    );
+                }
+            }
+            Speculative::Draft => match ctx.draft {
+                Some(d) => {
+                    args.extend([
+                        "--spec-type".into(),
+                        "draft-simple".into(),
+                        "--spec-draft-model".into(),
+                        d.path.display().to_string(),
+                    ]);
+                    if let Some(n) = lcfg.draft_tokens {
+                        args.extend(["--spec-draft-n-max".into(), n.to_string()]);
+                    }
+                    draft_cache(&mut args);
+                }
+                None => notes.push(
+                    "speculative = \"draft\", but no usable draft model; running without speculation"
+                        .into(),
+                ),
+            },
         }
         args.extend(lcfg.extra_args.iter().cloned());
         Ok(LaunchSpec {
@@ -381,6 +434,7 @@ mod tests {
                 context_max: None,
                 kv_groups: vec![group(8, 1, 512, None), group(40, 8, 256, Some(1024))],
                 state_bytes_per_seq: 0,
+                mtp_layers: 0,
             }),
             chat_template: true,
             files: vec![FileRecord {
@@ -469,6 +523,7 @@ mod tests {
                 memory: &plan,
                 status: &status,
                 port: 1,
+                draft: None,
             };
             (
                 LlamaCppAdapter.launch(&ctx).unwrap().args,
@@ -495,6 +550,97 @@ mod tests {
         // `auto` keeps the standard reserves on a larger machine.
         let (big, _) = launch(&mac(64), &cfg);
         assert_eq!(flag(&big, "--cache-ram").as_deref(), Some("1024"));
+    }
+
+    /// Each `speculative` mode reaches llama-server's flags; modes that cannot apply run without
+    /// speculation and say why.
+    #[test]
+    fn speculative_modes_reach_the_launch() {
+        use llmario_core::{KvCacheType, Speculative};
+        let cat = llmario_registry::Catalog::builtin();
+        let plain = cat.get("qwen3.5-9b-gguf-q4km").unwrap().planning_entry();
+        let mtp = cat
+            .get("qwen3.5-9b-gguf-q4km-mtp")
+            .unwrap()
+            .planning_entry();
+        let mut draft = cat.get("qwen3.5-0.8b-gguf-q4_0").unwrap().planning_entry();
+        draft.path = "/models/draft.gguf".into();
+        let p = ResolvedProfile::resolve(llmario_core::ProfileKind::Latency, None);
+        let hw = mac(16);
+        let status = BackendStatus {
+            kind: BackendKind::LlamaCpp,
+            available: true,
+            path: Some("/usr/bin/llama-server".into()),
+            version: None,
+            tested_version: String::new(),
+            detail: String::new(),
+            architectures: None,
+        };
+        let launch = |m: &llmario_registry::ModelEntry,
+                      d: Option<&llmario_registry::ModelEntry>,
+                      cfg: &Config| {
+            let plan =
+                llmario_supervisor::memory::estimate(m, &p, BackendKind::LlamaCpp, &hw, cfg, 0, 0);
+            let ctx = LaunchContext {
+                model: m,
+                profile: &p,
+                hw: &hw,
+                cfg,
+                memory: &plan,
+                status: &status,
+                port: 1,
+                draft: d,
+            };
+            LlamaCppAdapter.launch(&ctx).unwrap()
+        };
+        let flag = |a: &[String], f: &str| a.iter().position(|x| x == f).map(|i| a[i + 1].clone());
+        let mut cfg = Config::default();
+        assert!(
+            flag(&launch(&plain, None, &cfg).args, "--spec-type").is_none(),
+            "off by default"
+        );
+
+        cfg.backends.llamacpp.speculative = Speculative::Ngram;
+        assert_eq!(
+            flag(&launch(&plain, None, &cfg).args, "--spec-type").as_deref(),
+            Some("ngram-simple")
+        );
+
+        cfg.backends.llamacpp.speculative = Speculative::Mtp;
+        let s = launch(&mtp, None, &cfg);
+        assert_eq!(flag(&s.args, "--spec-type").as_deref(), Some("draft-mtp"));
+        assert_eq!(
+            flag(&s.args, "--spec-draft-n-max").as_deref(),
+            Some("1"),
+            "LLMario's MTP default"
+        );
+        let s = launch(&plain, None, &cfg);
+        assert!(flag(&s.args, "--spec-type").is_none());
+        assert!(s.notes.iter().any(|n| n.contains("no MTP layers")));
+
+        cfg.backends.llamacpp.speculative = Speculative::Draft;
+        cfg.backends.llamacpp.draft_tokens = Some(2);
+        cfg.backends.llamacpp.kv_cache_type = KvCacheType::Q8_0;
+        let s = launch(&plain, Some(&draft), &cfg);
+        assert_eq!(
+            flag(&s.args, "--spec-type").as_deref(),
+            Some("draft-simple")
+        );
+        assert_eq!(
+            flag(&s.args, "--spec-draft-model").as_deref(),
+            Some("/models/draft.gguf")
+        );
+        assert_eq!(flag(&s.args, "--spec-draft-n-max").as_deref(), Some("2"));
+        assert_eq!(
+            flag(&s.args, "-ctkd").as_deref(),
+            Some("q8_0"),
+            "the draft cache follows kv_cache_type"
+        );
+        let s = launch(&plain, None, &cfg);
+        assert!(
+            flag(&s.args, "--spec-type").is_none()
+                && s.notes.iter().any(|n| n.contains("no usable draft"))
+        );
     }
 
     #[test]

@@ -50,6 +50,8 @@ pub struct LaunchContext<'a> {
     pub memory: &'a MemoryPlan,
     pub status: &'a BackendStatus,
     pub port: u16,
+    /// Draft model for speculative decoding, already checked by `Supervisor::draft_for`.
+    pub draft: Option<&'a ModelEntry>,
 }
 
 #[derive(Clone, Debug)]

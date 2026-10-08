@@ -11,7 +11,7 @@
 //! attention, so the estimate never drops below what the engine allocates.
 
 use llmario_core::{
-    BackendKind, Config, KvAccounting, KvCacheType, MemoryProfile, ResolvedProfile,
+    BackendKind, Config, KvAccounting, KvCacheType, MemoryProfile, ResolvedProfile, Speculative,
 };
 use llmario_hardware::{GpuApi, HardwareReport};
 use llmario_registry::ModelEntry;
@@ -27,6 +27,90 @@ const MLX_PREFILL_STEP: u64 = 2048;
 /// Machines with this much memory or less count as small (`memory_profile = "auto"`) and get a
 /// comfortable target below the hard budget.
 pub const SMALL_MACHINE_RAM: u64 = 16 * GIB;
+
+/// Compute buffers of llama.cpp's MTP draft context (measured 129 MiB on Qwen3.5 9B; rounded up).
+const MTP_COMPUTE_BYTES: u64 = 160 * MIB;
+/// Fixed compute/runtime floor for a separate draft model (measured 66 MiB of compute buffers for
+/// Qwen3.5 0.8B in llama.cpp), on top of a share of its weights.
+const DRAFT_FLOOR_BYTES: u64 = 128 * MIB;
+
+/// Tokens llama.cpp drafts per step for `speculative = "mtp"` unless `draft_tokens` is set.
+pub const MTP_DEFAULT_DRAFT_TOKENS: u32 = 1;
+
+/// Memory speculative decoding adds to the main model's plan, with a note for the plan. `draft`
+/// is the resolved draft model (see `Supervisor::draft_for`). Measured on llama.cpp build 11146
+/// (Qwen3.5 9B, 8k context):
+/// - n-gram: nothing.
+/// - MTP: llama.cpp keeps one extra copy of the recurrent state per drafted token so a rejected
+///   guess can be rolled back (1 token: 50 → 100 MiB; 3 tokens: → 201 MiB), a KV cache for the
+///   MTP layers over the full context (32 MiB), and compute buffers (129 MiB). The MTP layers'
+///   weights are part of the model file and already counted.
+/// - Draft model: its weights, its own KV cache and state (96 + 19 MiB for Qwen3.5 0.8B, as
+///   planned by `kv_plan`), and compute buffers (66 MiB). No extra state copies.
+pub fn speculative_bytes(
+    model: &ModelEntry,
+    draft: Option<&ModelEntry>,
+    profile: &ResolvedProfile,
+    backend: BackendKind,
+    cfg: &Config,
+) -> (u64, Option<String>) {
+    let draft_cost = |d: &ModelEntry| {
+        let w = d.weight_bytes();
+        w + kv_plan(d, profile, backend, cfg).total + w / 12 + DRAFT_FLOOR_BYTES
+    };
+    let with_draft = |d: &ModelEntry| {
+        let bytes = draft_cost(d);
+        (
+            bytes,
+            Some(format!(
+                "speculative decoding: draft model {} (+{})",
+                d.id,
+                fmt_bytes(bytes)
+            )),
+        )
+    };
+    match backend {
+        BackendKind::LlamaCpp => match cfg.backends.llamacpp.speculative {
+            Speculative::Off => (0, None),
+            Speculative::Ngram => (
+                0,
+                Some("speculative decoding: n-gram (no extra memory)".into()),
+            ),
+            Speculative::Mtp => {
+                let Some(s) = model.shape.as_ref().filter(|s| s.mtp_layers > 0) else {
+                    return (
+                        0,
+                        Some("speculative = \"mtp\", but this model has no MTP layers; running without speculation".into()),
+                    );
+                };
+                let n = cfg
+                    .backends
+                    .llamacpp
+                    .draft_tokens
+                    .unwrap_or(MTP_DEFAULT_DRAFT_TOKENS)
+                    .max(1) as u64;
+                let state = s.state_bytes_per_seq * profile.parallel.max(1) as u64 * n;
+                let f16_kv = 2
+                    * s.mtp_layers as u64
+                    * s.n_kv_heads as u64
+                    * s.head_dim as u64
+                    * KV_ELEM_BYTES
+                    * profile.total_ctx();
+                let bytes = state + kv_cache_bytes(f16_kv, backend, cfg) + MTP_COMPUTE_BYTES;
+                (
+                    bytes,
+                    Some(format!(
+                        "speculative decoding: MTP, {n} token(s) per step (+{})",
+                        fmt_bytes(bytes)
+                    )),
+                )
+            }
+            Speculative::Draft => draft.map(with_draft).unwrap_or((0, None)),
+        },
+        BackendKind::Mlx => draft.map(with_draft).unwrap_or((0, None)),
+        _ => (0, None),
+    }
+}
 
 /// Whether the small memory profile applies (`runtime.memory_profile`).
 pub fn small_machine(hw: &HardwareReport, cfg: &Config) -> bool {
@@ -433,6 +517,7 @@ pub(crate) mod tests {
                 context_max: Some(40960),
                 kv_groups: vec![],
                 state_bytes_per_seq: 0,
+                mtp_layers: 0,
             }),
             chat_template: true,
             files: vec![FileRecord {
@@ -711,6 +796,50 @@ pub(crate) mod tests {
             0,
         );
         assert!(big.comfortable_bytes.is_none() && !big.tight);
+    }
+
+    /// Speculative decoding costs as llama.cpp allocated them (Qwen3.5 9B, 8192 context).
+    #[test]
+    fn speculative_memory_matches_llama_cpp() {
+        let mut cfg = Config::default();
+        let mut q = layered(33, vec![group(8, 4, 256, None)], 52_690_944);
+        let p = latency();
+        assert_eq!(
+            speculative_bytes(&q, None, &p, BackendKind::LlamaCpp, &cfg).0,
+            0,
+            "off"
+        );
+        cfg.backends.llamacpp.speculative = Speculative::Ngram;
+        assert_eq!(
+            speculative_bytes(&q, None, &p, BackendKind::LlamaCpp, &cfg).0,
+            0,
+            "n-gram"
+        );
+        cfg.backends.llamacpp.speculative = Speculative::Mtp;
+        let (none, note) = speculative_bytes(&q, None, &p, BackendKind::LlamaCpp, &cfg);
+        assert!(none == 0 && note.unwrap().contains("no MTP layers"));
+        q.shape.as_mut().unwrap().mtp_layers = 1;
+        // 1 drafted token: one extra state copy (50.25 MiB) + MTP KV 32 MiB + 160 MiB compute.
+        let (b, note) = speculative_bytes(&q, None, &p, BackendKind::LlamaCpp, &cfg);
+        assert_eq!(b, 52_690_944 + 32 * MIB_ + 160 * MIB_);
+        assert!(note.unwrap().contains("1 token(s)"));
+        // 3 drafted tokens keep 3 extra copies (llama.cpp: 201 MiB of state in total).
+        cfg.backends.llamacpp.draft_tokens = Some(3);
+        assert_eq!(
+            speculative_bytes(&q, None, &p, BackendKind::LlamaCpp, &cfg).0,
+            3 * 52_690_944 + 32 * MIB_ + 160 * MIB_
+        );
+        // Draft model: weights + its own KV and state + a share of its weights + floor.
+        cfg.backends.llamacpp.speculative = Speculative::Draft;
+        let d = layered(24, vec![group(6, 2, 256, None)], 20_201_472);
+        let w = d.weight_bytes();
+        let (b, note) = speculative_bytes(&q, Some(&d), &p, BackendKind::LlamaCpp, &cfg);
+        assert_eq!(b, w + 96 * MIB_ + 20_201_472 + w / 12 + 128 * MIB_);
+        assert!(note.unwrap().contains("draft model"));
+        assert_eq!(
+            speculative_bytes(&q, None, &p, BackendKind::LlamaCpp, &cfg).0,
+            0
+        );
     }
 
     fn metal(ws_gib: u64) -> GpuInfo {

@@ -8,6 +8,9 @@
 # build from mlx-community. Models that need datacenter hardware (DeepSeek V4, GLM-5.x, Qwen3.8
 # 2.4T) and experimental quantizations that need forked engines are left out.
 #
+# `gguf_mtp` lists GGUF builds that keep the model's multi-token-prediction (MTP) layers, used as a
+# built-in draft for speculative decoding (llama.cpp `--spec-type draft-mtp`).
+#
 # Candidate repos are tried in order; the first that exists wins. Variants that cannot be verified
 # are dropped from the generated catalog and reported.
 
@@ -22,6 +25,7 @@ summary = "Qwen's most capable open model (Aug 2026): strong at coding, research
 notes = "Vision-language model; LLMario uses its text abilities."
 gguf = ["ggml-org/Qwen3.8-27B-GGUF", "unsloth/Qwen3.8-27B-GGUF", "lmstudio-community/Qwen3.8-27B-GGUF"]
 mlx = ["mlx-community/Qwen3.8-27B-4bit"]
+
 
 [[family]]
 id = "qwen3.8-flash-next"
@@ -45,6 +49,7 @@ tasks = ["chat", "reasoning", "coding", "agents", "multilingual"]
 summary = "Mixture-of-experts model: 35B knowledge with only 3B parameters active per token, so it answers much faster than dense models of similar quality."
 notes = "Vision-language model; LLMario uses its text abilities."
 gguf = ["ggml-org/Qwen3.6-35B-A3B-GGUF", "unsloth/Qwen3.6-35B-A3B-GGUF"]
+gguf_mtp = ["unsloth/Qwen3.6-35B-A3B-MTP-GGUF"]
 mlx = ["mlx-community/Qwen3.6-35B-A3B-4bit"]
 
 [[family]]
@@ -57,7 +62,9 @@ tasks = ["chat", "reasoning", "coding", "multilingual"]
 summary = "Dense 27B general model from the Qwen3.6 generation; steady all-rounder for writing, analysis and code."
 notes = "Vision-language model; LLMario uses its text abilities."
 gguf = ["unsloth/Qwen3.6-27B-GGUF", "ggml-org/Qwen3.6-27B-GGUF"]
+gguf_mtp = ["unsloth/Qwen3.6-27B-MTP-GGUF"]
 mlx = ["mlx-community/Qwen3.6-27B-4bit"]
+
 
 [[family]]
 id = "qwen3.5-9b"
@@ -69,6 +76,7 @@ tasks = ["chat", "reasoning", "coding", "multilingual"]
 summary = "Efficient 9B model covering 201 languages, with good reasoning and coding for its size. A strong default for mid-range laptops."
 notes = "Vision-language model; LLMario uses its text abilities."
 gguf = ["unsloth/Qwen3.5-9B-GGUF", "ggml-org/Qwen3.5-9B-GGUF"]
+gguf_mtp = ["unsloth/Qwen3.5-9B-MTP-GGUF"]
 mlx = ["mlx-community/Qwen3.5-9B-4bit"]
 
 [[family]]
@@ -81,6 +89,7 @@ tasks = ["chat", "reasoning", "multilingual", "small"]
 summary = "Compact Qwen3.5 model for small laptops: quick answers, summaries and light coding help."
 notes = "Vision-language model; LLMario uses its text abilities."
 gguf = ["unsloth/Qwen3.5-4B-GGUF", "ggml-org/Qwen3.5-4B-GGUF"]
+gguf_mtp = ["unsloth/Qwen3.5-4B-MTP-GGUF"]
 mlx = ["mlx-community/Qwen3.5-4B-4bit"]
 
 [[family]]
@@ -93,6 +102,7 @@ tasks = ["chat", "multilingual", "small"]
 summary = "Small and fast; good for simple chat, rewriting and classification on any machine."
 notes = "Vision-language model; LLMario uses its text abilities."
 gguf = ["unsloth/Qwen3.5-2B-GGUF", "ggml-org/Qwen3.5-2B-GGUF"]
+gguf_mtp = ["unsloth/Qwen3.5-2B-MTP-GGUF"]
 mlx = ["mlx-community/Qwen3.5-2B-4bit"]
 
 [[family]]
@@ -105,6 +115,7 @@ tasks = ["chat", "small"]
 summary = "Tiny model for testing, embedded use and very low-memory devices. Expect simple answers."
 notes = "Vision-language model; LLMario uses its text abilities."
 gguf = ["ggml-org/Qwen3.5-0.8B-GGUF", "unsloth/Qwen3.5-0.8B-GGUF"]
+gguf_mtp = ["unsloth/Qwen3.5-0.8B-MTP-GGUF"]
 mlx = ["mlx-community/Qwen3.5-0.8B-4bit"]
 
 [[family]]
@@ -165,6 +176,7 @@ summary = "Mixture-of-experts Gemma 4: near-31B quality at the speed of a 4B mod
 notes = "Multimodal model; LLMario uses its text abilities."
 gguf = ["ggml-org/gemma-4-26B-A4B-it-GGUF", "google/gemma-4-26B-A4B-it-qat-q4_0-gguf"]
 mlx = ["mlx-community/gemma-4-26B-A4B-it-4bit", "mlx-community/gemma-4-26b-a4b-it-4bit"]
+
 
 [[family]]
 id = "gemma-4-12b"
@@ -259,6 +271,7 @@ notes = "Includes a small vision encoder; LLMario uses text."
 gguf = ["mistralai/Ministral-3-14B-Instruct-2512-GGUF", "unsloth/Ministral-3-14B-Instruct-2512-GGUF", "bartowski/mistralai_Ministral-3-14B-Instruct-2512-GGUF"]
 mlx = ["mlx-community/Ministral-3-14B-Instruct-2512-4bit"]
 
+
 [[family]]
 id = "devstral-small-2-24b"
 name = "Devstral Small 2 24B"
@@ -269,6 +282,7 @@ tasks = ["coding", "agents"]
 summary = "Agentic coding model: explores codebases, edits multiple files and powers software-engineering agents."
 gguf = ["unsloth/Devstral-Small-2-24B-Instruct-2512-GGUF", "mistralai/Devstral-Small-2-24B-Instruct-2512-GGUF", "bartowski/mistralai_Devstral-Small-2-24B-Instruct-2512-GGUF"]
 mlx = ["mlx-community/Devstral-Small-2-24B-Instruct-2512-4bit"]
+
 
 [[family]]
 id = "mistral-small-3.2-24b"
@@ -281,6 +295,7 @@ summary = "Reliable general assistant with strong instruction following and func
 gguf = ["unsloth/Mistral-Small-3.2-24B-Instruct-2506-GGUF", "bartowski/mistralai_Mistral-Small-3.2-24B-Instruct-2506-GGUF"]
 mlx = ["mlx-community/Mistral-Small-3.2-24B-Instruct-2506-4bit"]
 
+
 [[family]]
 id = "phi-4"
 name = "Phi-4 14B"
@@ -291,6 +306,7 @@ tasks = ["chat", "reasoning", "coding"]
 summary = "Trained heavily on high-quality synthetic data; excellent at math and logic for its size. MIT licensed."
 gguf = ["microsoft/phi-4-gguf", "bartowski/phi-4-GGUF", "unsloth/phi-4-GGUF"]
 mlx = ["mlx-community/phi-4-4bit"]
+
 
 [[family]]
 id = "phi-4-mini"

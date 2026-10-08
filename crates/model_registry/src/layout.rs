@@ -62,12 +62,14 @@ fn per_layer(md: &GgufMetadata, arch: &str, key: &str, n: usize) -> Option<Vec<i
     }
 }
 
-/// Layout from a GGUF header (`n_layers`, `default_heads`, `default_dim` from the shape).
+/// Layout from a GGUF header (`n_layers`, `default_heads`, `default_dim` from the shape). The last
+/// `{arch}.nextn_predict_layers` blocks are MTP draft layers, not part of the main model's cache.
 pub fn from_gguf(md: &GgufMetadata, n_layers: u32, default_heads: u32, default_dim: u32) -> Layout {
     let Some(arch) = md.architecture() else {
         return NONE;
     };
     let n = n_layers as usize;
+    let main_layers = n.saturating_sub(md.arch_u64("nextn_predict_layers").unwrap_or(0) as usize);
     let u = |k: &str| md.arch_u64(k).map(|v| v as u32);
     let heads = per_layer(md, arch, "attention.head_count_kv", n)
         .unwrap_or_else(|| vec![default_heads as i64; n]);
@@ -89,7 +91,7 @@ pub fn from_gguf(md: &GgufMetadata, n_layers: u32, default_heads: u32, default_d
     let interval = u("full_attention_interval").filter(|i| *i > 0);
 
     let mut layers = Vec::with_capacity(n);
-    for (i, &h) in heads.iter().enumerate() {
+    for (i, &h) in heads.iter().enumerate().take(main_layers) {
         let attention = interval.is_none_or(|iv| (i as u32 + 1).is_multiple_of(iv)) && h > 0;
         if !attention {
             layers.push(Layer::Recurrent);
@@ -244,6 +246,30 @@ mod tests {
         );
         assert_eq!(
             from_gguf(&m, 32, 4, 256),
+            (vec![g(8, 4, 256, None)], 52_690_944)
+        );
+    }
+
+    /// MTP builds add `nextn_predict_layers` blocks after the main ones (Qwen3.5 9B MTP: 33 blocks,
+    /// 1 nextn); the main layout is the same as the plain build's.
+    #[test]
+    fn mtp_layers_are_not_part_of_the_main_layout() {
+        let m = md(
+            "qwen35",
+            &[
+                ("attention.head_count_kv", Value::Uint(4)),
+                ("attention.key_length", Value::Uint(256)),
+                ("attention.value_length", Value::Uint(256)),
+                ("full_attention_interval", Value::Uint(4)),
+                ("nextn_predict_layers", Value::Uint(1)),
+                ("ssm.conv_kernel", Value::Uint(4)),
+                ("ssm.state_size", Value::Uint(128)),
+                ("ssm.group_count", Value::Uint(16)),
+                ("ssm.inner_size", Value::Uint(4096)),
+            ],
+        );
+        assert_eq!(
+            from_gguf(&m, 33, 4, 256),
             (vec![g(8, 4, 256, None)], 52_690_944)
         );
     }
