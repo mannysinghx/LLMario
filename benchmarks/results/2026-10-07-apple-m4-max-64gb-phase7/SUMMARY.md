@@ -20,6 +20,7 @@ The planner keeps the MoE experts of 8 of 24 layers (3.16 GiB) in RAM for the CP
 |---|---|---:|---:|---:|---:|
 | [044929Z](20261008T044929Z-gpt-oss-20b-gguf-mxfp4.md) | memory-mapped (llama.cpp default) | 13.29 GiB | **14.75 GiB** | 69.5 tok/s | 4.2 |
 | [060948Z](20261008T060948Z-gpt-oss-20b-gguf-mxfp4.md) | `--load-mode none` (LLMario now) | 13.29 GiB | 12.56 GiB | 70.7 tok/s | 5.0 |
+| [062104Z](20261008T062104Z-gpt-oss-20b-gguf-mxfp4.md) | `--load-mode none`, after the autotune fix (bb7bfeb) | 13.29 GiB | 12.51 GiB | 61.2 tok/s | 4.8 |
 
 With `offload` off, the same configuration refuses the model (13.29 GiB over the 10.67 GiB GPU
 limit). All on the GPU with no limit (Phase 6, standard profile): 105.6 tok/s, peak 11.51 GiB.
@@ -35,8 +36,16 @@ limit). All on the GPU with no limit (Phase 6, standard profile): 105.6 tok/s, p
 - **Cold start:** 36.7 s and 4.7 s. Loading the weights took 35.8 s memory-mapped and 3.6 s with
   `--load-mode none` (engine log). The file sits on an external SSD and whether it was in the OS
   file cache for each run was not checked, so this is not a clean comparison.
+- **The split's speed varied:** 70.7 and 61.2 tok/s in two runs with the same settings, eleven
+  minutes apart, at similar load averages (5.0 and 4.8). macOS background indexing was using 60–70%
+  of a CPU core when checked shortly before; the CPU's share of the work competing with it would
+  explain the spread, but that was not verified. For comparison, gpt-oss-20b all on the GPU measured
+  102.5 and 105.6 tok/s in the Phase 4 and Phase 6 runs.
 - **Speed prediction:** the CPU's 404 MiB per token at 15% of 546 GB/s gives 70.0 tok/s, against
-  70.7 measured.
+  61.2–70.7 measured (−1% to +14%, inside the ±20% target).
+- **Autotune check (062104Z):** the fixed build recorded this run as `cpu-moe:8`, and other models'
+  predictions stayed on the published bandwidth (Qwen3.5 9B ~66 tok/s, Gemma 4 12B ~51 tok/s);
+  before the fix a split run lowered Qwen3.5 9B to ~36.
 - **Swap:** this machine has 64 GB, so these runs cannot show swapping. On a real 16 GB Mac the
   plan's budget is 14 GiB (RAM minus 2 GiB of headroom), and a 12.6 GiB peak leaves little for
   other apps. The run on 16 GB hardware is still to do.
