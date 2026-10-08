@@ -439,7 +439,7 @@ const TASK_LABELS = {
   "long-context": "Long context",
   small: "Small & fast",
 };
-const lib = { query: "", task: null, fits: false, works: false };
+const lib = { query: "", task: null, fits: false, comfortable: false, works: false };
 const usable = (c) => c.backendAvailable && c.supported !== false;
 const fmtCtx = (n) => (n % 1024 === 0 ? `${n >= 1048576 ? n / 1048576 + "M" : n / 1024 + "K"}` : `${Math.round(n / 1000)}K`);
 const pullPct = (p) => (p.totalBytes ? Math.min(100, (100 * p.doneBytes) / p.totalBytes) : 0);
@@ -467,6 +467,11 @@ function variantRow(c, { compact = false } = {}) {
   );
   if (c.fits && c.tight) fit.title = "Fits, but uses most of this computer's memory. Close other apps before loading it.";
   line.append(fit);
+  if (c.mtp) {
+    const b = el("span", "badge accent", "MTP");
+    b.title = "Includes multi-token-prediction layers: faster with speculative decoding (backends.llamacpp.speculative = \"mtp\").";
+    line.append(b);
+  }
   if (!c.backendAvailable) line.append(el("span", "badge bad", `${BACKEND[c.backend]} not installed`));
   else if (c.supported === false) {
     const b = el("span", "badge bad", "needs a newer engine");
@@ -555,6 +560,7 @@ function familyVariants(variants) {
   if (lib.task && !v0.tasks.includes(lib.task)) return null;
   let vs = variants;
   if (lib.fits) vs = vs.filter((v) => v.fits);
+  if (lib.comfortable) vs = vs.filter((v) => v.fits && !v.tight);
   if (lib.works) vs = vs.filter(usable);
   return vs.length ? vs : null;
 }
@@ -844,6 +850,10 @@ function wire() {
   });
   $("#lib-fits").addEventListener("change", (e) => {
     lib.fits = e.target.checked;
+    renderCatalog();
+  });
+  $("#lib-comfortable").addEventListener("change", (e) => {
+    lib.comfortable = e.target.checked;
     renderCatalog();
   });
   $("#lib-works").addEventListener("change", (e) => {

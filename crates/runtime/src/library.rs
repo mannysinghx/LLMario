@@ -41,6 +41,10 @@ pub struct CatalogView {
     pub fits: bool,
     /// Fits, but above the comfortable target for a machine with 16 GB or less.
     pub tight: bool,
+    /// A build with multi-token-prediction layers (faster with `speculative = "mtp"`).
+    pub mtp: bool,
+    /// A 3-bit build: smaller and faster than 4-bit, with some quality loss.
+    pub low_bit: bool,
     /// The variant this machine should use for the family: supported, fits, and preferred engine.
     pub recommended: bool,
     pub installed: bool,
@@ -96,24 +100,45 @@ pub fn catalog_views(sup: &Supervisor) -> Vec<CatalogView> {
                 budget_bytes: plan.budget_bytes,
                 fits: plan.fits,
                 tight: plan.tight,
+                mtp: c.shape.as_ref().is_some_and(|s| s.mtp_layers > 0),
+                low_bit: is_low_bit(c.quantization.as_deref()),
                 recommended: false,
                 installed: reg.get(&c.id).is_some(),
             }
         })
         .collect();
 
-    // One recommended variant per family: usable here, then the preferred engine for this machine.
-    let prefer_mlx = sup.hw.apple_silicon;
-    let mut best: std::collections::HashMap<String, (u8, usize)> = Default::default();
+    recommend(&mut views, sup.hw.apple_silicon);
+    views
+}
+
+/// Whether a catalog quantization label is a 3-bit (or lower) build.
+fn is_low_bit(q: Option<&str>) -> bool {
+    q.is_some_and(|q| {
+        let q = q.to_ascii_uppercase();
+        q.starts_with("Q3")
+            || q.starts_with("IQ3")
+            || q.starts_with("Q2")
+            || q.starts_with("IQ2")
+            || q.starts_with("3-BIT")
+    })
+}
+
+/// One recommended variant per family: usable here and comfortable (not tight on machines with
+/// 16 GB or less), then 4-bit before 3-bit, the preferred engine for this machine, and the plain
+/// build before the MTP one. Families with no comfortable variant get no recommendation.
+fn recommend(views: &mut [CatalogView], prefer_mlx: bool) {
+    let mut best: std::collections::HashMap<String, ((u8, u8, u8), usize)> = Default::default();
     for (i, v) in views.iter().enumerate() {
-        if !(v.backend_available && v.fits && v.supported != Some(false)) {
+        if !(v.backend_available && v.fits && !v.tight && v.supported != Some(false)) {
             continue;
         }
-        let rank = match (v.backend, prefer_mlx) {
+        let engine = match (v.backend, prefer_mlx) {
             (BackendKind::Mlx, true) | (BackendKind::LlamaCpp, false) => 0,
             _ => 1,
         };
-        let e = best.entry(v.family.clone()).or_insert((u8::MAX, i));
+        let rank = (v.low_bit as u8, engine, v.mtp as u8);
+        let e = best.entry(v.family.clone()).or_insert(((u8::MAX, 0, 0), i));
         if rank < e.0 {
             *e = (rank, i);
         }
@@ -121,5 +146,89 @@ pub fn catalog_views(sup: &Supervisor) -> Vec<CatalogView> {
     for (_, (_, i)) in best {
         views[i].recommended = true;
     }
-    views
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn view(id: &str, backend: BackendKind, tight: bool, low_bit: bool, mtp: bool) -> CatalogView {
+        CatalogView {
+            id: id.into(),
+            family: "fam".into(),
+            name: "Fam".into(),
+            publisher: None,
+            released: None,
+            params: None,
+            tasks: vec![],
+            description: String::new(),
+            notes: None,
+            format: if backend == BackendKind::Mlx {
+                ModelFormat::Mlx
+            } else {
+                ModelFormat::Gguf
+            },
+            backend,
+            backend_available: true,
+            engine_version: None,
+            supported: Some(true),
+            architecture: None,
+            quantization: None,
+            context_max: None,
+            repo: String::new(),
+            revision: String::new(),
+            files: vec![],
+            license: String::new(),
+            gated: false,
+            approx_bytes: None,
+            needs_bytes: 0,
+            budget_bytes: 0,
+            fits: true,
+            tight,
+            mtp,
+            low_bit,
+            recommended: false,
+            installed: false,
+        }
+    }
+
+    fn pick(mut v: Vec<CatalogView>, prefer_mlx: bool) -> Option<String> {
+        recommend(&mut v, prefer_mlx);
+        v.into_iter().find(|v| v.recommended).map(|v| v.id)
+    }
+
+    #[test]
+    fn recommends_comfortable_then_quality_then_engine() {
+        use BackendKind::{LlamaCpp as L, Mlx as M};
+        // 4-bit beats 3-bit even on the less preferred engine.
+        let v = vec![
+            view("q3-mlx", M, false, true, false),
+            view("q4-gguf", L, false, false, false),
+        ];
+        assert_eq!(pick(v, true).as_deref(), Some("q4-gguf"));
+        // A tight 4-bit loses to a comfortable 3-bit.
+        let v = vec![
+            view("q4-mlx", M, true, false, false),
+            view("q3-gguf", L, false, true, false),
+        ];
+        assert_eq!(pick(v, true).as_deref(), Some("q3-gguf"));
+        // Same quality: the preferred engine, then the plain build before MTP.
+        let same = || {
+            vec![
+                view("q4-gguf-mtp", L, false, false, true),
+                view("q4-gguf", L, false, false, false),
+                view("q4-mlx", M, false, false, false),
+            ]
+        };
+        assert_eq!(pick(same(), true).as_deref(), Some("q4-mlx"));
+        assert_eq!(pick(same(), false).as_deref(), Some("q4-gguf"));
+        // Only tight variants: no recommendation.
+        assert_eq!(pick(vec![view("q4", L, true, false, false)], false), None);
+        assert!(is_low_bit(Some("Q3_K_M (3-bit: …)")) && is_low_bit(Some("3-bit (group 64): …")));
+        assert!(
+            !is_low_bit(Some("Q4_K_M"))
+                && !is_low_bit(Some("4-bit (group 64)"))
+                && !is_low_bit(None)
+        );
+    }
 }
