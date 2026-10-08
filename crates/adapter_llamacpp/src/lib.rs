@@ -267,6 +267,15 @@ impl EngineAdapter for LlamaCppAdapter {
             // GPU/CPU split planned by the memory planner (`offload = "auto"`).
             args.extend(["--n-cpu-moe".into(), n.to_string()]);
         }
+        if ctx.memory.cpu_moe_layers.is_some()
+            || (ctx.memory.gpu_layers.is_some() && ctx.hw.unified_memory)
+        {
+            // Without this, Metal maps the whole file as one GPU buffer (gpt-oss-20b: 11.5 GiB,
+            // over a 16 GB Mac's 10.67 GiB limit) and the CPU's repacked copy comes on top
+            // (peak 14.7 GiB). Loaded instead of mapped: GPU buffer 7.5 GiB, peak 12.5 GiB,
+            // and the fastest split measured (74 vs 66 tok/s mapped).
+            args.extend(["--load-mode".into(), "none".into()]);
+        }
         args.extend(lcfg.extra_args.iter().cloned());
         Ok(LaunchSpec {
             program,
@@ -699,9 +708,18 @@ mod tests {
         };
         let flag = |a: &[String], f: &str| a.iter().position(|x| x == f).map(|i| a[i + 1].clone());
         assert!(flag(&args(&plan), "--n-cpu-moe").is_none());
+        assert!(
+            flag(&args(&plan), "--load-mode").is_none(),
+            "all-GPU loads stay memory-mapped"
+        );
         plan.cpu_moe_layers = Some(9);
         let a = args(&plan);
         assert_eq!(flag(&a, "--n-cpu-moe").as_deref(), Some("9"));
+        assert_eq!(
+            flag(&a, "--load-mode").as_deref(),
+            Some("none"),
+            "no double copy"
+        );
         assert_eq!(
             flag(&a, "--n-gpu-layers").as_deref(),
             Some("999"),
