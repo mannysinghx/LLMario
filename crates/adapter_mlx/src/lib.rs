@@ -29,19 +29,44 @@ pub const TESTED_MLX_LM: &str = "0.31.3";
 /// defaults it to the whole memory limit; in our concurrency-4 benchmark the retained cache
 /// was 2.5 GiB and counted against the process footprint, so we cap it explicitly.
 pub const MLX_BUFFER_CACHE_LIMIT: u64 = 1024 * 1024 * 1024;
+/// Buffer-cache ceiling with the small memory profile (machines with 16 GB or less).
+pub const SMALL_MLX_BUFFER_CACHE_LIMIT: u64 = 512 * 1024 * 1024;
 /// Python interpreter, tokenizer and HTTP server resident memory (measured ~0.4 GiB).
 const PYTHON_RUNTIME_BYTES: u64 = 512 * 1024 * 1024;
+
+/// Prompt-cache entries: the profile's, or 1 with the small memory profile.
+pub fn prompt_cache_entries(profile: &ResolvedProfile, hw: &HardwareReport, cfg: &Config) -> u32 {
+    if llmario_supervisor::memory::small_machine(hw, cfg) {
+        profile.prompt_cache_entries.min(1)
+    } else {
+        profile.prompt_cache_entries
+    }
+}
+
+/// Buffer-cache ceiling for the memory profile.
+pub fn buffer_cache_limit(hw: &HardwareReport, cfg: &Config) -> u64 {
+    if llmario_supervisor::memory::small_machine(hw, cfg) {
+        SMALL_MLX_BUFFER_CACHE_LIMIT
+    } else {
+        MLX_BUFFER_CACHE_LIMIT
+    }
+}
 
 /// Upper bound for MLX's prompt (prefix) cache: every entry can hold one request's full KV
 /// cache (per-layer layout when known, see `memory::kv_plan`).
 /// Measured: 8 entries of ~4.7k-token prompts held ~3.4 GiB beyond the batch KV.
-pub fn prompt_cache_bytes(model: &ModelEntry, profile: &ResolvedProfile, cfg: &Config) -> u64 {
+pub fn prompt_cache_bytes(
+    model: &ModelEntry,
+    profile: &ResolvedProfile,
+    hw: &HardwareReport,
+    cfg: &Config,
+) -> u64 {
     let one_request = ResolvedProfile {
         parallel: 1,
         ..profile.clone()
     };
     let kv = llmario_supervisor::memory::kv_plan(model, &one_request, BackendKind::Mlx, cfg);
-    profile.prompt_cache_entries as u64 * kv.total
+    prompt_cache_entries(profile, hw, cfg) as u64 * kv.total
 }
 
 /// Probe: versions on line 1; on line 2, the `model_type`s this mlx-lm can load (its model
@@ -163,9 +188,12 @@ impl EngineAdapter for MlxAdapter {
         &self,
         model: &ModelEntry,
         profile: &ResolvedProfile,
+        hw: &HardwareReport,
         cfg: &Config,
     ) -> u64 {
-        prompt_cache_bytes(model, profile, cfg) + MLX_BUFFER_CACHE_LIMIT + PYTHON_RUNTIME_BYTES
+        prompt_cache_bytes(model, profile, hw, cfg)
+            + buffer_cache_limit(hw, cfg)
+            + PYTHON_RUNTIME_BYTES
     }
 
     fn launch(&self, ctx: &LaunchContext<'_>) -> Result<LaunchSpec, RuntimeError> {
@@ -184,7 +212,7 @@ impl EngineAdapter for MlxAdapter {
         let mut args: Vec<String> = vec![
             "-c".into(),
             BOOTSTRAP.into(),
-            MLX_BUFFER_CACHE_LIMIT.to_string(),
+            buffer_cache_limit(ctx.hw, ctx.cfg).to_string(),
             "--model".into(),
             ctx.model.path.display().to_string(),
             "--host".into(),
@@ -200,9 +228,9 @@ impl EngineAdapter for MlxAdapter {
             "--prompt-concurrency".into(),
             p.prompt_concurrency.to_string(),
             "--prompt-cache-size".into(),
-            p.prompt_cache_entries.to_string(),
+            prompt_cache_entries(p, ctx.hw, ctx.cfg).to_string(),
             "--prompt-cache-bytes".into(),
-            prompt_cache_bytes(ctx.model, p, ctx.cfg).to_string(),
+            prompt_cache_bytes(ctx.model, p, ctx.hw, ctx.cfg).to_string(),
         ];
         args.extend(ctx.cfg.backends.mlx.extra_args.iter().cloned());
         Ok(LaunchSpec {
@@ -227,6 +255,58 @@ impl EngineAdapter for MlxAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The small memory profile keeps 1 prompt-cache entry and a 512 MiB buffer cache, in the
+    /// launch flags and in the memory extras.
+    #[test]
+    fn small_memory_profile_shrinks_mlx_reserves() {
+        use llmario_core::MemoryProfile;
+        let mut hw = llmario_hardware::HardwareReport::detect();
+        hw.total_memory_bytes = 16 << 30;
+        let m = llmario_registry::Catalog::builtin()
+            .get("qwen3-8b-mlx-4bit")
+            .unwrap()
+            .planning_entry();
+        let p = ResolvedProfile::resolve(llmario_core::ProfileKind::Latency, None);
+        let adapter = MlxAdapter::new(Path::new("/nonexistent"));
+        let status = BackendStatus {
+            kind: BackendKind::Mlx,
+            available: true,
+            path: Some("/usr/bin/python3".into()),
+            version: None,
+            tested_version: String::new(),
+            detail: String::new(),
+            architectures: None,
+        };
+        let run = |cfg: &Config| {
+            let plan =
+                llmario_supervisor::memory::estimate(&m, &p, BackendKind::Mlx, &hw, cfg, 0, 0);
+            let ctx = LaunchContext {
+                model: &m,
+                profile: &p,
+                hw: &hw,
+                cfg,
+                memory: &plan,
+                status: &status,
+                port: 1,
+            };
+            (
+                adapter.launch(&ctx).unwrap().args,
+                adapter.extra_memory_bytes(&m, &p, &hw, cfg),
+            )
+        };
+        let flag = |a: &[String], f: &str| a.iter().position(|x| x == f).map(|i| a[i + 1].clone());
+        let (std_args, std_extra) = run(&Config::default());
+        assert_eq!(flag(&std_args, "--prompt-cache-size").as_deref(), Some("2"));
+        assert_eq!(std_args[2], MLX_BUFFER_CACHE_LIMIT.to_string());
+        let mut cfg = Config::default();
+        cfg.runtime.memory_profile = MemoryProfile::Auto;
+        let (args, extra) = run(&cfg);
+        assert_eq!(flag(&args, "--prompt-cache-size").as_deref(), Some("1"));
+        assert_eq!(args[2], SMALL_MLX_BUFFER_CACHE_LIMIT.to_string());
+        let one_entry = prompt_cache_bytes(&m, &p, &hw, &cfg);
+        assert_eq!(std_extra - extra, one_entry + (512 << 20));
+    }
 
     /// Phase 2 exit check from the catalog alone, on a 16 GB Mac (GPU working set 2/3 of RAM =
     /// 10.67 GiB) with this adapter's extras: Qwen3.5 9B (MLX) fits (9.01 GiB; the old formula:
@@ -267,7 +347,7 @@ mod tests {
         let plan = |id: &str, cfg: &Config| {
             let m = catalog.get(id).unwrap().planning_entry();
             let p = ResolvedProfile::resolve(llmario_core::ProfileKind::Latency, None);
-            let extra = adapter.extra_memory_bytes(&m, &p, cfg);
+            let extra = adapter.extra_memory_bytes(&m, &p, &hw, cfg);
             llmario_supervisor::memory::estimate(&m, &p, BackendKind::Mlx, &hw, cfg, extra, 0)
         };
         let now = Config::default();

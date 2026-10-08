@@ -377,6 +377,11 @@ function renderInstalled() {
     if (m.loaded) name.append(el("span", "badge ok", "loaded"));
     if (!m.backendAvailable) name.append(el("span", "badge bad", `needs ${BACKEND[m.backend]}`));
     else if (!m.fits) name.append(el("span", "badge bad", "too large"));
+    else if (m.tight) {
+      const b = el("span", "badge warn", "tight");
+      b.title = "Fits, but uses most of this computer's memory. Close other apps before loading it.";
+      name.append(b);
+    }
     info.append(name);
     const bits = [m.quantization, fmtDisk(m.sizeBytes), `needs ~${fmtMem(m.needsBytes)} of ${fmtMem(m.budgetBytes)} memory`];
     if (m.license) bits.push(m.license);
@@ -453,15 +458,15 @@ function variantRow(c, { compact = false } = {}) {
     c.contextMax ? `${fmtCtx(c.contextMax)} context` : null,
   ];
   line.append(el("span", null, bits.filter(Boolean).join(" · ")));
-  line.append(
-    el(
-      "span",
-      c.fits ? "fit-ok" : "fit-bad",
-      c.fits
-        ? `needs ~${fmtMem(c.needsBytes)} · fits`
-        : `needs ~${fmtMem(c.needsBytes)} · too large (${fmtMem(c.budgetBytes)} available)`
-    )
+  const fit = el(
+    "span",
+    !c.fits ? "fit-bad" : c.tight ? "fit-tight" : "fit-ok",
+    !c.fits
+      ? `needs ~${fmtMem(c.needsBytes)} · too large (${fmtMem(c.budgetBytes)} available)`
+      : `needs ~${fmtMem(c.needsBytes)} · ${c.tight ? "fits, tight" : "fits"}`
   );
+  if (c.fits && c.tight) fit.title = "Fits, but uses most of this computer's memory. Close other apps before loading it.";
+  line.append(fit);
   if (!c.backendAvailable) line.append(el("span", "badge bad", `${BACKEND[c.backend]} not installed`));
   else if (c.supported === false) {
     const b = el("span", "badge bad", "needs a newer engine");

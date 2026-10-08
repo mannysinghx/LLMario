@@ -10,7 +10,9 @@
 //! full-attention layers grow with the context. Unknown layouts count every layer as full
 //! attention, so the estimate never drops below what the engine allocates.
 
-use llmario_core::{BackendKind, Config, KvAccounting, ResolvedProfile};
+use llmario_core::{
+    BackendKind, Config, KvAccounting, KvCacheType, MemoryProfile, ResolvedProfile,
+};
 use llmario_hardware::{GpuApi, HardwareReport};
 use llmario_registry::ModelEntry;
 use serde::Serialize;
@@ -22,6 +24,36 @@ const KV_ELEM_BYTES: u64 = 2;
 /// Tokens `mlx_lm.server` processes at once while reading a prompt (`--prefill-step-size`,
 /// default 2048; llmario does not change it).
 const MLX_PREFILL_STEP: u64 = 2048;
+/// Machines with this much memory or less count as small (`memory_profile = "auto"`) and get a
+/// comfortable target below the hard budget.
+pub const SMALL_MACHINE_RAM: u64 = 16 * GIB;
+
+/// Whether the small memory profile applies (`runtime.memory_profile`).
+pub fn small_machine(hw: &HardwareReport, cfg: &Config) -> bool {
+    match cfg.runtime.memory_profile {
+        MemoryProfile::Standard => false,
+        MemoryProfile::Small => true,
+        MemoryProfile::Auto => hw.total_memory_bytes <= SMALL_MACHINE_RAM,
+    }
+}
+
+/// On machines with 16 GB or less: the planned total that still leaves about 3/8 of memory for
+/// the OS and apps (10 GiB on 16 GB, inside the Mac GPU limit of 10.67 GiB). Plans between this
+/// and the budget fit but are tight. `None` on larger machines.
+pub fn comfortable_bytes(hw: &HardwareReport) -> Option<u64> {
+    (hw.total_memory_bytes > 0 && hw.total_memory_bytes <= SMALL_MACHINE_RAM)
+        .then(|| hw.total_memory_bytes / 8 * 5)
+}
+
+/// KV-cache bytes for `f16_bytes` of f16 cache, in the cache type the engine will use. llama.cpp
+/// q8_0 stores 34 bytes per 32 values: 17/32 of f16 (measured: Qwen3.5 9B 256 → 136 MiB, Gemma 4
+/// 12B 128 + 480 → 68 + 255 MiB, gpt-oss-20b 192 + 18 → 102 + 9.56 MiB). MLX has no option.
+fn kv_cache_bytes(f16_bytes: u64, backend: BackendKind, cfg: &Config) -> u64 {
+    match (backend, cfg.backends.llamacpp.kv_cache_type) {
+        (BackendKind::LlamaCpp, KvCacheType::Q8_0) => f16_bytes / 32 * 17,
+        _ => f16_bytes,
+    }
+}
 
 #[derive(Serialize, Clone, Debug)]
 pub struct MemoryPlan {
@@ -39,6 +71,10 @@ pub struct MemoryPlan {
     pub gpu_layers: Option<u32>,
     /// Largest per-request context that would fit with the same profile (multiple of 256).
     pub max_ctx_per_slot_that_fits: Option<u32>,
+    /// Comfortable target on machines with 16 GB or less (see [`comfortable_bytes`]).
+    pub comfortable_bytes: Option<u64>,
+    /// Fits the budget but is above the comfortable target: other apps may be squeezed.
+    pub tight: bool,
     pub notes: Vec<String>,
 }
 
@@ -153,7 +189,7 @@ pub fn kv_plan(
     let (mut growing, mut bounded, mut total) = (0u64, 0u64, 0u64);
     let (mut full_layers, mut parts) = (0u32, Vec::new());
     for g in &groups {
-        let per = g.bytes_per_token(KV_ELEM_BYTES);
+        let per = kv_cache_bytes(g.bytes_per_token(KV_ELEM_BYTES), backend, cfg);
         match g.window {
             None => {
                 growing += per;
@@ -181,6 +217,9 @@ pub fn kv_plan(
     }
     if state > 0 {
         layout.push_str(&format!(", fixed state {}", fmt_bytes(state)));
+    }
+    if kv_cache_bytes(32, backend, cfg) != 32 {
+        layout.push_str(", 8-bit KV cache (q8_0)");
     }
     KvPlan {
         growing_per_token: growing,
@@ -214,6 +253,8 @@ pub fn estimate(
     let kvp = kv_plan(model, profile, backend, cfg);
     if kvp.per_layer {
         notes.push(format!("KV cache per layer: {}", kvp.layout));
+    } else if kv_cache_bytes(32, backend, cfg) != 32 {
+        notes.push("8-bit KV cache (q8_0)".into());
     }
     let kv_per_token = kvp.growing_per_token;
     let kv = kvp.total;
@@ -310,6 +351,15 @@ pub fn estimate(
         let c = (per_slot_tokens / 256 * 256).min(u32::MAX as u64) as u32;
         (c > 0).then_some(c)
     };
+    let comfortable = comfortable_bytes(hw);
+    let tight = fits && comfortable.is_some_and(|c| total > c);
+    if let (true, Some(c)) = (tight, comfortable) {
+        notes.push(format!(
+            "tight: above the comfortable {} for a computer with {} of memory; close other apps before loading",
+            fmt_bytes(c),
+            fmt_bytes(hw.total_memory_bytes)
+        ));
+    }
     if hw.available_memory_bytes + reserved_by_others < total && fits {
         notes.push(format!(
             "only {} is currently available; the OS may compress or swap other apps while loading",
@@ -329,6 +379,8 @@ pub fn estimate(
         kv_bytes_per_token: kv_per_token,
         gpu_layers,
         max_ctx_per_slot_that_fits: max_ctx,
+        comfortable_bytes: comfortable,
+        tight,
         notes,
     }
 }
@@ -571,6 +623,94 @@ pub(crate) mod tests {
             retry.explain()
         );
         assert!(c > 100_000, "only 16 KiB/token grows: {c}");
+    }
+
+    /// llama.cpp build 11146 with `-ctk q8_0 -ctv q8_0` (latency flags, 8192 context) reported
+    /// these allocations on Metal and CPU; recurrent state stays f32.
+    #[test]
+    fn q8_0_kv_matches_llama_cpp_allocations() {
+        let mut cfg = Config::default();
+        cfg.backends.llamacpp.kv_cache_type = KvCacheType::Q8_0;
+        let q = layered(32, vec![group(8, 4, 256, None)], 52_690_944);
+        let p = kv_plan(&q, &latency(), BackendKind::LlamaCpp, &cfg);
+        assert_eq!(p.total, 136 * MIB_ + 52_690_944);
+        assert!(p.layout.contains("8-bit"), "{}", p.layout);
+        let g = layered(
+            48,
+            vec![group(8, 1, 512, None), group(40, 8, 256, Some(1024))],
+            0,
+        );
+        assert_eq!(
+            kv_plan(&g, &latency(), BackendKind::LlamaCpp, &cfg).total,
+            (68 + 255) * MIB_
+        );
+        let o = layered(
+            24,
+            vec![group(12, 8, 64, None), group(12, 8, 64, Some(128))],
+            0,
+        );
+        // 102 MiB + 9.5625 MiB
+        assert_eq!(
+            kv_plan(&o, &latency(), BackendKind::LlamaCpp, &cfg).total,
+            102 * MIB_ + 10_027_008
+        );
+        // MLX has no KV quantization; the setting only applies to llama.cpp.
+        assert_eq!(
+            kv_plan(&q, &latency(), BackendKind::Mlx, &cfg).total,
+            256 * MIB_ + 52_690_944
+        );
+        // Conservative accounting (no layout) is scaled too.
+        let plain = layered(36, vec![], 0);
+        assert_eq!(
+            kv_plan(&plain, &latency(), BackendKind::LlamaCpp, &cfg).total,
+            2 * 36 * 8 * 128 * 2 * 8192 / 32 * 17
+        );
+    }
+
+    #[test]
+    fn small_machine_follows_memory_profile() {
+        let mut cfg = Config::default();
+        let (h16, h24) = (hw(16, None), hw(24, None));
+        assert!(!small_machine(&h16, &cfg), "standard by default");
+        cfg.runtime.memory_profile = MemoryProfile::Auto;
+        assert!(small_machine(&h16, &cfg) && !small_machine(&h24, &cfg));
+        cfg.runtime.memory_profile = MemoryProfile::Small;
+        assert!(small_machine(&h24, &cfg));
+    }
+
+    #[test]
+    fn plans_above_the_comfortable_target_are_tight() {
+        // 16 GB Mac: budget 10.67 GiB (GPU working set), comfortable 10 GiB.
+        let mut gpu = metal(0);
+        gpu.memory_total_bytes = Some(16 * GIB * 2 / 3);
+        let h = hw(16, Some(gpu));
+        assert_eq!(comfortable_bytes(&h), Some(10 * GIB));
+        let cfg = Config::default();
+        let p = latency();
+        let plan =
+            |weights: f64| estimate(&model(weights), &p, BackendKind::LlamaCpp, &h, &cfg, 0, 0);
+        let roomy = plan(6.0);
+        assert!(roomy.fits && !roomy.tight, "{}", roomy.explain());
+        let tight = plan(7.9);
+        assert!(
+            tight.total_bytes > 10 * GIB && tight.fits,
+            "{}",
+            tight.explain()
+        );
+        assert!(tight.tight && tight.notes.iter().any(|n| n.starts_with("tight:")));
+        let over = plan(9.5);
+        assert!(!over.fits && !over.tight, "too big is not tight");
+        // Larger machines have no comfortable target.
+        let big = estimate(
+            &model(7.9),
+            &p,
+            BackendKind::LlamaCpp,
+            &hw(32, None),
+            &cfg,
+            0,
+            0,
+        );
+        assert!(big.comfortable_bytes.is_none() && !big.tight);
     }
 
     fn metal(ws_gib: u64) -> GpuInfo {
