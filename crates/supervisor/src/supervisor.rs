@@ -4,9 +4,11 @@ use crate::adapter::{BackendStatus, EngineAdapter, LaunchContext};
 use crate::engine::{self, Engine, EngineInfo};
 use crate::memory::{self, MemoryPlan};
 use crate::planner::{self, Selection};
-use llmario_core::{BackendKind, Config, Paths, ProfileKind, RuntimeError};
+use llmario_core::{
+    BackendKind, Config, ModelFormat, Paths, ProfileKind, RuntimeError, Speculative,
+};
 use llmario_hardware::HardwareReport;
-use llmario_registry::Registry;
+use llmario_registry::{ModelEntry, Registry};
 use std::collections::HashMap;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex, RwLock};
@@ -142,22 +144,101 @@ impl Supervisor {
         }
     }
 
-    /// Memory plan for a selection, accounting for engines that would stay loaded.
+    /// Memory plan for a selection, accounting for engines that would stay loaded and for
+    /// speculative decoding.
     pub fn plan_memory(&self, sel: &Selection, reserved_by_others: u64) -> MemoryPlan {
         let extra = self
             .adapters
             .get(&sel.backend)
             .map(|a| a.extra_memory_bytes(&sel.model, &sel.profile, &self.hw, &self.cfg))
             .unwrap_or(0);
-        memory::estimate(
+        let (draft, draft_note) = self.draft_for(sel);
+        let (spec, spec_note) = memory::speculative_bytes(
+            &sel.model,
+            draft.as_ref(),
+            &sel.profile,
+            sel.backend,
+            &self.cfg,
+        );
+        let mut plan = memory::estimate(
             &sel.model,
             &sel.profile,
             sel.backend,
             &self.hw,
             &self.cfg,
-            extra,
+            extra + spec,
             reserved_by_others,
-        )
+        );
+        plan.notes.extend(draft_note.into_iter().chain(spec_note));
+        plan
+    }
+
+    /// The draft model speculative decoding should use with `sel`, and a note when the
+    /// configured one cannot be used (the model then runs without speculation). llama.cpp:
+    /// `backends.llamacpp.speculative = "draft"` with `draft_model`. MLX: `backends.mlx.draft_model`,
+    /// only with one request at a time, because MLX-LM turns off request batching with a draft.
+    pub fn draft_for(&self, sel: &Selection) -> (Option<ModelEntry>, Option<String>) {
+        let off = "running without speculation";
+        let (id, format) = match sel.backend {
+            BackendKind::LlamaCpp
+                if self.cfg.backends.llamacpp.speculative == Speculative::Draft =>
+            {
+                match &self.cfg.backends.llamacpp.draft_model {
+                    Some(id) => (id, ModelFormat::Gguf),
+                    None => {
+                        return (
+                            None,
+                            Some(format!(
+                                "speculative = \"draft\" needs backends.llamacpp.draft_model; {off}"
+                            )),
+                        )
+                    }
+                }
+            }
+            BackendKind::Mlx => match &self.cfg.backends.mlx.draft_model {
+                Some(id) => (id, ModelFormat::Mlx),
+                None => return (None, None),
+            },
+            _ => return (None, None),
+        };
+        if *id == sel.model.id {
+            return (
+                None,
+                Some(format!("draft model {id} is the model itself; {off}")),
+            );
+        }
+        let Some(d) = self.registry.read().unwrap().get(id).cloned() else {
+            return (
+                None,
+                Some(format!("draft model {id} is not installed; {off}")),
+            );
+        };
+        if d.format != format {
+            return (
+                None,
+                Some(format!(
+                    "draft model {id} is {}, but {} needs a {format} model; {off}",
+                    d.format, sel.backend
+                )),
+            );
+        }
+        if sel.backend == BackendKind::Mlx && sel.profile.parallel > 1 {
+            return (
+                None,
+                Some(format!(
+                    "MLX uses draft model {id} only with one request at a time (latency profile); {off}"
+                )),
+            );
+        }
+        let note = (d.architecture != sel.model.architecture).then(|| {
+            format!(
+                "draft model {id} ({}) differs in architecture from {} ({}); it must share the tokenizer",
+                d.architecture.as_deref().unwrap_or("?"),
+                sel.model.id,
+                sel.model.architecture.as_deref().unwrap_or("?")
+            )
+        });
+        (Some(d), note)
     }
 
     pub async fn loaded(&self) -> Vec<EngineInfo> {
@@ -291,6 +372,7 @@ impl Supervisor {
         })?;
         let status = &self.statuses[&sel.backend];
         let plan = self.plan_memory(sel, reserved);
+        let (draft, _) = self.draft_for(sel);
         let timeout = Duration::from_secs(self.cfg.runtime.engine_start_timeout_secs);
         if let Some(other) = crate::sibling::sibling_usage(&self.paths) {
             tracing::warn!(model = %sel.model.id, "{}", other.warning());
@@ -307,6 +389,7 @@ impl Supervisor {
                 memory: &plan,
                 status,
                 port,
+                draft: draft.as_ref(),
             };
             let spec = adapter.launch(&ctx)?;
             tracing::info!(
@@ -384,5 +467,112 @@ impl Supervisor {
         for e in all {
             e.stop().await;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use llmario_core::ProfileKind;
+
+    fn entry(id: &str, format: ModelFormat, arch: &str) -> ModelEntry {
+        let mut e = crate::memory::tests::model(1.0);
+        e.id = id.into();
+        e.format = format;
+        e.architecture = Some(arch.into());
+        e
+    }
+
+    fn supervisor(cfg: Config, models: Vec<ModelEntry>) -> (tempfile::TempDir, Arc<Supervisor>) {
+        let home = tempfile::tempdir().unwrap();
+        let paths = Paths::at(home.path());
+        paths.ensure().unwrap();
+        let mut reg = Registry::load(&paths.registry_file()).unwrap();
+        for m in models {
+            reg.insert(m).unwrap();
+        }
+        reg.save().unwrap();
+        let hw = crate::memory::tests::hw(16, None);
+        let sup = Supervisor::new(cfg, paths, hw, vec![]).unwrap();
+        (home, sup)
+    }
+
+    fn select(m: &ModelEntry, backend: BackendKind, profile: ProfileKind) -> Selection {
+        Selection {
+            model: m.clone(),
+            backend,
+            profile: llmario_core::ResolvedProfile::resolve(profile, None),
+            reason: String::new(),
+        }
+    }
+
+    /// Only a registered draft of the right format is used; anything else runs without
+    /// speculation and says why. MLX drafts need one request at a time.
+    #[test]
+    fn draft_for_checks_the_configured_draft() {
+        let main = entry("big", ModelFormat::Gguf, "qwen35");
+        let small = entry("small", ModelFormat::Gguf, "qwen35");
+        let mlx_main = entry("big-mlx", ModelFormat::Mlx, "qwen3");
+        let mlx_small = entry("small-mlx", ModelFormat::Mlx, "qwen3");
+        let other = entry("other", ModelFormat::Gguf, "gemma4");
+        let models = vec![
+            main.clone(),
+            small.clone(),
+            mlx_main.clone(),
+            mlx_small.clone(),
+            other.clone(),
+        ];
+        let sel = select(&main, BackendKind::LlamaCpp, ProfileKind::Latency);
+
+        let (_h, sup) = supervisor(Config::default(), models.clone());
+        assert_eq!(sup.draft_for(&sel), (None, None), "off by default");
+
+        let mut cfg = Config::default();
+        cfg.backends.llamacpp.speculative = Speculative::Draft;
+        let (_h, sup) = supervisor(cfg.clone(), models.clone());
+        assert!(sup
+            .draft_for(&sel)
+            .1
+            .unwrap()
+            .contains("needs backends.llamacpp.draft_model"));
+
+        for (id, why) in [
+            ("missing", "not installed"),
+            ("big", "the model itself"),
+            ("small-mlx", "needs a gguf model"),
+        ] {
+            cfg.backends.llamacpp.draft_model = Some(id.into());
+            let (_h, sup) = supervisor(cfg.clone(), models.clone());
+            let (d, note) = sup.draft_for(&sel);
+            assert!(
+                d.is_none() && note.as_deref().unwrap_or("").contains(why),
+                "{id}: {note:?}"
+            );
+        }
+        cfg.backends.llamacpp.draft_model = Some("small".into());
+        let (_h, sup) = supervisor(cfg.clone(), models.clone());
+        assert_eq!(sup.draft_for(&sel), (Some(small.clone()), None));
+        cfg.backends.llamacpp.draft_model = Some("other".into());
+        let (_h, sup) = supervisor(cfg.clone(), models.clone());
+        let (d, note) = sup.draft_for(&sel);
+        assert!(d.is_some() && note.unwrap().contains("must share the tokenizer"));
+
+        let mut cfg = Config::default();
+        cfg.backends.mlx.draft_model = Some("small-mlx".into());
+        let (_h, sup) = supervisor(cfg, models);
+        let latency = select(&mlx_main, BackendKind::Mlx, ProfileKind::Latency);
+        assert_eq!(sup.draft_for(&latency).0, Some(mlx_small));
+        let balanced = select(&mlx_main, BackendKind::Mlx, ProfileKind::Balanced);
+        let (d, note) = sup.draft_for(&balanced);
+        assert!(d.is_none() && note.unwrap().contains("one request at a time"));
+        // The plan includes the draft's memory.
+        let plan = sup.plan_memory(&latency, 0);
+        assert!(
+            plan.notes
+                .iter()
+                .any(|n| n.contains("draft model small-mlx")),
+            "{:?}",
+            plan.notes
+        );
     }
 }

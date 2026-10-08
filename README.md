@@ -386,9 +386,14 @@ memory_profile = "standard" # standard | small | auto (small on 16 GB or less): 
 # server_path = "/opt/homebrew/bin/llama-server"
 # gpu_layers = 999
 kv_cache_type = "f16"       # f16 | q8_0 (8-bit KV cache: 17/32 of the memory)
+speculative = "off"         # off | ngram | mtp | draft: guess tokens ahead (same output; faster
+                            # when the answer repeats its input, can be slower on free writing)
+# draft_model = "qwen3.5-0.8b-gguf-q4_0"   # for speculative = "draft"
+# draft_tokens = 1          # tokens guessed per step (default: 1 for mtp, 3 for draft)
 extra_args = []
 [backends.mlx]
 # python = "~/.llmario/venvs/mlx/bin/python"
+# draft_model = "qwen3-1.7b-mlx-4bit"      # speculative decoding, one request at a time
 extra_args = []
 ```
 

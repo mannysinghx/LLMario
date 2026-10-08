@@ -134,8 +134,36 @@ pub struct LlamaCppConfig {
     pub gpu_layers: Option<i32>,
     /// KV cache element type (`-ctk`/`-ctv`).
     pub kv_cache_type: KvCacheType,
+    /// Speculative decoding (`--spec-type`).
+    pub speculative: Speculative,
+    /// Registered GGUF model used as the draft for `speculative = "draft"`; it must share the
+    /// main model's tokenizer.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub draft_model: Option<String>,
+    /// Tokens drafted per step (`--spec-draft-n-max`). `None` = 1 for `mtp` (measured best on
+    /// Qwen3.5 9B: +22% on a code edit, +1% on prose; 3 tokens slowed prose by 41%) and the
+    /// engine's default (3) for `draft`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub draft_tokens: Option<u32>,
     /// Extra flags appended verbatim (advanced; bypasses profile validation).
     pub extra_args: Vec<String>,
+}
+
+/// llama.cpp speculative decoding: the model checks several guessed tokens per pass over its
+/// weights. Output is unchanged; only speed differs, and it can be slower when guesses miss.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum Speculative {
+    #[default]
+    Off,
+    /// Guess from repeated text in the conversation (`ngram-simple`). No extra memory; helps
+    /// when the answer repeats the input (code edits, quoting), slightly slower otherwise.
+    Ngram,
+    /// The model's own multi-token-prediction layers (`draft-mtp`), for builds that ship them
+    /// (catalog ids ending in `-mtp`). Other models run without speculation.
+    Mtp,
+    /// A separate small model (`draft-simple` with `draft_model`).
+    Draft,
 }
 
 /// llama.cpp KV cache element type.
@@ -168,6 +196,14 @@ pub struct MlxConfig {
     /// Python interpreter with `mlx-lm` installed. `None` = `$LLMARIO_HOME/venvs/mlx`, then the
     /// interpreter behind `mlx_lm.server` on `PATH`.
     pub python: Option<PathBuf>,
+    /// Registered MLX model used as a draft model (`--draft-model`); it must share the main
+    /// model's tokenizer. Used only with one request at a time (`latency` profile): MLX-LM turns
+    /// off request batching when a draft model is set.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub draft_model: Option<String>,
+    /// Tokens drafted per step (`--num-draft-tokens`). `None` = MLX-LM's default.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub draft_tokens: Option<u32>,
     pub extra_args: Vec<String>,
 }
 
@@ -333,6 +369,25 @@ mod tests {
         assert_eq!(KvCacheType::Q8_0.as_arg(), "q8_0");
         assert!(Config::from_toml("[runtime]\nmemory_profile = \"tiny\"").is_err());
         assert!(Config::from_toml("[backends.llamacpp]\nkv_cache_type = \"q4_0\"").is_err());
+    }
+
+    #[test]
+    fn speculative_settings_parse() {
+        let c = Config::default();
+        assert_eq!(c.backends.llamacpp.speculative, Speculative::Off);
+        assert!(c.backends.llamacpp.draft_model.is_none() && c.backends.mlx.draft_model.is_none());
+        let c = Config::from_toml(
+            "[backends.llamacpp]\nspeculative = \"draft\"\ndraft_model = \"small\"\ndraft_tokens = 2\n[backends.mlx]\ndraft_model = \"tiny\"",
+        )
+        .unwrap();
+        assert_eq!(c.backends.llamacpp.speculative, Speculative::Draft);
+        assert_eq!(c.backends.llamacpp.draft_model.as_deref(), Some("small"));
+        assert_eq!(c.backends.llamacpp.draft_tokens, Some(2));
+        assert_eq!(c.backends.mlx.draft_model.as_deref(), Some("tiny"));
+        for m in ["off", "ngram", "mtp"] {
+            Config::from_toml(&format!("[backends.llamacpp]\nspeculative = \"{m}\"")).unwrap();
+        }
+        assert!(Config::from_toml("[backends.llamacpp]\nspeculative = \"eagle\"").is_err());
     }
 
     #[test]
