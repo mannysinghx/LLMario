@@ -28,11 +28,16 @@ processes it launches. Out of scope: vulnerabilities inside upstream engines the
 | T12 | Brute-force of API key | Constant-time comparison; loopback default. Rate limiting is future work. |
 | T13 | DNS rebinding / drive-by requests from a web page | In loopback mode, requests whose `Host` is not a loopback name are rejected; handlers accept only `application/json` bodies, so a cross-site form post cannot reach them and a JSON post triggers a CORS preflight llmario does not answer. Tested end-to-end. |
 | T14 | Engine fetching from the network | MLX engines run with `HF_HUB_OFFLINE=1`/`TRANSFORMERS_OFFLINE=1`; llama.cpp is given a local file path only. |
+| T15 | Multi-machine sharding (engines exchanging tensors over the network) | **Not implemented.** The engines' cluster protocols (MLX distributed, llama.cpp RPC) are unauthenticated and unencrypted, so nothing in LLMario uses them. Requirements for any future implementation (dedicated link or authenticated tunnel, mutual authentication, lease-based shutdown, content-hash check) are in [MULTI_MACHINE.md](MULTI_MACHINE.md). |
+| T16 | Speculative-decoding settings taken from requests | Speculation (n-gram, MTP, draft model) is set only in `config.toml`; the gateway drops a client-sent `draft_model` (T2), so a request cannot make an engine load another model as a draft. |
 
 ## Residual risks
 
 - Loopback ports are visible to all local users on multi-user machines.
 - Upstream engine parsers (GGUF, safetensors, Jinja chat templates) process untrusted files.
   Run downloaded models from sources you trust.
+- A GPU/CPU split (`offload = "auto"`) keeps part of a model in RAM; on a 16 GB Mac this is
+  tight by design (see Phase 7 of [PHASES_16GB_AND_SPEED.md](PHASES_16GB_AND_SPEED.md)) and has
+  not been verified on 16 GB hardware.
 - Model licenses: "open weights" ≠ unrestricted. `llmario model info` shows the license label
   recorded in the catalog; users are responsible for the terms.
