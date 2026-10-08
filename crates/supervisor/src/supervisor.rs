@@ -147,7 +147,7 @@ impl Supervisor {
         let extra = self
             .adapters
             .get(&sel.backend)
-            .map(|a| a.extra_memory_bytes(&sel.model, &sel.profile, &self.cfg))
+            .map(|a| a.extra_memory_bytes(&sel.model, &sel.profile, &self.hw, &self.cfg))
             .unwrap_or(0);
         memory::estimate(
             &sel.model,

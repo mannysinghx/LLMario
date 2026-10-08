@@ -78,6 +78,7 @@ pub trait EngineAdapter: Send + Sync {
         &self,
         _model: &ModelEntry,
         _profile: &ResolvedProfile,
+        _hw: &HardwareReport,
         _cfg: &Config,
     ) -> u64 {
         0

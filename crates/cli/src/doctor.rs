@@ -42,6 +42,9 @@ pub async fn run(as_json: bool) -> anyhow::Result<()> {
             "hardware_fingerprint": hw.fingerprint(),
             "backends": backends,
             "profile": ResolvedProfile::resolve(cfg.runtime.profile, cfg.runtime.context),
+            "memory_profile": if memory::small_machine(hw, &cfg) { "small" } else { "standard" },
+            "kv_cache_type": cfg.backends.llamacpp.kv_cache_type,
+            "comfortable_bytes": memory::comfortable_bytes(hw),
             "models": models.iter().map(|(m, b, p, plan, ok)| json!({
                 "id": m.id, "format": m.format, "backend": b, "backend_available": ok,
                 "size_bytes": m.size_bytes, "quantization": m.quantization,
@@ -131,6 +134,19 @@ pub async fn run(as_json: bool) -> anyhow::Result<()> {
         "Headroom {} kept free for the OS and apps",
         fmt_bytes(memory::headroom_bytes(hw, &cfg))
     );
+    println!(
+        "Memory   {} reserves (runtime.memory_profile = \"{}\"); llama.cpp KV cache {}{}",
+        if memory::small_machine(hw, &cfg) {
+            "small"
+        } else {
+            "standard"
+        },
+        format!("{:?}", cfg.runtime.memory_profile).to_lowercase(),
+        cfg.backends.llamacpp.kv_cache_type.as_arg(),
+        memory::comfortable_bytes(hw)
+            .map(|c| format!("; comfortable up to {}", fmt_bytes(c)))
+            .unwrap_or_default()
+    );
 
     println!("\nModels ({} installed)", models.len());
     if models.is_empty() {
@@ -142,7 +158,8 @@ pub async fn run(as_json: bool) -> anyhow::Result<()> {
             format!("✗ {b} backend unavailable")
         } else if plan.fits {
             format!(
-                "✓ fits: ~{} of {}",
+                "✓ fits{}: ~{} of {}",
+                if plan.tight { ", tight" } else { "" },
                 fmt_bytes(plan.total_bytes),
                 fmt_bytes(plan.budget_bytes)
             )

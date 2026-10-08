@@ -8,7 +8,8 @@
 //! | batch / ubatch       | `-b` / `-ub`          |
 //! | memory plan          | `-ngl` (999 = all layers when the model fits) |
 //! | prefix reuse         | `--cache-reuse 256`   |
-//! Host-side prompt cache is capped with `--cache-ram` so it is inside the memory estimate.
+//! Host-side prompt cache is capped with `--cache-ram` so it is inside the memory estimate
+//! (smaller with `memory_profile = "small"`). `backends.llamacpp.kv_cache_type` sets `-ctk`/`-ctv`.
 //! Context checkpoints (copies of sliding-window caches and recurrent state, kept so a prompt
 //! prefix can be reused) are capped with `--ctx-checkpoints` and counted too.
 
@@ -20,6 +21,16 @@ use std::path::PathBuf;
 
 pub const TESTED_BUILD: u32 = 11146;
 const CACHE_RAM_MIB: u64 = 1024;
+/// Host prompt cache with the small memory profile (machines with 16 GB or less).
+const SMALL_CACHE_RAM_MIB: u64 = 256;
+
+fn cache_ram_mib(hw: &HardwareReport, cfg: &Config) -> u64 {
+    if llmario_supervisor::memory::small_machine(hw, cfg) {
+        SMALL_CACHE_RAM_MIB
+    } else {
+        CACHE_RAM_MIB
+    }
+}
 /// Context checkpoints per slot. llama.cpp keeps up to 32 by default; each holds a copy of the
 /// sliding-window caches and recurrent state. Measured on Gemma 4 12B (8k context, a long prompt
 /// and two follow-up turns): default peak 9.81 GiB (+2.54 GiB after load), 2 checkpoints
@@ -127,12 +138,13 @@ impl EngineAdapter for LlamaCppAdapter {
         &self,
         m: &llmario_registry::ModelEntry,
         p: &ResolvedProfile,
+        hw: &HardwareReport,
         cfg: &Config,
     ) -> u64 {
         // Checkpoints copy what does not grow with the context: sliding-window caches at their
         // cap and recurrent state, for every slot.
         let bounded = llmario_supervisor::memory::kv_plan(m, p, BackendKind::LlamaCpp, cfg).bounded;
-        CACHE_RAM_MIB * 1024 * 1024 + CTX_CHECKPOINTS * bounded
+        cache_ram_mib(hw, cfg) * 1024 * 1024 + CTX_CHECKPOINTS * bounded
     }
 
     fn launch(&self, ctx: &LaunchContext<'_>) -> Result<LaunchSpec, RuntimeError> {
@@ -180,13 +192,23 @@ impl EngineAdapter for LlamaCppAdapter {
             "--cache-reuse".into(),
             "256".into(),
             "--cache-ram".into(),
-            CACHE_RAM_MIB.to_string(),
+            cache_ram_mib(ctx.hw, ctx.cfg).to_string(),
             "--ctx-checkpoints".into(),
             CTX_CHECKPOINTS.to_string(),
             "--threads".into(),
             ctx.hw.recommended_threads().to_string(),
             "--no-webui".into(),
         ];
+        let kv = lcfg.kv_cache_type;
+        if kv != llmario_core::KvCacheType::F16 {
+            // A quantized V cache needs flash attention; llama.cpp turns it on with `auto`.
+            args.extend([
+                "-ctk".into(),
+                kv.as_arg().into(),
+                "-ctv".into(),
+                kv.as_arg().into(),
+            ]);
+        }
         args.extend(lcfg.extra_args.iter().cloned());
         Ok(LaunchSpec {
             program,
@@ -261,6 +283,37 @@ fn c_strings(bytes: &[u8], out: &mut std::collections::HashSet<String>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// An Apple Silicon Mac with `gib` of memory (GPU working set 2/3 of it).
+    fn mac(gib: u64) -> HardwareReport {
+        use llmario_hardware::{GpuApi, GpuInfo};
+        const GIB: u64 = 1 << 30;
+        HardwareReport {
+            os: "macos".into(),
+            os_version: "test".into(),
+            arch: "aarch64".into(),
+            cpu_brand: "Apple M4".into(),
+            physical_cores: 10,
+            logical_cores: 10,
+            performance_cores: None,
+            efficiency_cores: None,
+            cpu_features: vec![],
+            total_memory_bytes: gib * GIB,
+            available_memory_bytes: gib * GIB / 2,
+            apple_silicon: true,
+            unified_memory: true,
+            gpus: vec![GpuInfo {
+                vendor: "apple".into(),
+                name: "Apple M4".into(),
+                api: GpuApi::Metal,
+                memory_total_bytes: Some(gib * GIB * 2 / 3),
+                memory_free_bytes: None,
+                driver: None,
+                cores: None,
+            }],
+            notes: vec![],
+        }
+    }
 
     #[test]
     fn extracts_standalone_c_strings() {
@@ -341,15 +394,16 @@ mod tests {
         let p = ResolvedProfile::resolve(llmario_core::ProfileKind::Latency, None);
         let mib = 1024 * 1024;
         let a = LlamaCppAdapter;
+        let hw = mac(64);
         assert_eq!(
-            a.extra_memory_bytes(&m, &p, &Config::default()),
+            a.extra_memory_bytes(&m, &p, &hw, &Config::default()),
             (1024 + 2 * 480) * mib
         );
         // Plain models have nothing to checkpoint.
         let mut plain = m.clone();
         plain.shape.as_mut().unwrap().kv_groups.clear();
         assert_eq!(
-            a.extra_memory_bytes(&plain, &p, &Config::default()),
+            a.extra_memory_bytes(&plain, &p, &hw, &Config::default()),
             1024 * mib
         );
     }
@@ -359,38 +413,12 @@ mod tests {
     /// gpt-oss-20b's weights alone (11.28 GiB) are over budget either way.
     #[test]
     fn catalog_models_on_a_16_gb_mac() {
-        use llmario_hardware::{GpuApi, GpuInfo};
-        const GIB: u64 = 1 << 30;
-        let hw = HardwareReport {
-            os: "macos".into(),
-            os_version: "test".into(),
-            arch: "aarch64".into(),
-            cpu_brand: "Apple M4".into(),
-            physical_cores: 10,
-            logical_cores: 10,
-            performance_cores: None,
-            efficiency_cores: None,
-            cpu_features: vec![],
-            total_memory_bytes: 16 * GIB,
-            available_memory_bytes: 8 * GIB,
-            apple_silicon: true,
-            unified_memory: true,
-            gpus: vec![GpuInfo {
-                vendor: "apple".into(),
-                name: "Apple M4".into(),
-                api: GpuApi::Metal,
-                memory_total_bytes: Some(16 * GIB * 2 / 3),
-                memory_free_bytes: None,
-                driver: None,
-                cores: None,
-            }],
-            notes: vec![],
-        };
+        let hw = mac(16);
         let catalog = llmario_registry::Catalog::builtin();
         let plan = |id: &str, cfg: &Config| {
             let m = catalog.get(id).unwrap().planning_entry();
             let p = ResolvedProfile::resolve(llmario_core::ProfileKind::Latency, None);
-            let extra = LlamaCppAdapter.extra_memory_bytes(&m, &p, cfg);
+            let extra = LlamaCppAdapter.extra_memory_bytes(&m, &p, &hw, cfg);
             llmario_supervisor::memory::estimate(&m, &p, BackendKind::LlamaCpp, &hw, cfg, extra, 0)
         };
         let now = Config::default();
@@ -409,6 +437,64 @@ mod tests {
             "the old formula refused Gemma 4 12B"
         );
         assert!(!plan("gpt-oss-20b-gguf-mxfp4", &now).fits);
+    }
+
+    /// `memory_profile` and `kv_cache_type` reach llama-server's flags and the memory extras;
+    /// the default flags are unchanged.
+    #[test]
+    fn memory_profile_and_kv_cache_type_reach_the_launch() {
+        use llmario_core::{KvCacheType, MemoryProfile};
+        let m = llmario_registry::Catalog::builtin()
+            .get("qwen3-8b-gguf-q4km")
+            .unwrap()
+            .planning_entry();
+        let p = ResolvedProfile::resolve(llmario_core::ProfileKind::Latency, None);
+        let status = BackendStatus {
+            kind: BackendKind::LlamaCpp,
+            available: true,
+            path: Some("/usr/bin/llama-server".into()),
+            version: None,
+            tested_version: String::new(),
+            detail: String::new(),
+            architectures: None,
+        };
+        let launch = |hw: &HardwareReport, cfg: &Config| {
+            let plan =
+                llmario_supervisor::memory::estimate(&m, &p, BackendKind::LlamaCpp, hw, cfg, 0, 0);
+            let ctx = LaunchContext {
+                model: &m,
+                profile: &p,
+                hw,
+                cfg,
+                memory: &plan,
+                status: &status,
+                port: 1,
+            };
+            (
+                LlamaCppAdapter.launch(&ctx).unwrap().args,
+                LlamaCppAdapter.extra_memory_bytes(&m, &p, hw, cfg),
+            )
+        };
+        let flag = |a: &[String], f: &str| a.iter().position(|x| x == f).map(|i| a[i + 1].clone());
+        let (std_args, std_extra) = launch(&mac(16), &Config::default());
+        assert_eq!(flag(&std_args, "--cache-ram").as_deref(), Some("1024"));
+        assert!(flag(&std_args, "-ctk").is_none() && flag(&std_args, "-ctv").is_none());
+
+        let mut cfg = Config::default();
+        cfg.runtime.memory_profile = MemoryProfile::Auto;
+        cfg.backends.llamacpp.kv_cache_type = KvCacheType::Q8_0;
+        let (args, extra) = launch(&mac(16), &cfg);
+        assert_eq!(flag(&args, "--cache-ram").as_deref(), Some("256"));
+        assert_eq!(flag(&args, "-ctk").as_deref(), Some("q8_0"));
+        assert_eq!(flag(&args, "-ctv").as_deref(), Some("q8_0"));
+        assert_eq!(
+            std_extra - extra,
+            768 << 20,
+            "plain model: only the host cache shrinks"
+        );
+        // `auto` keeps the standard reserves on a larger machine.
+        let (big, _) = launch(&mac(64), &cfg);
+        assert_eq!(flag(&big, "--cache-ram").as_deref(), Some("1024"));
     }
 
     #[test]

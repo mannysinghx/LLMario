@@ -7,7 +7,7 @@ pub mod os;
 pub mod paths;
 pub mod types;
 
-pub use config::{Config, KvAccounting};
+pub use config::{Config, KvAccounting, KvCacheType, MemoryProfile};
 pub use error::RuntimeError;
 pub use paths::Paths;
 pub use types::{BackendKind, ModelFormat, ProfileKind, ResolvedProfile};
