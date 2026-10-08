@@ -34,11 +34,11 @@ pub struct Sibling {
 
 /// The other edition whose running engines this one warns about. Its files are only ever
 /// read: their memory is outside this edition's plan, so loading models in both can make the
-/// computer swap.
+/// computer swap. For production this is LLMario Beta (the beta branch points it back here).
 pub const SIBLING: Option<Sibling> = Some(Sibling {
-    name: "LLMario",
-    home_dir: ".llmario",
-    env_prefix: "LLMARIO",
+    name: "LLMario Beta",
+    home_dir: ".llmario-beta",
+    env_prefix: "LLMARIO_BETA",
 });
 
 pub fn user_agent() -> String {
