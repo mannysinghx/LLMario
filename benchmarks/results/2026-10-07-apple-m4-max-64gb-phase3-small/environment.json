@@ -1,0 +1,63 @@
+{
+  "version": "0.3.0-beta.1",
+  "hardware": {
+    "apple_silicon": true,
+    "arch": "aarch64",
+    "available_memory_bytes": 31839698944,
+    "cpu_brand": "Apple M4 Max",
+    "cpu_features": [
+      "neon",
+      "dotprod",
+      "fp16",
+      "i8mm",
+      "bf16"
+    ],
+    "efficiency_cores": 4,
+    "gpus": [
+      {
+        "api": "metal",
+        "cores": 40,
+        "driver": null,
+        "memory_free_bytes": null,
+        "memory_total_bytes": 51539607552,
+        "name": "Apple M4 Max",
+        "vendor": "apple"
+      }
+    ],
+    "logical_cores": 16,
+    "notes": [
+      "GPU working set estimated as 75% of unified memory (macOS default; set iogpu.wired_limit_mb to change)"
+    ],
+    "os": "macos",
+    "os_version": "macOS 27.0.1",
+    "performance_cores": 12,
+    "physical_cores": 16,
+    "total_memory_bytes": 68719476736,
+    "unified_memory": true
+  },
+  "hardware_fingerprint": "4c4f81b625175e7f",
+  "profile": {
+    "batch": 2048,
+    "ctx_per_slot": 8192,
+    "default_max_tokens": 1024,
+    "kind": "latency",
+    "parallel": 1,
+    "prompt_cache_entries": 2,
+    "prompt_concurrency": 1,
+    "ubatch": 512
+  },
+  "backends": [
+    {
+      "kind": "llamacpp",
+      "available": true,
+      "version": "0.5.0 (build 11146, commit 7fe450e19)",
+      "tested_version": "build 11146 (commit 7fe450e19)"
+    },
+    {
+      "kind": "mlx",
+      "available": true,
+      "version": "mlx-lm 0.31.3 / mlx 0.32.2",
+      "tested_version": "mlx-lm 0.31.3 / mlx 0.32.2"
+    }
+  ]
+}

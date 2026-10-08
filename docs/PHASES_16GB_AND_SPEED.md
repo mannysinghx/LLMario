@@ -26,8 +26,8 @@ Two findings shape the order:
 |---|---|---|---|---|---|
 | 0 | [LLMario Beta app](#phase-0--llmario-beta-app) ✅ built | A beta that installs, runs and stores data separately from production | — | S–M | Low |
 | 1 | [Measurement baseline](#phase-1--measurement-baseline) 🟡 harness built | Numbers we can trust, on real 16 GB hardware | 0 | S | Low |
-| 2 | [Accurate KV accounting](#phase-2--accurate-kv-accounting) | Gemma 4 12B and Qwen3.5 9B (MLX) fit 16 GB Macs | 1 | M | Medium |
-| 3 | [Small-machine memory profile](#phase-3--small-machine-memory-profile) | Ministral 3 14B and Phi-4 fit; cheaper long-context decode | 1, 2 | S–M | Low–medium |
+| 2 | [Accurate KV accounting](#phase-2--accurate-kv-accounting) 🟡 built | Gemma 4 12B and Qwen3.5 9B (MLX) fit 16 GB Macs | 1 | M | Medium |
+| 3 | [Small-machine memory profile](#phase-3--small-machine-memory-profile) 🟡 built, opt-in | Ministral 3 14B and Phi-4 fit; cheaper long-context decode | 1, 2 | S–M | Low–medium |
 | 4 | [Speculative decoding](#phase-4--speculative-decoding) | More than one token per weight read (+12–30% measured with a draft model) | 1 | M | Low |
 | 5 | [16 GB catalog tier](#phase-5--16-gb-catalog-tier) | Fast MoE and 3-bit options recommended by default | 2, 3, 4 | S | Low |
 | 6 | [Speed planner](#phase-6--speed-planner) | "~N tok/s on this computer" and automatic choice of the fastest setup | 1–5 | L | Medium |
@@ -355,6 +355,47 @@ change recorded. An 8-bit KV cache also halves KV reads at long context, which h
 
 **Risk:** 8-bit KV may lower quality on some models, and smaller caches reduce prefix reuse (time to
 first token). Opt-in until measured.
+
+**Status (2026-10-07):** implemented on `beta`, opt-in, and measured on the M4 Max development
+machine. Not yet measured on 16 GB hardware, so the defaults are unchanged.
+
+- **Settings:**
+  - `[backends.llamacpp] kv_cache_type = "q8_0"` passes `-ctk q8_0 -ctv q8_0`. The planner sizes
+    the KV cache at 17/32 of f16; recurrent state stays f32.
+  - `[runtime] memory_profile = "small"`, or `"auto"` (small on 16 GB or less). Small means
+    llama.cpp `--cache-ram 256`, and for MLX 1 prompt-cache entry and a 512 MiB buffer cache.
+- **8-bit KV on build 11146** (Metal and CPU): llama.cpp turns flash attention on itself
+  ("required for quantized V cache"), and the models answered correctly. Every cache came out at
+  exactly 17/32 of f16 (Qwen3.5 9B 256 → 136 MiB, Gemma 4 12B 608 → 323 MiB, gpt-oss-20b 210 →
+  111.6 MiB).
+- **"Fits, tight"** (display only, on by default): on machines with 16 GB or less, a plan above 5/8
+  of RAM (10 GiB on 16 GB) shows as tight in the CLI, `doctor` and the desktop app. `doctor` also
+  shows the memory profile and KV cache type in effect.
+- **Planner on a 16 GB Mac** (computed; these two models are not downloaded):
+
+  | Model | Standard | Small | Small + q8_0 |
+  |---|---|---|---|
+  | Ministral 3 14B | 11.15 GiB, refused | 10.40, fits (tight) | 9.81, fits |
+  | Phi-4 | 11.61, refused | 10.86, refused | 10.12, fits (tight) |
+
+Exit check ([results](../benchmarks/results/2026-10-07-apple-m4-max-64gb-phase3-small/SUMMARY.md),
+four models, standard then small + q8_0):
+
+| Criterion | Result |
+|---|---|
+| Measured peak at or below the estimate | Met in both runs: estimate ÷ peak 1.12–1.28 with the Phase 3 settings. Peaks fell by 0.31–1.47 GiB. |
+| Quality checks unchanged with 8-bit KV | Met: 3/3 on every model in both runs. |
+| tok/s change recorded | Recorded: Qwen3.5 9B −3%, Gemma 4 12B +8%, gpt-oss-20b −11%, Qwen3 8B (MLX) 0%. Not conclusive: two runs started at load 6–7.5. |
+
+Open items:
+
+- **Measure on 16 GB hardware,** including Ministral 3 14B and Phi-4 (about 8–9 GiB of downloads
+  each), before making `memory_profile = "auto"` or `q8_0` the default.
+- **Re-measure speed on a quiet machine,** to see whether q8_0 costs decode speed (gpt-oss-20b's
+  −11% came with a higher load).
+- **Prefix reuse with the smaller host cache** is not measured (time to first token for repeated
+  long prompts).
+- **q8_0 on Windows** (Vulkan or CUDA builds) is untested; it needs flash attention on that device.
 
 ## Phase 4 — Speculative decoding
 
