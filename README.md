@@ -25,7 +25,7 @@ loading it, and gives you three ways to use it:
 
 🌐 **Website:** [llmario.com](https://llmario.com): how it works and a 3-step setup guide.
 
-⬇️ **Download:** [macOS (.dmg)](https://github.com/mannysinghx/LLMario/releases/download/v0.2.0/LLMario-0.2.0-macos-universal.dmg) · [Windows, preview (.exe)](https://github.com/mannysinghx/LLMario/releases/download/v0.2.0/LLMario-0.2.0-windows-x64-setup.exe) · [Windows command line (.zip)](https://github.com/mannysinghx/LLMario/releases/download/v0.2.0/llmario-0.2.0-windows-x64.zip), with checksums on the [releases page](https://github.com/mannysinghx/LLMario/releases/latest). The Windows files are not code-signed yet: if SmartScreen warns, click **More info → Run anyway**.
+⬇️ **Download:** [macOS (.dmg)](https://github.com/mannysinghx/LLMario/releases/download/v0.2.1/LLMario-0.2.1-macos-universal.dmg) · [Windows, preview (.exe)](https://github.com/mannysinghx/LLMario/releases/download/v0.2.1/LLMario-0.2.1-windows-x64-setup.exe) · [Windows command line (.zip)](https://github.com/mannysinghx/LLMario/releases/download/v0.2.1/llmario-0.2.1-windows-x64.zip), with checksums on the [releases page](https://github.com/mannysinghx/LLMario/releases/latest). The Windows files are not code-signed yet: if SmartScreen warns, click **More info → Run anyway**.
 
 Everything runs on your machine. Prompts and replies are never sent anywhere, and they never appear in logs.
 
