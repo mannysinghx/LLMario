@@ -28,11 +28,11 @@ Two findings shape the order:
 | 1 | [Measurement baseline](#phase-1--measurement-baseline) 🟡 harness built | Numbers we can trust, on real 16 GB hardware | 0 | S | Low |
 | 2 | [Accurate KV accounting](#phase-2--accurate-kv-accounting) 🟡 built | Gemma 4 12B and Qwen3.5 9B (MLX) fit 16 GB Macs | 1 | M | Medium |
 | 3 | [Small-machine memory profile](#phase-3--small-machine-memory-profile) 🟡 built, opt-in | Ministral 3 14B and Phi-4 fit; cheaper long-context decode | 1, 2 | S–M | Low–medium |
-| 4 | [Speculative decoding](#phase-4--speculative-decoding) | More than one token per weight read (+12–30% measured with a draft model) | 1 | M | Low |
-| 5 | [16 GB catalog tier](#phase-5--16-gb-catalog-tier) | Fast MoE and 3-bit options recommended by default | 2, 3, 4 | S | Low |
-| 6 | [Speed planner](#phase-6--speed-planner) | "~N tok/s on this computer" and automatic choice of the fastest setup | 1–5 | L | Medium |
-| 7 | [GPU/CPU split and MoE offload](#phase-7--gpucpu-split-and-moe-expert-offload) | gpt-oss-20b and 27B at 3-bit run on 16 GB Macs (tight, slower) | 1, 2 | M | Medium–high |
-| 8 | [Multi-machine sharding](#phase-8--multi-machine-sharding-optional) (optional) | Models larger than one machine | 7, threat-model update | L | High |
+| 4 | [Speculative decoding](#phase-4--speculative-decoding) 🟡 built (MTP on by default) | More than one token per weight read (+12–30% measured with a draft model) | 1 | M | Low |
+| 5 | [16 GB catalog tier](#phase-5--16-gb-catalog-tier) 🟡 built | Fast MoE and 3-bit options recommended by default | 2, 3, 4 | S | Low |
+| 6 | [Speed planner](#phase-6--speed-planner) 🟡 built | "~N tok/s on this computer" and automatic choice of the fastest setup | 1–5 | L | Medium |
+| 7 | [GPU/CPU split and MoE offload](#phase-7--gpucpu-split-and-moe-expert-offload) 🟡 built, opt-in | gpt-oss-20b and 27B at 3-bit run on 16 GB Macs (tight, slower) | 1, 2 | M | Medium–high |
+| 8 | [Multi-machine sharding](#phase-8--multi-machine-sharding-optional) (optional) 📝 design only | Models larger than one machine | 7, threat-model update | L | High |
 
 Why this order:
 
@@ -431,6 +431,40 @@ workload down is off by default for it.
 
 **Risk:** low; it is opt-in and engine-side. Undo by turning the config off.
 
+**Status (2026-10-07):** implemented on `beta` and measured on the M4 Max development machine
+([results](../benchmarks/results/2026-10-07-apple-m4-max-64gb-phase4/SUMMARY.md)).
+
+- **Settings:** `[backends.llamacpp] speculative = "auto" | "off" | "ngram" | "mtp" | "draft"`, with
+  `draft_model` and `draft_tokens`; `[backends.mlx] draft_model` and `draft_tokens` (one request at a
+  time). Requests can never set them.
+- **Planner:** n-gram adds no memory; MTP adds one copy of the recurrent state per drafted token, a
+  KV cache for the MTP layers and ~160 MiB of compute; a draft model adds its weights, its own
+  cache and compute. All matched llama.cpp's own allocations; estimates stayed at or above the
+  measured peak in every speculative run (1.07–1.58).
+- **Catalog:** the six unsloth MTP builds (Qwen3.5 0.8B, 2B, 4B, 9B; Qwen3.6 27B, 35B-A3B), ids
+  ending in `-mtp`, with an "MTP" badge in the desktop library. MTP layers are read from the GGUF
+  header (`nextn_predict_layers`).
+- **Bench** records draft acceptance; `benchmarks/suites/speculative.toml` covers prose, a code edit
+  and quoting.
+
+Exit check (unique prompts, quiet machine, against each model's own baseline):
+
+| Mode | Prose | Code edit | Quoting | Quality | Default |
+|---|---|---|---|---|---|
+| MTP, 1 drafted token (Qwen3.5 9B MTP) | +11% | +19% | +19% | unchanged | **on** (`auto`, MTP builds only) |
+| n-gram (Qwen3.5 9B / Gemma 4 12B / gpt-oss-20b) | +1% / −8% / +8% | −2% / −10% / +28% | −4% / −2% / +225% | unchanged | off |
+| llama.cpp draft model (Qwen3.5 9B + 0.8B) | −47% | −33% | −23% | unchanged | off |
+| MLX draft model (Qwen3 8B + 1.7B) | +17% | +46% | +40% | **one answer changed** | off |
+
+MTP needs 1 drafted token per step: llama.cpp's default of 3 slowed prose by 41% on Qwen3.5 9B.
+
+Open items:
+
+- **Measure on 16 GB hardware.** Gains on a base chip (68–120 GB/s) are not measured.
+- **n-gram for code and quoting:** a big win when output repeats the input (gpt-oss-20b quoting
+  +225%), a small loss otherwise. Per-request mode selection would need the workload; not planned.
+- **MTP builds exist only for Qwen3.5 and Qwen3.6** (unsloth). MLX-LM discards MTP weights.
+
 ## Phase 5 — 16 GB catalog tier
 
 **Goal:** whatever a 16 GB user downloads fits comfortably and is fast.
@@ -449,6 +483,28 @@ workload down is off by default for it.
 speed set from Phase 1.
 
 **Why here:** it needs the Phase 2–3 estimates and the Phase 4 MTP support to know what qualifies.
+
+**Status (2026-10-07):** implemented on `beta`; the exit check run on a simulated 16 GB Mac.
+
+- **Catalog:** 3-bit builds of the 14–27B families, labelled with the quality cost (Q3_K_M for
+  Ministral 3 14B, Phi-4, Mistral Small 3.2 24B, Devstral Small 2 24B, Qwen3.6 27B, Gemma 4 26B-A4B;
+  Q3_K_XL for Qwen3.8 27B; Phi-4 3-bit for MLX), plus the MTP builds from Phase 4. The catalog has 83
+  downloads.
+- **Recommendations** (one per family): only variants that fit comfortably (not "tight") and run at
+  least 10 tok/s by the Phase 6 speed planner; then 4-bit before 3-bit, the preferred engine, and
+  the plain build before the MTP one.
+- **Filters:** `model catalog --comfortable`; "Fits comfortably" in the desktop library.
+
+Exit check on a simulated 16 GB Mac (16 GB RAM, 10.67 GiB GPU limit, base M4 at 120 GB/s, default
+settings): 20 families get a recommendation, **every one comfortable and predicted at 15 tok/s or
+more** (Qwen3.5 9B MLX 9.01 GiB ~19 tok/s; Ministral 3 14B Q3_K_M 9.58 GiB ~15 tok/s; LFM2.5 8B-A1B
+7.16 GiB ~67 tok/s). Families with no comfortable variant get none: Gemma 4 12B (10.16 GiB, tight;
+9.41 GiB with `memory_profile = "auto"`), Phi-4, the 24–35B models and gpt-oss-20b (Phase 7).
+
+Open items:
+
+- **Confirm on real 16 GB hardware** (fit and speed).
+- **Small MoE models are the fastest that fit** (LFM2.5 8B-A1B); add more as publishers release them.
 
 ## Phase 6 — Speed planner
 
@@ -477,6 +533,43 @@ speed set from Phase 1.
 **Exit:** predicted tok/s is within ±20% of measured on the reference set, and recommendations change
 only when a measurement supports it.
 
+**Status (2026-10-07):** implemented on `beta`; calibrated and checked on the M4 Max.
+
+- **Bytes read per token** come from the model files: the GGUF tensor index or the safetensors
+  headers. MoE experts count at the share used per token (gpt-oss-20b reads 21% of its file per
+  token, Qwen3.6 35B-A3B 12%); the embedding table is skipped next to a separate output head.
+  Stored in the registry and the catalog (82 of 83 entries).
+- **Prediction:** time per token = bytes read ÷ (published bandwidth × efficiency) + a fixed
+  per-token overhead. Apple's published bandwidth per chip is built in.
+- **Autotune:** `bench` records each measured decode speed in `autotune.json`, keyed by hardware,
+  engine version, model hash, profile, speculative mode, GPU/CPU split and KV cache type. A
+  measured model shows its measured speed; others use this computer's measured bandwidth (from
+  runs with no speculation and no split) once it has any.
+- **Shown** as "~N tok/s" in `model catalog`, `model fit` (with bytes read per token) and the desktop
+  app. When two installed variants of a family are both measured, the faster one is chosen.
+- **Mode selection:** `speculative = "auto"` (Phase 4).
+
+Exit check ([calibration](../benchmarks/results/2026-10-07-apple-m4-max-64gb-phase6/SUMMARY.md)):
+calibrated on Qwen3 1.7B and Gemma 4 12B (llama.cpp: 90% efficiency, 4.65 ms per token) and Qwen3
+1.7B and Qwen3.8 27B (MLX: 73%, 1.22 ms), chosen before seeing the results. Held-out models:
+
+| Model | Measured | Predicted | Error |
+|---|---:|---:|---:|
+| Qwen3.5 9B (GGUF) | 61.1 | 65.8 | +7.7% |
+| Qwen3.5 9B MTP (GGUF) | 63.4 | 64.2 | +1.3% |
+| gpt-oss-20b (GGUF, MoE) | 105.6 | 100.2 | −5.1% |
+| Qwen3 8B (MLX) | 87.3 | 81.2 | −7.0% |
+| Llama 3.2 3B (MLX) | 162.2 | 165.0 | +1.7% |
+| Qwen3.5 0.8B (GGUF) | 268.6 | 171.1 | −36% |
+
+**Met for the reference set** (all within ±8%). Below ~1B parameters the prediction is conservative.
+
+Open items:
+
+- **Calibrate on a base chip.** The per-token overhead was fitted on an M4 Max; on a base M4 it may
+  differ. The first `bench` on any machine replaces the published figure with a measured one.
+- **NVIDIA bandwidth** has no table; predictions there need a measurement first.
+
 ## Phase 7 — GPU/CPU split and MoE expert offload
 
 **Goal:** run models somewhat larger than the GPU limit, knowing it costs speed.
@@ -499,6 +592,51 @@ load that would swap is refused cleanly.
 **Why late:** it needs 16 GB hardware to validate, and the results are tight (12–13 GiB of 16) and
 slower. It is useful, but not "comfortable".
 
+**Status (2026-10-07):** implemented on `beta`, opt-in (`[backends.llamacpp] offload = "auto"`);
+the exit check run on a simulated 16 GB Mac. Not run on 16 GB hardware or on NVIDIA.
+
+- **Planner:** on Apple Silicon the plan checks two limits, the GPU working set (or
+  `gpu_memory_limit_gb`) and RAM. A model over the GPU limit that fits in RAM is split: for MoE
+  models the expert weights of the first N layers stay in RAM for the CPU (`--n-cpu-moe N`, the
+  smallest N that brings the GPU part under the limit with 512 MiB to spare); dense models get a
+  partial `-ngl`. With `offload` off (the default) such a model is refused, as before. A model
+  larger than RAM is refused either way. MLX cannot split.
+- **Loading:** a split model is loaded with `--load-mode none` instead of memory-mapped. Measured
+  on gpt-oss-20b with the experts of 8 of 24 layers on the CPU (direct `llama-server`, build 11146):
+
+  | Loading | GPU buffer | Peak | Decode |
+  |---|---:|---:|---:|
+  | memory-mapped (llama.cpp default) | 11.5 GiB | 14.74 GiB | 65.8 tok/s |
+  | memory-mapped, `--no-repack` | 11.5 GiB | 11.71 GiB | 59.6 tok/s |
+  | `--load-mode none` (used) | 7.53 GiB | 12.50 GiB | 74.1 tok/s |
+
+  Memory-mapped, Metal maps the whole file as one GPU buffer (over a 16 GB Mac's 10.67 GiB limit)
+  and the CPU's repacked copy of its experts comes on top.
+- **Speed:** the CPU's part of each token's read counts at 15% of the published bandwidth
+  (predicted 70.0 tok/s, measured 70.7). `model fit` notes the split and that it is slower.
+- **Autotune:** a split run is its own setup and never stands for the machine's bandwidth. Before
+  this was keyed, one split run lowered every other prediction (Qwen3.5 9B: 66 → 36 tok/s; it
+  runs at 61).
+- **NVIDIA:** `--n-cpu-moe` for MoE models over the VRAM; the existing partial offload for dense
+  models is unchanged. Both unvalidated.
+
+Exit check ([results](../benchmarks/results/2026-10-07-apple-m4-max-64gb-phase7/SUMMARY.md)):
+gpt-oss-20b (11.28 GiB of weights) on the M4 Max with the GPU limited to a 16 GB Mac's 10.67 GiB and
+`memory_profile = "small"`:
+
+| Setup | Estimate | Peak | Decode |
+|---|---:|---:|---:|
+| `offload` off | refused (13.29 GiB over the 10.67 GiB GPU limit) | – | – |
+| split, memory-mapped (first run) | 13.29 GiB | **14.75 GiB** | 69.5 tok/s |
+| split, `--load-mode none` (final) | 13.29 GiB | 12.56 GiB | 70.7 tok/s |
+| all on the GPU, no limit, standard profile (Phase 6, for comparison) | 14.04 GiB | 11.51 GiB | 105.6 tok/s |
+
+**Met on the simulation:** it loads, the estimate stays above the measured peak, and decode is 70.7
+tok/s (a third slower than all on the GPU). The first run's peak exceeded the estimate; that led to
+the loading change. On a real 16 GB Mac the plan's 14 GiB budget (RAM minus 2 GiB) is the swap
+guard: a larger load is refused (unit-tested). Open: the run on 16 GB hardware, where macOS's
+own memory use decides whether 12.6 GiB stays out of swap.
+
 ## Phase 8 — Multi-machine sharding (optional)
 
 This is the only approach that adds memory.
@@ -511,6 +649,13 @@ This is the only approach that adds memory.
 
 Prerequisites: a threat-model update and supervision of processes across several hosts. Not
 recommended until phases 2–7 are done.
+
+**Status (2026-10-07): design only**, by decision. The threat model gains T15, and
+[MULTI_MACHINE.md](MULTI_MACHINE.md) records what the engines offer (checked: mlx-lm 0.31.3 serves
+tensor-parallel and pipelined models across machines; the Homebrew llama.cpp has no RPC), the threats
+(unauthenticated, unencrypted tensor traffic), the requirements for any implementation (dedicated
+link or authenticated tunnel, mutual authentication, lease-based shutdown, content-hash check) and
+exit criteria. Nothing opens a network port.
 
 ## Graduating a phase to production
 
