@@ -136,6 +136,28 @@ notes = "Vision-language model; LLMario uses its text abilities."
 shape = { n_layers = 40, n_heads = 16, n_kv_heads = 2, head_dim = 256, hidden_size = 2048, context_max = 262144, kv_groups = [{ layers = 10, n_kv_heads = 2, head_dim = 256 }], state_bytes_per_seq = 65863680 }
 
 [[models]]
+id = "qwen3.6-35b-a3b-gguf-q4km-mtp"
+family = "qwen3.6-35b-a3b"
+name = "Qwen3.6 35B-A3B"
+publisher = "Alibaba Qwen"
+released = "2026-04"
+params = "35B (3B active)"
+tasks = ["chat", "reasoning", "coding", "agents", "multilingual"]
+format = "gguf"
+repo = "unsloth/Qwen3.6-35B-A3B-MTP-GGUF"
+revision = "5bc3e238d916f48a861bac2f8a1990a0e9b7e98d"
+files = ["Qwen3.6-35B-A3B-UD-Q4_K_M.gguf"]
+approx_bytes = 22663387424
+license = "Apache-2.0"
+gated = false
+architecture = "qwen35moe"
+quantization = "Q4_K_M"
+context_max = 262144
+description = "Mixture-of-experts model: 35B knowledge with only 3B parameters active per token, so it answers much faster than dense models of similar quality."
+notes = "Vision-language model; LLMario uses its text abilities."
+shape = { n_layers = 41, n_heads = 16, n_kv_heads = 2, head_dim = 256, hidden_size = 2048, context_max = 262144, mtp_layers = 1, kv_groups = [{ layers = 10, n_kv_heads = 2, head_dim = 256 }], state_bytes_per_seq = 65863680 }
+
+[[models]]
 id = "qwen3.6-27b-mlx-4bit"
 family = "qwen3.6-27b"
 name = "Qwen3.6 27B"
@@ -178,6 +200,28 @@ context_max = 262144
 description = "Dense 27B general model from the Qwen3.6 generation; steady all-rounder for writing, analysis and code."
 notes = "Vision-language model; LLMario uses its text abilities."
 shape = { n_layers = 64, n_heads = 24, n_kv_heads = 4, head_dim = 256, hidden_size = 5120, context_max = 262144, kv_groups = [{ layers = 16, n_kv_heads = 4, head_dim = 256 }], state_bytes_per_seq = 156893184 }
+
+[[models]]
+id = "qwen3.6-27b-gguf-q4km-mtp"
+family = "qwen3.6-27b"
+name = "Qwen3.6 27B"
+publisher = "Alibaba Qwen"
+released = "2026-04"
+params = "27B"
+tasks = ["chat", "reasoning", "coding", "multilingual"]
+format = "gguf"
+repo = "unsloth/Qwen3.6-27B-MTP-GGUF"
+revision = "5cb35eb3dcbf52dbce5f87dbc64df6aaffadcace"
+files = ["Qwen3.6-27B-Q4_K_M.gguf"]
+approx_bytes = 17106773120
+license = "Apache-2.0"
+gated = false
+architecture = "qwen35"
+quantization = "Q4_K_M"
+context_max = 262144
+description = "Dense 27B general model from the Qwen3.6 generation; steady all-rounder for writing, analysis and code."
+notes = "Vision-language model; LLMario uses its text abilities."
+shape = { n_layers = 65, n_heads = 24, n_kv_heads = 4, head_dim = 256, hidden_size = 5120, context_max = 262144, mtp_layers = 1, kv_groups = [{ layers = 16, n_kv_heads = 4, head_dim = 256 }], state_bytes_per_seq = 156893184 }
 
 [[models]]
 id = "qwen3.5-9b-mlx-4bit"
@@ -224,6 +268,28 @@ notes = "Vision-language model; LLMario uses its text abilities."
 shape = { n_layers = 32, n_heads = 16, n_kv_heads = 4, head_dim = 256, hidden_size = 4096, context_max = 262144, kv_groups = [{ layers = 8, n_kv_heads = 4, head_dim = 256 }], state_bytes_per_seq = 52690944 }
 
 [[models]]
+id = "qwen3.5-9b-gguf-q4km-mtp"
+family = "qwen3.5-9b"
+name = "Qwen3.5 9B"
+publisher = "Alibaba Qwen"
+released = "2026-03"
+params = "9B"
+tasks = ["chat", "reasoning", "coding", "multilingual"]
+format = "gguf"
+repo = "unsloth/Qwen3.5-9B-MTP-GGUF"
+revision = "9716a636ee4bddc3fed678220b7a33dd2a4160ae"
+files = ["Qwen3.5-9B-Q4_K_M.gguf"]
+approx_bytes = 5868826976
+license = "Apache-2.0"
+gated = false
+architecture = "qwen35"
+quantization = "Q4_K_M"
+context_max = 262144
+description = "Efficient 9B model covering 201 languages, with good reasoning and coding for its size. A strong default for mid-range laptops."
+notes = "Vision-language model; LLMario uses its text abilities."
+shape = { n_layers = 33, n_heads = 16, n_kv_heads = 4, head_dim = 256, hidden_size = 4096, context_max = 262144, mtp_layers = 1, kv_groups = [{ layers = 8, n_kv_heads = 4, head_dim = 256 }], state_bytes_per_seq = 52690944 }
+
+[[models]]
 id = "qwen3.5-4b-mlx-4bit"
 family = "qwen3.5-4b"
 name = "Qwen3.5 4B"
@@ -266,6 +332,28 @@ context_max = 262144
 description = "Compact Qwen3.5 model for small laptops: quick answers, summaries and light coding help."
 notes = "Vision-language model; LLMario uses its text abilities."
 shape = { n_layers = 32, n_heads = 16, n_kv_heads = 4, head_dim = 256, hidden_size = 2560, context_max = 262144, kv_groups = [{ layers = 8, n_kv_heads = 4, head_dim = 256 }], state_bytes_per_seq = 52690944 }
+
+[[models]]
+id = "qwen3.5-4b-gguf-q4km-mtp"
+family = "qwen3.5-4b"
+name = "Qwen3.5 4B"
+publisher = "Alibaba Qwen"
+released = "2026-03"
+params = "4B"
+tasks = ["chat", "reasoning", "multilingual", "small"]
+format = "gguf"
+repo = "unsloth/Qwen3.5-4B-MTP-GGUF"
+revision = "86835bf9949e4d14d6860f7910b1340ad4f271a9"
+files = ["Qwen3.5-4B-Q4_K_M.gguf"]
+approx_bytes = 2834975040
+license = "Apache-2.0"
+gated = false
+architecture = "qwen35"
+quantization = "Q4_K_M"
+context_max = 262144
+description = "Compact Qwen3.5 model for small laptops: quick answers, summaries and light coding help."
+notes = "Vision-language model; LLMario uses its text abilities."
+shape = { n_layers = 33, n_heads = 16, n_kv_heads = 4, head_dim = 256, hidden_size = 2560, context_max = 262144, mtp_layers = 1, kv_groups = [{ layers = 8, n_kv_heads = 4, head_dim = 256 }], state_bytes_per_seq = 52690944 }
 
 [[models]]
 id = "qwen3.5-2b-mlx-4bit"
@@ -312,6 +400,28 @@ notes = "Vision-language model; LLMario uses its text abilities."
 shape = { n_layers = 24, n_heads = 8, n_kv_heads = 2, head_dim = 256, hidden_size = 2048, context_max = 262144, kv_groups = [{ layers = 6, n_kv_heads = 2, head_dim = 256 }], state_bytes_per_seq = 20201472 }
 
 [[models]]
+id = "qwen3.5-2b-gguf-q4km-mtp"
+family = "qwen3.5-2b"
+name = "Qwen3.5 2B"
+publisher = "Alibaba Qwen"
+released = "2026-03"
+params = "2B"
+tasks = ["chat", "multilingual", "small"]
+format = "gguf"
+repo = "unsloth/Qwen3.5-2B-MTP-GGUF"
+revision = "e05864f8066d874d5f85aaff007ae57a2a7d1efe"
+files = ["Qwen3.5-2B-Q4_K_M.gguf"]
+approx_bytes = 1329851808
+license = "Apache-2.0"
+gated = false
+architecture = "qwen35"
+quantization = "Q4_K_M"
+context_max = 262144
+description = "Small and fast; good for simple chat, rewriting and classification on any machine."
+notes = "Vision-language model; LLMario uses its text abilities."
+shape = { n_layers = 25, n_heads = 8, n_kv_heads = 2, head_dim = 256, hidden_size = 2048, context_max = 262144, mtp_layers = 1, kv_groups = [{ layers = 6, n_kv_heads = 2, head_dim = 256 }], state_bytes_per_seq = 20201472 }
+
+[[models]]
 id = "qwen3.5-0.8b-mlx-4bit"
 family = "qwen3.5-0.8b"
 name = "Qwen3.5 0.8B"
@@ -354,6 +464,28 @@ context_max = 262144
 description = "Tiny model for testing, embedded use and very low-memory devices. Expect simple answers."
 notes = "Vision-language model; LLMario uses its text abilities."
 shape = { n_layers = 24, n_heads = 8, n_kv_heads = 2, head_dim = 256, hidden_size = 1024, context_max = 262144, kv_groups = [{ layers = 6, n_kv_heads = 2, head_dim = 256 }], state_bytes_per_seq = 20201472 }
+
+[[models]]
+id = "qwen3.5-0.8b-gguf-q4km-mtp"
+family = "qwen3.5-0.8b"
+name = "Qwen3.5 0.8B"
+publisher = "Alibaba Qwen"
+released = "2026-03"
+params = "0.8B"
+tasks = ["chat", "small"]
+format = "gguf"
+repo = "unsloth/Qwen3.5-0.8B-MTP-GGUF"
+revision = "cf8a611f6ed2c2060046219a19f12cd3d5ecd67c"
+files = ["Qwen3.5-0.8B-Q4_K_M.gguf"]
+approx_bytes = 549698976
+license = "Apache-2.0"
+gated = false
+architecture = "qwen35"
+quantization = "Q4_K_M"
+context_max = 262144
+description = "Tiny model for testing, embedded use and very low-memory devices. Expect simple answers."
+notes = "Vision-language model; LLMario uses its text abilities."
+shape = { n_layers = 25, n_heads = 8, n_kv_heads = 2, head_dim = 256, hidden_size = 1024, context_max = 262144, mtp_layers = 1, kv_groups = [{ layers = 6, n_kv_heads = 2, head_dim = 256 }], state_bytes_per_seq = 20201472 }
 
 [[models]]
 id = "qwen3-coder-30b-a3b-mlx-4bit"

@@ -20,9 +20,18 @@ pub struct ModelShape {
     /// Fixed per-sequence state of recurrent / linear-attention layers, in bytes.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub state_bytes_per_seq: u64,
+    /// Multi-token-prediction (MTP / "nextn") layers shipped after the main layers, usable as a
+    /// built-in draft for speculative decoding (llama.cpp `--spec-type draft-mtp`). Included in
+    /// `n_layers`; not part of `kv_groups`.
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    pub mtp_layers: u32,
 }
 
 fn is_zero(v: &u64) -> bool {
+    *v == 0
+}
+
+fn is_zero_u32(v: &u32) -> bool {
     *v == 0
 }
 
@@ -290,6 +299,7 @@ mod tests {
             context_max: None,
             kv_groups: vec![],
             state_bytes_per_seq: 0,
+            mtp_layers: 0,
         };
         assert_eq!(s.kv_bytes_per_token(2), 2 * 28 * 8 * 128 * 2);
         assert_eq!(

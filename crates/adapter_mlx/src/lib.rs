@@ -16,6 +16,8 @@
 //! | prompt-cache budget  | `--prompt-cache-bytes`   |
 //! | buffer-cache ceiling | `mx.set_cache_limit` (launch shim) |
 //! MLX grows its KV cache on demand; `ctx_per_slot` is enforced by the gateway instead.
+//! `backends.mlx.draft_model` adds `--draft-model` (one request at a time only; checked by
+//! `Supervisor::draft_for`).
 
 use llmario_core::{BackendKind, Config, ModelFormat, ResolvedProfile, RuntimeError};
 use llmario_hardware::HardwareReport;
@@ -232,6 +234,12 @@ impl EngineAdapter for MlxAdapter {
             "--prompt-cache-bytes".into(),
             prompt_cache_bytes(ctx.model, p, ctx.hw, ctx.cfg).to_string(),
         ];
+        if let Some(d) = ctx.draft {
+            args.extend(["--draft-model".into(), d.path.display().to_string()]);
+            if let Some(n) = ctx.cfg.backends.mlx.draft_tokens {
+                args.extend(["--num-draft-tokens".into(), n.to_string()]);
+            }
+        }
         args.extend(ctx.cfg.backends.mlx.extra_args.iter().cloned());
         Ok(LaunchSpec {
             program: python,
@@ -289,6 +297,7 @@ mod tests {
                 memory: &plan,
                 status: &status,
                 port: 1,
+                draft: None,
             };
             (
                 adapter.launch(&ctx).unwrap().args,
@@ -306,6 +315,51 @@ mod tests {
         assert_eq!(args[2], SMALL_MLX_BUFFER_CACHE_LIMIT.to_string());
         let one_entry = prompt_cache_bytes(&m, &p, &hw, &cfg);
         assert_eq!(std_extra - extra, one_entry + (512 << 20));
+    }
+
+    /// A draft model resolved by the supervisor reaches `mlx_lm.server`'s flags.
+    #[test]
+    fn draft_model_reaches_the_launch() {
+        let hw = llmario_hardware::HardwareReport::detect();
+        let cat = llmario_registry::Catalog::builtin();
+        let m = cat.get("qwen3-8b-mlx-4bit").unwrap().planning_entry();
+        let mut d = cat.get("qwen3-1.7b-mlx-4bit").unwrap().planning_entry();
+        d.path = "/models/qwen3-1.7b".into();
+        let p = ResolvedProfile::resolve(llmario_core::ProfileKind::Latency, None);
+        let status = BackendStatus {
+            kind: BackendKind::Mlx,
+            available: true,
+            path: Some("/usr/bin/python3".into()),
+            version: None,
+            tested_version: String::new(),
+            detail: String::new(),
+            architectures: None,
+        };
+        let mut cfg = Config::default();
+        cfg.backends.mlx.draft_tokens = Some(3);
+        let plan = llmario_supervisor::memory::estimate(&m, &p, BackendKind::Mlx, &hw, &cfg, 0, 0);
+        let adapter = MlxAdapter::new(Path::new("/nonexistent"));
+        let args = |draft| {
+            let ctx = LaunchContext {
+                model: &m,
+                profile: &p,
+                hw: &hw,
+                cfg: &cfg,
+                memory: &plan,
+                status: &status,
+                port: 1,
+                draft,
+            };
+            adapter.launch(&ctx).unwrap().args
+        };
+        let flag = |a: &[String], f: &str| a.iter().position(|x| x == f).map(|i| a[i + 1].clone());
+        let with = args(Some(&d));
+        assert_eq!(
+            flag(&with, "--draft-model").as_deref(),
+            Some("/models/qwen3-1.7b")
+        );
+        assert_eq!(flag(&with, "--num-draft-tokens").as_deref(), Some("3"));
+        assert!(flag(&args(None), "--draft-model").is_none());
     }
 
     /// Phase 2 exit check from the catalog alone, on a 16 GB Mac (GPU working set 2/3 of RAM =

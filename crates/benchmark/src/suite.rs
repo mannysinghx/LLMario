@@ -148,6 +148,20 @@ mod tests {
     }
 
     #[test]
+    fn speculative_suite_parses() {
+        let s = Suite::parse(include_str!("../../../benchmarks/suites/speculative.toml")).unwrap();
+        let ids: Vec<&str> = s.perf.iter().map(|c| c.id.as_str()).collect();
+        assert_eq!(ids, ["prose", "code-edit", "quote"]);
+        assert!(s.perf[1]
+            .prompt
+            .contains("def compute_theta(values, scale, offset):"));
+        assert!(s.perf[2]
+            .prompt
+            .contains("Record 40: the access code for locker 40 is"));
+        assert_eq!(s.quality.len(), 3);
+    }
+
+    #[test]
     fn deterministic() {
         assert_eq!(expand("{{log:3}}").unwrap(), expand("{{log:3}}").unwrap());
         assert!(expand("{{nope:1}}").is_err());

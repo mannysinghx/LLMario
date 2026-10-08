@@ -45,6 +45,11 @@ pub async fn run(as_json: bool) -> anyhow::Result<()> {
             "memory_profile": if memory::small_machine(hw, &cfg) { "small" } else { "standard" },
             "kv_cache_type": cfg.backends.llamacpp.kv_cache_type,
             "comfortable_bytes": memory::comfortable_bytes(hw),
+            "speculative": {
+                "llamacpp": cfg.backends.llamacpp.speculative,
+                "llamacpp_draft_model": cfg.backends.llamacpp.draft_model,
+                "mlx_draft_model": cfg.backends.mlx.draft_model,
+            },
             "models": models.iter().map(|(m, b, p, plan, ok)| json!({
                 "id": m.id, "format": m.format, "backend": b, "backend_available": ok,
                 "size_bytes": m.size_bytes, "quantization": m.quantization,
@@ -146,6 +151,16 @@ pub async fn run(as_json: bool) -> anyhow::Result<()> {
         memory::comfortable_bytes(hw)
             .map(|c| format!("; comfortable up to {}", fmt_bytes(c)))
             .unwrap_or_default()
+    );
+    let l = &cfg.backends.llamacpp;
+    println!(
+        "Speed    speculative decoding: llama.cpp {}{}; MLX draft model {}",
+        format!("{:?}", l.speculative).to_lowercase(),
+        l.draft_model
+            .as_deref()
+            .map(|d| format!(" (draft {d})"))
+            .unwrap_or_default(),
+        cfg.backends.mlx.draft_model.as_deref().unwrap_or("none")
     );
 
     println!("\nModels ({} installed)", models.len());

@@ -1,0 +1,90 @@
+# Speculative-decoding suite (Phase 4). Original synthetic prompts. Speculation helps when the
+# answer repeats text the model has already seen (code edits, quoting) and can cost speed on free
+# writing, so the perf cases cover both. Quality cases match the default suite: speculative
+# decoding must not change answers. Placeholders as in default.toml.
+
+name = "speculative"
+version = 1
+
+[[perf]]
+id = "prose"
+max_tokens = 256
+prompt = "Write a detailed, vivid short story about a lighthouse keeper who discovers a message in a bottle. Use at least five paragraphs."
+
+[[perf]]
+id = "code-edit"
+max_tokens = 400
+prompt = """Rename the parameter `scale` to `factor` in every function below. Reply with the complete updated code only, no explanation.
+
+```python
+def compute_alpha(values, scale, offset):
+    total = 0
+    for v in values:
+        total += v * scale + offset
+    return total / max(len(values), 1)
+
+def compute_beta(values, scale, offset):
+    total = 0
+    for v in values:
+        total += v * scale + offset
+    return total / max(len(values), 1)
+
+def compute_gamma(values, scale, offset):
+    total = 0
+    for v in values:
+        total += v * scale + offset
+    return total / max(len(values), 1)
+
+def compute_delta(values, scale, offset):
+    total = 0
+    for v in values:
+        total += v * scale + offset
+    return total / max(len(values), 1)
+
+def compute_epsilon(values, scale, offset):
+    total = 0
+    for v in values:
+        total += v * scale + offset
+    return total / max(len(values), 1)
+
+def compute_zeta(values, scale, offset):
+    total = 0
+    for v in values:
+        total += v * scale + offset
+    return total / max(len(values), 1)
+
+def compute_eta(values, scale, offset):
+    total = 0
+    for v in values:
+        total += v * scale + offset
+    return total / max(len(values), 1)
+
+def compute_theta(values, scale, offset):
+    total = 0
+    for v in values:
+        total += v * scale + offset
+    return total / max(len(values), 1)
+```"""
+
+[[perf]]
+id = "quote"
+max_tokens = 300
+prompt = "The following table lists lockers and their access codes.\n\n{{records:60}}\n\nCopy the lines for lockers 20 to 40 exactly as they appear in the table, one per line, with no other text."
+
+[[quality]]
+id = "arithmetic"
+max_tokens = 1024
+prompt = "What is 17 + 25? Reply with only the number."
+expect_any = ["42"]
+
+[[quality]]
+id = "capital"
+max_tokens = 1024
+prompt = "What is the capital city of France? Reply with one word."
+expect_any = ["Paris"]
+
+[[quality]]
+id = "long-retrieval"
+max_tokens = 1024
+prompt = "The following table lists lockers and their access codes.\n\n{{records:220}}\n\nWhat is the access code for locker 137? Reply with only the code."
+expect_any = ["{{code:137}}"]

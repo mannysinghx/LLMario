@@ -160,11 +160,13 @@ fn inspect_gguf(path: &Path, hash: bool) -> anyhow::Result<Inspected> {
             context_max: md.arch_u64("context_length").map(|v| v as u32),
             kv_groups: vec![],
             state_bytes_per_seq: 0,
+            mtp_layers: 0,
         })
     })()
     .map(|mut s| {
         (s.kv_groups, s.state_bytes_per_seq) =
             crate::layout::from_gguf(&md, s.n_layers, s.n_kv_heads, s.head_dim);
+        s.mtp_layers = md.arch_u64("nextn_predict_layers").unwrap_or(0) as u32;
         s
     });
     if shape.is_none() {
@@ -243,6 +245,7 @@ fn inspect_mlx(dir: &Path, hash: bool) -> anyhow::Result<Inspected> {
             context_max: num("max_position_embeddings"),
             kv_groups: vec![],
             state_bytes_per_seq: 0,
+            mtp_layers: 0,
         })
     })()
     .map(|mut s| {
