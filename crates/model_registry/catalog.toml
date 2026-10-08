@@ -48,6 +48,28 @@ notes = "Vision-language model; LLMario uses its text abilities."
 shape = { n_layers = 64, n_heads = 24, n_kv_heads = 4, head_dim = 256, hidden_size = 5120, context_max = 262144, kv_groups = [{ layers = 16, n_kv_heads = 4, head_dim = 256 }], state_bytes_per_seq = 156893184 }
 
 [[models]]
+id = "qwen3.8-27b-gguf-q3kxl"
+family = "qwen3.8-27b"
+name = "Qwen3.8 27B"
+publisher = "Alibaba Qwen"
+released = "2026-08"
+params = "27B"
+tasks = ["chat", "reasoning", "coding", "agents", "multilingual"]
+format = "gguf"
+repo = "unsloth/Qwen3.8-27B-GGUF"
+revision = "4ca720788d1e01f1bff70c033e0d0028fd02e502"
+files = ["Qwen3.8-27B-UD-Q3_K_XL.gguf"]
+approx_bytes = 13146393504
+license = "Apache-2.0"
+gated = false
+architecture = "qwen35"
+quantization = "Q3_K_XL (3-bit: smaller and faster than 4-bit, with some quality loss)"
+context_max = 262144
+description = "Qwen's most capable open model (Aug 2026): strong at coding, research and multi-step agent tasks, with thinking that can be switched off per request."
+notes = "Vision-language model; LLMario uses its text abilities."
+shape = { n_layers = 65, n_heads = 24, n_kv_heads = 4, head_dim = 256, hidden_size = 5120, context_max = 262144, mtp_layers = 1, kv_groups = [{ layers = 16, n_kv_heads = 4, head_dim = 256 }], state_bytes_per_seq = 156893184 }
+
+[[models]]
 id = "qwen3.8-flash-next-mlx-4bit"
 family = "qwen3.8-flash-next"
 name = "Qwen3.8 Flash-Next"
@@ -222,6 +244,28 @@ context_max = 262144
 description = "Dense 27B general model from the Qwen3.6 generation; steady all-rounder for writing, analysis and code."
 notes = "Vision-language model; LLMario uses its text abilities."
 shape = { n_layers = 65, n_heads = 24, n_kv_heads = 4, head_dim = 256, hidden_size = 5120, context_max = 262144, mtp_layers = 1, kv_groups = [{ layers = 16, n_kv_heads = 4, head_dim = 256 }], state_bytes_per_seq = 156893184 }
+
+[[models]]
+id = "qwen3.6-27b-gguf-q3km"
+family = "qwen3.6-27b"
+name = "Qwen3.6 27B"
+publisher = "Alibaba Qwen"
+released = "2026-04"
+params = "27B"
+tasks = ["chat", "reasoning", "coding", "multilingual"]
+format = "gguf"
+repo = "unsloth/Qwen3.6-27B-GGUF"
+revision = "82d411acf4a06cfb8d9b073a5211bf410bfc29bf"
+files = ["Qwen3.6-27B-Q3_K_M.gguf"]
+approx_bytes = 13586217184
+license = "Apache-2.0"
+gated = false
+architecture = "qwen35"
+quantization = "Q3_K_M (3-bit: smaller and faster than 4-bit, with some quality loss)"
+context_max = 262144
+description = "Dense 27B general model from the Qwen3.6 generation; steady all-rounder for writing, analysis and code."
+notes = "Vision-language model; LLMario uses its text abilities."
+shape = { n_layers = 64, n_heads = 24, n_kv_heads = 4, head_dim = 256, hidden_size = 5120, context_max = 262144, kv_groups = [{ layers = 16, n_kv_heads = 4, head_dim = 256 }], state_bytes_per_seq = 156893184 }
 
 [[models]]
 id = "qwen3.5-9b-mlx-4bit"
@@ -702,6 +746,28 @@ notes = "Multimodal model; LLMario uses its text abilities."
 shape = { n_layers = 30, n_heads = 16, n_kv_heads = 8, head_dim = 512, hidden_size = 2816, context_max = 262144, kv_groups = [{ layers = 5, n_kv_heads = 2, head_dim = 512 }, { layers = 25, n_kv_heads = 8, head_dim = 256, window = 1024 }] }
 
 [[models]]
+id = "gemma-4-26b-a4b-gguf-q3km"
+family = "gemma-4-26b-a4b"
+name = "Gemma 4 26B-A4B"
+publisher = "Google DeepMind"
+released = "2026-07"
+params = "26B (4B active)"
+tasks = ["chat", "reasoning", "coding", "multilingual", "long-context"]
+format = "gguf"
+repo = "unsloth/gemma-4-26B-A4B-it-GGUF"
+revision = "c099eb48e663fd284577b04978a94ffccb261841"
+files = ["gemma-4-26B-A4B-it-UD-Q3_K_M.gguf"]
+approx_bytes = 12728497888
+license = "Apache-2.0"
+gated = false
+architecture = "gemma4"
+quantization = "Q3_K_M (3-bit: smaller and faster than 4-bit, with some quality loss)"
+context_max = 262144
+description = "Mixture-of-experts Gemma 4: near-31B quality at the speed of a 4B model. 256K context."
+notes = "Multimodal model; LLMario uses its text abilities."
+shape = { n_layers = 30, n_heads = 16, n_kv_heads = 8, head_dim = 512, hidden_size = 2816, context_max = 262144, kv_groups = [{ layers = 5, n_kv_heads = 2, head_dim = 512 }, { layers = 25, n_kv_heads = 8, head_dim = 256, window = 1024 }] }
+
+[[models]]
 id = "gemma-4-12b-mlx-4bit"
 family = "gemma-4-12b"
 name = "Gemma 4 12B"
@@ -1048,6 +1114,28 @@ notes = "Includes a small vision encoder; LLMario uses text."
 shape = { n_layers = 40, n_heads = 32, n_kv_heads = 8, head_dim = 128, hidden_size = 5120, context_max = 262144 }
 
 [[models]]
+id = "ministral-3-14b-gguf-q3km"
+family = "ministral-3-14b"
+name = "Ministral 3 14B"
+publisher = "Mistral AI"
+released = "2025-12"
+params = "14B"
+tasks = ["chat", "multilingual", "agents"]
+format = "gguf"
+repo = "unsloth/Ministral-3-14B-Instruct-2512-GGUF"
+revision = "9b948841b705cc11285ff274b84ba6c885908b19"
+files = ["Ministral-3-14B-Instruct-2512-Q3_K_M.gguf"]
+approx_bytes = 6682096320
+license = "Apache-2.0"
+gated = false
+architecture = "mistral3"
+quantization = "Q3_K_M (3-bit: smaller and faster than 4-bit, with some quality loss)"
+context_max = 262144
+description = "Mistral's edge model: close to Mistral Small quality in 14B, good at instructions and European languages."
+notes = "Includes a small vision encoder; LLMario uses text."
+shape = { n_layers = 40, n_heads = 32, n_kv_heads = 8, head_dim = 128, hidden_size = 5120, context_max = 262144 }
+
+[[models]]
 id = "devstral-small-2-24b-mlx-4bit"
 family = "devstral-small-2-24b"
 name = "Devstral Small 2 24B"
@@ -1085,6 +1173,27 @@ license = "Custom license (see model card)"
 gated = false
 architecture = "mistral3"
 quantization = "Q4_K_M"
+context_max = 393216
+description = "Agentic coding model: explores codebases, edits multiple files and powers software-engineering agents."
+shape = { n_layers = 40, n_heads = 32, n_kv_heads = 8, head_dim = 128, hidden_size = 5120, context_max = 393216 }
+
+[[models]]
+id = "devstral-small-2-24b-gguf-q3km"
+family = "devstral-small-2-24b"
+name = "Devstral Small 2 24B"
+publisher = "Mistral AI"
+released = "2025-12"
+params = "24B"
+tasks = ["coding", "agents"]
+format = "gguf"
+repo = "unsloth/Devstral-Small-2-24B-Instruct-2512-GGUF"
+revision = "6e458b8add42681bfd023de5eab93637694aaf82"
+files = ["Devstral-Small-2-24B-Instruct-2512-Q3_K_M.gguf"]
+approx_bytes = 11474619552
+license = "Custom license (see model card)"
+gated = false
+architecture = "mistral3"
+quantization = "Q3_K_M (3-bit: smaller and faster than 4-bit, with some quality loss)"
 context_max = 393216
 description = "Agentic coding model: explores codebases, edits multiple files and powers software-engineering agents."
 shape = { n_layers = 40, n_heads = 32, n_kv_heads = 8, head_dim = 128, hidden_size = 5120, context_max = 393216 }
@@ -1132,6 +1241,27 @@ description = "Reliable general assistant with strong instruction following and 
 shape = { n_layers = 40, n_heads = 32, n_kv_heads = 8, head_dim = 128, hidden_size = 5120, context_max = 131072 }
 
 [[models]]
+id = "mistral-small-3.2-24b-gguf-q3km"
+family = "mistral-small-3.2-24b"
+name = "Mistral Small 3.2 24B"
+publisher = "Mistral AI"
+released = "2025-06"
+params = "24B"
+tasks = ["chat", "multilingual", "agents"]
+format = "gguf"
+repo = "unsloth/Mistral-Small-3.2-24B-Instruct-2506-GGUF"
+revision = "b750ec2299225e492f1bd27cab88a0a595fa848f"
+files = ["Mistral-Small-3.2-24B-Instruct-2506-Q3_K_M.gguf"]
+approx_bytes = 11474095648
+license = "Apache-2.0"
+gated = false
+architecture = "llama"
+quantization = "Q3_K_M (3-bit: smaller and faster than 4-bit, with some quality loss)"
+context_max = 131072
+description = "Reliable general assistant with strong instruction following and function calling; Apache-2.0."
+shape = { n_layers = 40, n_heads = 32, n_kv_heads = 8, head_dim = 128, hidden_size = 5120, context_max = 131072 }
+
+[[models]]
 id = "phi-4-mlx-4bit"
 family = "phi-4"
 name = "Phi-4 14B"
@@ -1169,6 +1299,48 @@ license = "MIT"
 gated = false
 architecture = "phi3"
 quantization = "Q4_0"
+context_max = 16384
+description = "Trained heavily on high-quality synthetic data; excellent at math and logic for its size. MIT licensed."
+shape = { n_layers = 40, n_heads = 40, n_kv_heads = 10, head_dim = 128, hidden_size = 5120, context_max = 16384 }
+
+[[models]]
+id = "phi-4-gguf-q3km"
+family = "phi-4"
+name = "Phi-4 14B"
+publisher = "Microsoft"
+released = "2024-12"
+params = "14B"
+tasks = ["chat", "reasoning", "coding"]
+format = "gguf"
+repo = "unsloth/phi-4-GGUF"
+revision = "5110b7771e8166d5530e73346a15aea096a8cb99"
+files = ["phi-4-Q3_K_M.gguf"]
+approx_bytes = 7190834752
+license = "MIT"
+gated = false
+architecture = "llama"
+quantization = "Q3_K_M (3-bit: smaller and faster than 4-bit, with some quality loss)"
+context_max = 16384
+description = "Trained heavily on high-quality synthetic data; excellent at math and logic for its size. MIT licensed."
+shape = { n_layers = 40, n_heads = 40, n_kv_heads = 10, head_dim = 128, hidden_size = 5120, context_max = 16384 }
+
+[[models]]
+id = "phi-4-mlx-3bit"
+family = "phi-4"
+name = "Phi-4 14B"
+publisher = "Microsoft"
+released = "2024-12"
+params = "14B"
+tasks = ["chat", "reasoning", "coding"]
+format = "mlx"
+repo = "mlx-community/phi-4-3bit"
+revision = "8a193c1b9de36e42b7374206475339bd6569c01b"
+files = []
+approx_bytes = 6423998182
+license = "MIT"
+gated = false
+architecture = "phi3"
+quantization = "3-bit (group 64): smaller and faster than 4-bit, with some quality loss"
 context_max = 16384
 description = "Trained heavily on high-quality synthetic data; excellent at math and logic for its size. MIT licensed."
 shape = { n_layers = 40, n_heads = 40, n_kv_heads = 10, head_dim = 128, hidden_size = 5120, context_max = 16384 }
