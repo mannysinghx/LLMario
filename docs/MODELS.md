@@ -5,7 +5,7 @@ Hub and is pinned to an exact commit. Sizes are download sizes. The desktop app 
 `llmario model catalog` also show, for **your** computer, how much memory each model needs and
 whether your installed engines can run it.
 
-37 model families · 75 downloads.
+37 model families · 83 downloads.
 
 | Model | Publisher | Released | Parameters | Good at | License |
 |---|---|---|---|---|---|
@@ -58,6 +58,7 @@ Qwen's most capable open model (Aug 2026): strong at coding, research and multi-
 |---|---|---|---|---|---|
 | MLX | `qwen3.8-27b-mlx-4bit` | [mlx-community/Qwen3.8-27B-4bit](https://huggingface.co/mlx-community/Qwen3.8-27B-4bit/tree/10c35caafbb80f7dc6a7a432cdd11af10a6d4818) · `MLX folder` | 4-bit (group 64) | 16.1 GB | 256K |
 | llama.cpp | `qwen3.8-27b-gguf-q4km` | [ggml-org/Qwen3.8-27B-GGUF](https://huggingface.co/ggml-org/Qwen3.8-27B-GGUF/tree/71bc7b627595dc8a91039addd9c791ae548d6747) · `Qwen3.8-27B-Q4_K_M.gguf` | Q4_K_M | 19.0 GB | 256K |
+| llama.cpp (MTP) | `qwen3.8-27b-gguf-q3kxl` | [unsloth/Qwen3.8-27B-GGUF](https://huggingface.co/unsloth/Qwen3.8-27B-GGUF/tree/4ca720788d1e01f1bff70c033e0d0028fd02e502) · `Qwen3.8-27B-UD-Q3_K_XL.gguf` | Q3_K_XL (3-bit: smaller and faster than 4-bit, with some quality loss) | 13.1 GB | 256K |
 
 Download: `llmario model pull qwen3.8-27b` (best variant for your machine) or pick an id above.
 
@@ -102,6 +103,7 @@ Dense 27B general model from the Qwen3.6 generation; steady all-rounder for writ
 | MLX | `qwen3.6-27b-mlx-4bit` | [mlx-community/Qwen3.6-27B-4bit](https://huggingface.co/mlx-community/Qwen3.6-27B-4bit/tree/c000ac2c2057d94be3fa931000c31723aac53282) · `MLX folder` | 4-bit (group 64) | 16.1 GB | 256K |
 | llama.cpp | `qwen3.6-27b-gguf-q4km` | [unsloth/Qwen3.6-27B-GGUF](https://huggingface.co/unsloth/Qwen3.6-27B-GGUF/tree/82d411acf4a06cfb8d9b073a5211bf410bfc29bf) · `Qwen3.6-27B-Q4_K_M.gguf` | Q4_K_M | 16.8 GB | 256K |
 | llama.cpp (MTP) | `qwen3.6-27b-gguf-q4km-mtp` | [unsloth/Qwen3.6-27B-MTP-GGUF](https://huggingface.co/unsloth/Qwen3.6-27B-MTP-GGUF/tree/5cb35eb3dcbf52dbce5f87dbc64df6aaffadcace) · `Qwen3.6-27B-Q4_K_M.gguf` | Q4_K_M | 17.1 GB | 256K |
+| llama.cpp | `qwen3.6-27b-gguf-q3km` | [unsloth/Qwen3.6-27B-GGUF](https://huggingface.co/unsloth/Qwen3.6-27B-GGUF/tree/82d411acf4a06cfb8d9b073a5211bf410bfc29bf) · `Qwen3.6-27B-Q3_K_M.gguf` | Q3_K_M (3-bit: smaller and faster than 4-bit, with some quality loss) | 13.6 GB | 256K |
 
 Download: `llmario model pull qwen3.6-27b` (best variant for your machine) or pick an id above.
 
@@ -226,6 +228,7 @@ Mixture-of-experts Gemma 4: near-31B quality at the speed of a 4B model. 256K co
 |---|---|---|---|---|---|
 | MLX | `gemma-4-26b-a4b-mlx-4bit` | [mlx-community/gemma-4-26B-A4B-it-4bit](https://huggingface.co/mlx-community/gemma-4-26B-A4B-it-4bit/tree/0d77464eeb233a2da68ebf9d7dc4edaac7db956d) · `MLX folder` | 4-bit (group 64) | 15.4 GB | 256K |
 | llama.cpp | `gemma-4-26b-a4b-gguf-q4_0` | [ggml-org/gemma-4-26B-A4B-it-GGUF](https://huggingface.co/ggml-org/gemma-4-26B-A4B-it-GGUF/tree/bb4531cda34d1ea09d9814959ed4d5833cf2a4c8) · `gemma-4-26B-A4B-it-Q4_0.gguf` | Q4_0 | 14.6 GB | 256K |
+| llama.cpp | `gemma-4-26b-a4b-gguf-q3km` | [unsloth/gemma-4-26B-A4B-it-GGUF](https://huggingface.co/unsloth/gemma-4-26B-A4B-it-GGUF/tree/c099eb48e663fd284577b04978a94ffccb261841) · `gemma-4-26B-A4B-it-UD-Q3_K_M.gguf` | Q3_K_M (3-bit: smaller and faster than 4-bit, with some quality loss) | 12.7 GB | 256K |
 
 Download: `llmario model pull gemma-4-26b-a4b` (best variant for your machine) or pick an id above.
 
@@ -332,6 +335,7 @@ Mistral's edge model: close to Mistral Small quality in 14B, good at instruction
 |---|---|---|---|---|---|
 | MLX | `ministral-3-14b-mlx-4bit` | [mlx-community/Ministral-3-14B-Instruct-2512-4bit](https://huggingface.co/mlx-community/Ministral-3-14B-Instruct-2512-4bit/tree/95b6f345475c8c8c92b7959d02f4ad86d3ba8384) · `MLX folder` | 4-bit (group 64) | 8.5 GB | 256K |
 | llama.cpp | `ministral-3-14b-gguf-q4km` | [mistralai/Ministral-3-14B-Instruct-2512-GGUF](https://huggingface.co/mistralai/Ministral-3-14B-Instruct-2512-GGUF/tree/74fac473c43357d7fb2671713608183cc72496d0) · `Ministral-3-14B-Instruct-2512-Q4_K_M.gguf` | Q4_K_M | 8.2 GB | 256K |
+| llama.cpp | `ministral-3-14b-gguf-q3km` | [unsloth/Ministral-3-14B-Instruct-2512-GGUF](https://huggingface.co/unsloth/Ministral-3-14B-Instruct-2512-GGUF/tree/9b948841b705cc11285ff274b84ba6c885908b19) · `Ministral-3-14B-Instruct-2512-Q3_K_M.gguf` | Q3_K_M (3-bit: smaller and faster than 4-bit, with some quality loss) | 6.7 GB | 256K |
 
 Download: `llmario model pull ministral-3-14b` (best variant for your machine) or pick an id above.
 
@@ -344,6 +348,7 @@ Agentic coding model: explores codebases, edits multiple files and powers softwa
 |---|---|---|---|---|---|
 | MLX | `devstral-small-2-24b-mlx-4bit` | [mlx-community/Devstral-Small-2-24B-Instruct-2512-4bit](https://huggingface.co/mlx-community/Devstral-Small-2-24B-Instruct-2512-4bit/tree/97228558fcbdd1adefd39d515155db3a894b37f7) · `MLX folder` | 4-bit (group 64) | 15.1 GB | 384K |
 | llama.cpp | `devstral-small-2-24b-gguf-q4km` | [unsloth/Devstral-Small-2-24B-Instruct-2512-GGUF](https://huggingface.co/unsloth/Devstral-Small-2-24B-Instruct-2512-GGUF/tree/6e458b8add42681bfd023de5eab93637694aaf82) · `Devstral-Small-2-24B-Instruct-2512-Q4_K_M.gguf` | Q4_K_M | 14.3 GB | 384K |
+| llama.cpp | `devstral-small-2-24b-gguf-q3km` | [unsloth/Devstral-Small-2-24B-Instruct-2512-GGUF](https://huggingface.co/unsloth/Devstral-Small-2-24B-Instruct-2512-GGUF/tree/6e458b8add42681bfd023de5eab93637694aaf82) · `Devstral-Small-2-24B-Instruct-2512-Q3_K_M.gguf` | Q3_K_M (3-bit: smaller and faster than 4-bit, with some quality loss) | 11.5 GB | 384K |
 
 Download: `llmario model pull devstral-small-2-24b` (best variant for your machine) or pick an id above.
 
@@ -356,6 +361,7 @@ Reliable general assistant with strong instruction following and function callin
 |---|---|---|---|---|---|
 | MLX | `mistral-small-3.2-24b-mlx-4bit` | [mlx-community/Mistral-Small-3.2-24B-Instruct-2506-4bit](https://huggingface.co/mlx-community/Mistral-Small-3.2-24B-Instruct-2506-4bit/tree/2a1d5eabfc504747bdc24178394821a1efc0edde) · `MLX folder` | 4-bit (group 64) | 13.3 GB | 128K |
 | llama.cpp | `mistral-small-3.2-24b-gguf-q4km` | [unsloth/Mistral-Small-3.2-24B-Instruct-2506-GGUF](https://huggingface.co/unsloth/Mistral-Small-3.2-24B-Instruct-2506-GGUF/tree/b750ec2299225e492f1bd27cab88a0a595fa848f) · `Mistral-Small-3.2-24B-Instruct-2506-Q4_K_M.gguf` | Q4_K_M | 14.3 GB | 128K |
+| llama.cpp | `mistral-small-3.2-24b-gguf-q3km` | [unsloth/Mistral-Small-3.2-24B-Instruct-2506-GGUF](https://huggingface.co/unsloth/Mistral-Small-3.2-24B-Instruct-2506-GGUF/tree/b750ec2299225e492f1bd27cab88a0a595fa848f) · `Mistral-Small-3.2-24B-Instruct-2506-Q3_K_M.gguf` | Q3_K_M (3-bit: smaller and faster than 4-bit, with some quality loss) | 11.5 GB | 128K |
 
 Download: `llmario model pull mistral-small-3.2-24b` (best variant for your machine) or pick an id above.
 
@@ -380,6 +386,8 @@ Small Phi with good reasoning and a 128K context; MIT licensed.
 |---|---|---|---|---|---|
 | MLX | `phi-4-mini-mlx-4bit` | [mlx-community/Phi-4-mini-instruct-4bit](https://huggingface.co/mlx-community/Phi-4-mini-instruct-4bit/tree/ac1c269cb4222a4e136a3d09edad301056c1f36a) · `MLX folder` | 4-bit (group 64) | 2.2 GB | 128K |
 | llama.cpp | `phi-4-mini-gguf-q4km` | [bartowski/microsoft_Phi-4-mini-instruct-GGUF](https://huggingface.co/bartowski/microsoft_Phi-4-mini-instruct-GGUF/tree/7ff82c2aaa4dde30121698a973765f39be5288c0) · `microsoft_Phi-4-mini-instruct-Q4_K_M.gguf` | Q4_K_M | 2.5 GB | 128K |
+| llama.cpp | `phi-4-gguf-q3km` | [unsloth/phi-4-GGUF](https://huggingface.co/unsloth/phi-4-GGUF/tree/5110b7771e8166d5530e73346a15aea096a8cb99) · `phi-4-Q3_K_M.gguf` | Q3_K_M (3-bit: smaller and faster than 4-bit, with some quality loss) | 7.2 GB | 16K |
+| MLX | `phi-4-mlx-3bit` | [mlx-community/phi-4-3bit](https://huggingface.co/mlx-community/phi-4-3bit/tree/8a193c1b9de36e42b7374206475339bd6569c01b) · `MLX folder` | 3-bit (group 64): smaller and faster than 4-bit, with some quality loss | 6.4 GB | 16K |
 
 Download: `llmario model pull phi-4-mini` (best variant for your machine) or pick an id above.
 

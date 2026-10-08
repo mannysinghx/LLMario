@@ -19,6 +19,9 @@ pub enum ModelCmd {
     Catalog {
         /// Filter by text (name, publisher, task, repo).
         filter: Option<String>,
+        /// Only models that fit this computer comfortably (not tight).
+        #[arg(long)]
+        comfortable: bool,
         #[arg(long)]
         json: bool,
     },
@@ -102,10 +105,17 @@ pub async fn run(cmd: ModelCmd) -> anyhow::Result<()> {
                 );
             }
         }
-        ModelCmd::Catalog { filter, json } => {
+        ModelCmd::Catalog {
+            filter,
+            comfortable,
+            json,
+        } => {
             let (paths, cfg) = util::load_config(&Default::default())?;
             let sup = util::supervisor(cfg, paths).await?;
             let mut views = llmario_runtime::library::catalog_views(&sup);
+            if comfortable {
+                views.retain(|v| v.fits && !v.tight);
+            }
             if let Some(f) = filter.map(|f| f.to_lowercase()) {
                 views.retain(|v| {
                     [&v.id, &v.name, &v.repo, &v.description]
