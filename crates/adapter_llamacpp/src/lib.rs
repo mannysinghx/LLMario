@@ -354,6 +354,63 @@ mod tests {
         );
     }
 
+    /// Phase 2 exit check from the catalog alone (before download): on a 16 GB Mac (GPU working
+    /// set 2/3 of RAM = 10.67 GiB) the per-layer layouts make Qwen3.5 9B and Gemma 4 12B fit;
+    /// gpt-oss-20b's weights alone (11.28 GiB) are over budget either way.
+    #[test]
+    fn catalog_models_on_a_16_gb_mac() {
+        use llmario_hardware::{GpuApi, GpuInfo};
+        const GIB: u64 = 1 << 30;
+        let hw = HardwareReport {
+            os: "macos".into(),
+            os_version: "test".into(),
+            arch: "aarch64".into(),
+            cpu_brand: "Apple M4".into(),
+            physical_cores: 10,
+            logical_cores: 10,
+            performance_cores: None,
+            efficiency_cores: None,
+            cpu_features: vec![],
+            total_memory_bytes: 16 * GIB,
+            available_memory_bytes: 8 * GIB,
+            apple_silicon: true,
+            unified_memory: true,
+            gpus: vec![GpuInfo {
+                vendor: "apple".into(),
+                name: "Apple M4".into(),
+                api: GpuApi::Metal,
+                memory_total_bytes: Some(16 * GIB * 2 / 3),
+                memory_free_bytes: None,
+                driver: None,
+                cores: None,
+            }],
+            notes: vec![],
+        };
+        let catalog = llmario_registry::Catalog::builtin();
+        let plan = |id: &str, cfg: &Config| {
+            let m = catalog.get(id).unwrap().planning_entry();
+            let p = ResolvedProfile::resolve(llmario_core::ProfileKind::Latency, None);
+            let extra = LlamaCppAdapter.extra_memory_bytes(&m, &p, cfg);
+            llmario_supervisor::memory::estimate(&m, &p, BackendKind::LlamaCpp, &hw, cfg, extra, 0)
+        };
+        let now = Config::default();
+        let mut old = Config::default();
+        old.runtime.kv_accounting = llmario_core::KvAccounting::Conservative;
+        for id in ["qwen3.5-9b-gguf-q4km", "gemma-4-12b-gguf-q4_0"] {
+            let p = plan(id, &now);
+            assert!(p.fits, "{id}: {}", p.explain());
+            assert!(
+                p.notes.iter().any(|n| n.contains("KV cache per layer")),
+                "{id}"
+            );
+        }
+        assert!(
+            !plan("gemma-4-12b-gguf-q4_0", &old).fits,
+            "the old formula refused Gemma 4 12B"
+        );
+        assert!(!plan("gpt-oss-20b-gguf-mxfp4", &now).fits);
+    }
+
     #[test]
     fn parses_versions() {
         let (v, b) = parse_version("0.00.000.260 I srv init\nversion: 0.5.0 (build 11146, commit 7fe450e19)\nbuilt with clang").unwrap();
