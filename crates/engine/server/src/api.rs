@@ -12,7 +12,7 @@ use axum::{Json, Router};
 use futures::StreamExt;
 use llmario_engine_chat::RenderRequest;
 use llmario_engine_core::ledger::Ledger;
-use llmario_engine_decode::SamplingParams;
+use llmario_engine_decode::{GrammarSpec, SamplingParams};
 use llmario_engine_formats::GgufFile;
 use llmario_engine_plan::Plan;
 use serde_json::{json, Value};
@@ -159,15 +159,28 @@ async fn chat(State(s): State<Shared>, body: axum::body::Bytes) -> Response {
     if req.tools.is_some() || req.tool_choice.is_some() {
         return bad_request("tools are not supported by the native engine yet (M5)");
     }
-    if let Some(rf) = &req.response_format {
-        if rf
-            .get("type")
-            .and_then(|t| t.as_str())
-            .is_some_and(|t| t != "text")
-        {
-            return bad_request("response_format is not supported by the native engine yet (M5)");
-        }
-    }
+    let grammar = match &req.response_format {
+        None => None,
+        Some(rf) => match rf.get("type").and_then(|t| t.as_str()) {
+            None | Some("text") => None,
+            Some("json_object") => Some(GrammarSpec::JsonSchema(json!({"type": "object"}))),
+            Some("json_schema") => {
+                let schema = rf
+                    .get("json_schema")
+                    .and_then(|j| j.get("schema").cloned().or_else(|| Some(j.clone())))
+                    .unwrap_or(json!({"type": "object"}));
+                Some(GrammarSpec::JsonSchema(schema))
+            }
+            Some(other) => {
+                return bad_request(&format!("unsupported response_format type {other}"))
+            }
+        },
+    };
+    // With thinking explicitly on, the grammar starts after the reasoning block.
+    let lazy_trigger = match (&grammar, req.enable_thinking) {
+        (Some(_), Some(true)) => Some("</think>".to_string()),
+        _ => None,
+    };
     if req.n.is_some_and(|n| n > 1) {
         return bad_request("n > 1 is not supported");
     }
@@ -228,6 +241,8 @@ async fn chat(State(s): State<Shared>, body: axum::body::Bytes) -> Response {
         params,
         max_tokens,
         stop: req.stop.clone().into_vec(),
+        grammar,
+        lazy_trigger,
         events: tx,
     };
     if let Err(e) = s.runtime.submit(job) {
