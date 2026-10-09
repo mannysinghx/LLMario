@@ -138,7 +138,7 @@ benchmark numbers rot within months (Report §Decode already runs at 55–80 %).
 | Plan bound | measured peak ≤ planned peak, every model in the fit matrix | job-object peak (Windows), cgroup `memory.peak` (Linux), `phys_footprint` + Metal `currentAllocatedSize` (macOS) after a 3-prompt suite |
 | Plan tightness | planned ≤ 1.15 × measured | same |
 | Soak | footprint drift < 1 % over 8 h of mixed traffic | `llmario bench --soak` |
-| Dense decode | ≥ 0.6 × `η=1` roofline on each backend (i.e. ≥ 60 % of peak bandwidth) | `llmario bench`, bytes/token from the plan, bandwidth from the hardware table |
+| Dense decode | ≥ 0.6 × `η=1` roofline on each backend (i.e. ≥ 60 % of peak bandwidth); for the CPU backend on Apple silicon the peak is the CPU-measured streaming bandwidth (≈ 290 GB/s on an M4 Max, M1 finding), not the SoC figure | `llmario bench`, bytes/token from the plan, bandwidth from the hardware table or a streaming-read probe |
 | MoE decode (CPU, host experts) | ≥ 0.5 × active-bytes roofline | same |
 | Prefill | ≥ 0.8 × llama.cpp on the same device at M2 exit; ≥ 1.0× by M8 | `llmario bench --cache cold` on the 1.8k and 4.7k-token prompts |
 | Time to first token | ≤ llama.cpp + 10 % at M2 exit | same |
@@ -638,7 +638,8 @@ or FFI to KleidiAI `.S` kernels — SME intrinsics do not exist in Rust); AMX on
 intrinsics; `asm!` path, optional). SVE is skipped (no consumer part with 256-bit vectors; llama.cpp's SVE kernels
 never run on 128-bit cores). Dispatch is runtime (`is_x86_feature_detected!`, `is_aarch64_feature_detected!`,
 `sysctl hw.optional.arm.FEAT_SME2`) with `#[target_feature]` multiversioned kernels; Rust ≥ 1.89 for stable
-AVX-512.
+AVX-512. Note (found in M1): the NEON dot-product intrinsic `vdotq_s32` and the f16 conversion
+intrinsics are still nightly-only on Rust 1.92, so the NEON kernels emit `sdot` through stable `asm!`.
 
 **Kernel families per block type.** (1) scalar reference; (2) decode GEMV on the *native* block layout with int8
 activations (Q8_K/Q8_0 per row, quantised once per op); (3) prefill GEMM on an *interleaved* tile layout (4×4/4×8
