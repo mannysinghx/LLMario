@@ -26,11 +26,22 @@ platform = "macos-aarch64"
 hardware = "Apple M4 Max, 64 GB"
 os = "macOS 27.0.1"
 backend = "native"
-backend_version = "llmario-engine 0.3.0-beta (CPU, NEON kernels)"
+backend_version = "llmario-engine 0.3.0-beta (CPU with NEON kernels; Metal)"
 status = "partial"
-models = ["qwen3-1.7b-gguf-q4km"]
+models = ["qwen3-1.7b-gguf-q4km", "qwen3.5-0.8b-gguf-q4_0", "qwen3.5-9b-gguf-q4km", "gemma-4-12b-gguf-q4_0"]
 evidence = "docs/engine/STATUS.md"
-notes = "preview: greedy parity with llama.cpp on Qwen3-1.7B; chat through the gateway; Metal backend in progress"
+notes = "preview: greedy parity with llama.cpp on these models and SmolLM3-3B, on the CPU and Metal; Metal runs Qwen3 and SmolLM3, the others fall back to the CPU; end-to-end serve test and chat through the gateway"
+
+[[path]]
+platform = "linux-x86_64"
+hardware = "GitHub Actions ubuntu-latest"
+backend = "native"
+backend_version = "llmario-engine 0.3.0-beta (CPU)"
+accelerator = "cpu"
+status = "implemented-unvalidated"
+models = ["qwen3.5-0.8b-gguf-q4_0"]
+evidence = ".github/workflows/engine.yml"
+notes = "end-to-end serve test runs in CI; no benchmark and no parity run on Linux yet; the engine does not support Windows"
 
 [[path]]
 platform = "linux-x86_64"
