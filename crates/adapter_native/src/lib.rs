@@ -136,6 +136,12 @@ impl EngineAdapter for NativeAdapter {
             .unwrap_or(ctx.hw.physical_cores.max(1));
         args.extend(["--threads".into(), threads.to_string()]);
         args.extend(["--memory-limit".into(), ctx.memory.budget_bytes.to_string()]);
+        if ctx.cfg.backends.native.web_access {
+            args.push("--web".into());
+            if let Some(u) = &ctx.cfg.backends.native.searxng_url {
+                args.extend(["--searxng-url".into(), u.clone()]);
+            }
+        }
         args.extend(ctx.cfg.backends.native.extra_args.iter().cloned());
         let mut notes = vec![];
         if ctx.profile.parallel > 1 {

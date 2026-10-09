@@ -2670,6 +2670,7 @@ dependencies = [
  "llmario-engine-model",
  "llmario-engine-plan",
  "llmario-engine-tokenizer",
+ "llmario-engine-tools",
  "serde",
  "serde_json",
  "sysinfo",

@@ -116,13 +116,18 @@ pub fn parse_chat(v: &Value) -> Result<ValidatedChat, RuntimeError> {
             .as_array()
             .ok_or_else(|| invalid("'tools' must be an array"))?;
         for (i, d) in arr.iter().enumerate() {
-            if d.get("type").and_then(Value::as_str) != Some("function")
-                || d.pointer("/function/name")
+            let ok = match d.get("type").and_then(Value::as_str) {
+                // Built-in tools the native engine runs itself (web access must be enabled).
+                Some("web_search") | Some("web_fetch") => true,
+                Some("function") => d
+                    .pointer("/function/name")
                     .and_then(Value::as_str)
-                    .is_none()
-            {
+                    .is_some(),
+                _ => false,
+            };
+            if !ok {
                 return Err(invalid(format!(
-                    "tools[{i}] must be {{\"type\":\"function\",\"function\":{{\"name\":...}}}}"
+                    "tools[{i}] must be {{\"type\":\"function\",\"function\":{{\"name\":...}}}}, {{\"type\":\"web_search\"}} or {{\"type\":\"web_fetch\"}}"
                 )));
             }
         }
@@ -409,6 +414,19 @@ mod tests {
             "json_object"
         );
         assert!(require_native(&v, BackendKind::LlamaCpp).is_err());
+
+        // Built-in web tools are native-only tool calling too.
+        let v = ok(
+            json!({"model": "m", "messages": [{"role":"user","content":"x"}], "tools": [{"type": "web_search"}, {"type": "web_fetch"}]}),
+        );
+        assert_eq!(v.native_only, vec!["tool calling"]);
+        assert_eq!(v.upstream_body("e")["tools"][0]["type"], "web_search");
+        assert_eq!(
+            code(
+                json!({"model": "m", "messages": [{"role":"user","content":"x"}], "tools": [{"type": "computer_use"}]})
+            ),
+            "invalid_request"
+        );
 
         // Plain requests stay valid everywhere.
         let v = ok(
