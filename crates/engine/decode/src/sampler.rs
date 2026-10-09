@@ -366,6 +366,12 @@ impl Sampler {
         if let Some(p) = self.processor.as_mut() {
             p.accept(token);
         }
+        self.accept_prompt(token);
+    }
+
+    /// Records a *prompt* token: it enters the penalty window (llama-server penalises the prompt
+    /// too) but is not shown to the logit processor, whose grammar only covers generated text.
+    pub fn accept_prompt(&mut self, token: Token) {
         let n = self.params.repeat_last_n;
         if n == 0 || (token as usize) >= self.n_vocab {
             return;
