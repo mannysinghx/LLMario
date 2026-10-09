@@ -1,6 +1,6 @@
 [package]
 name = "llmario-engine-decode"
-description = "Native engine: token sampling (llama.cpp-compatible chain), logprobs and streaming stop-string matching"
+description = "Native engine: token sampling (llama.cpp-compatible chain), logprobs, streaming stop-string matching and grammar-constrained decoding"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -8,7 +8,11 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+llmario-engine-tokenizer = { workspace = true }
+llguidance = { workspace = true }
 serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
 
 [dev-dependencies]
-serde_json = { workspace = true }
+llmario-engine-formats = { workspace = true }

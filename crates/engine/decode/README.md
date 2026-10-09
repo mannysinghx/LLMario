@@ -1,11 +1,15 @@
 # llmario-engine-decode
 
 What the native engine runs after each forward pass: turn one logits vector into a token, record it
-for the penalty window, report log-probabilities, and decide how much streamed text is safe to emit
-given the request's stop strings.
+for the penalty window, report log-probabilities, decide how much streamed text is safe to emit
+given the request's stop strings, and — when a request carries a `response_format`, a grammar or
+tools — mask the logits so the output is guaranteed to follow the schema (constrained decoding,
+Architecture §10.3).
 
-Pure Rust (stable, 2021 edition), no `unsafe`, no dependencies beyond `serde` (for
-`SamplingParams`). The PRNG is an in-crate xoshiro256\*\* seeded through splitmix64.
+Pure Rust (stable, 2021 edition), `#![forbid(unsafe_code)]`. Dependencies: `serde`/`serde_json`
+(parameters and specs), `tracing` (fallback warnings), `llguidance` 1.9.1 (MIT; the grammar
+engine, see *Constrained decoding* below) and `llmario-engine-tokenizer` (to adapt the vocabulary).
+The PRNG is an in-crate xoshiro256\*\* seeded through splitmix64.
 
 ## Responsibility
 
@@ -13,7 +17,8 @@ Pure Rust (stable, 2021 edition), no `unsafe`, no dependencies beyond `serde` (f
 |---|---|
 | `SamplingParams` (the API's sampling knobs with llama.cpp defaults) | Running the model, producing logits |
 | `Sampler`: penalties → top-k → top-p → min-p → temperature → multinomial draw, or argmax | Detokenising tokens into text (`tokenizer`) |
-| `LogitProcessor` hook applied before the penalties (grammar masks, logit bias land here later) | The grammar engine itself (Architecture §10.3) |
+| `LogitProcessor` hook applied before the penalties (grammar masks, logit bias) | Rendering tool definitions into the prompt and parsing the generated call (`chat`) |
+| `grammar`: `GrammarProcessor` (JSON Schema / Lark / regex / tool-call grammars on llguidance), lazy triggers, `GrammarTokenizer`, `GrammarCache` | Mapping API fields (`response_format`, `tools`, `tool_choice`) to a `GrammarSpec` (`server`) |
 | `top_logprobs` / `token_logprob` for the API's `logprobs` | On-device sampling kernels (`cpu`, Metal, Vulkan); they must reproduce these semantics |
 | `StopMatcher`: streaming stop-string matching with hold-back | The SSE writer that emits the text |
 
@@ -47,6 +52,7 @@ impl Sampler {
     pub fn take_processor(&mut self) -> Option<Box<dyn LogitProcessor>>;
     pub fn sample(&mut self, logits: &[f32]) -> Token;      // does NOT record the token
     pub fn accept(&mut self, token: Token);                 // penalty window + processor
+    pub fn accept_prompt(&mut self, token: Token);          // penalty window only (prompt tokens)
     pub fn reset(&mut self);                                // clears window, reseeds PRNG
     pub fn apply_penalties(&self, logits: &mut [f32]);      // for device-side samplers
     pub fn top_logprobs(&self, logits: &[f32], n: usize) -> Vec<(Token, f32)>;
@@ -55,6 +61,37 @@ impl Sampler {
     pub fn n_vocab(&self) -> usize;
     pub fn seed(&self) -> u64;
     pub fn window(&self) -> impl Iterator<Item = Token> + '_;
+}
+
+// grammar (constrained decoding)
+pub enum GrammarSpec { JsonSchema(serde_json::Value), Lark(String), Regex(String), ToolCalls(ToolCallSpec) }
+pub struct ToolCallSpec { pub family: ToolFamily, pub tools: Vec<ToolDef>, pub choice: ToolChoice }
+pub enum ToolFamily { Hermes, QwenXml, Gemma4, Llama3, Mistral, Harmony }
+pub struct ToolDef { pub name: String, pub parameters: serde_json::Value }   // OpenAI function.parameters
+pub enum ToolChoice { Auto, Required, Named(String) }                       // `none` = attach no processor
+pub struct LazyTrigger(pub Vec<u8>);                                        // LazyTrigger::new("</think>")
+pub enum GrammarState { Watching, Active, Complete, Disabled }
+pub enum GrammarError { InvalidSpec(String), Compile(String), Tokenizer(String) }
+
+impl GrammarTokenizer {                                   // llguidance TokenizerEnv; build once per model
+    pub fn from_tokenizer(tok: &Tokenizer) -> Result<Self, GrammarError>;
+    pub fn from_pieces(pieces: Vec<Vec<u8>>, special: &[bool], eos: Token, eog: &[Token]) -> Result<Self, GrammarError>;
+    pub fn hash(&self) -> u64;                            // content hash: cache key
+    pub fn n_vocab(&self) -> usize;  pub fn eos(&self) -> Token;  pub fn eog(&self) -> &[Token];
+    pub fn is_special(&self, id: Token) -> bool;  pub fn special_token_id(&self, text: &str) -> Option<Token>;
+    pub fn piece(&self, id: Token) -> &[u8];
+}
+impl GrammarCache {                                       // LRU of compiled grammars + one llguidance factory per tokenizer
+    pub fn new(limit: usize) -> Self;
+    pub fn get_or_compile(&mut self, spec: &GrammarSpec, env: &Arc<GrammarTokenizer>) -> Result<CompiledGrammar, GrammarError>;
+    pub fn counters(&self) -> (u64, u64);                 // (hits, misses)
+    pub fn len(&self) -> usize;  pub fn clear(&mut self);
+}
+impl GrammarProcessor {                                   // implements LogitProcessor
+    pub fn new(grammar: CompiledGrammar, lazy: Option<LazyTrigger>) -> Self;
+    pub fn compile(spec: &GrammarSpec, env: &Arc<GrammarTokenizer>, lazy: Option<LazyTrigger>) -> Result<Self, GrammarError>;
+    pub fn state(&self) -> GrammarState;  pub fn error(&self) -> Option<&str>;
+    pub fn stats(&self) -> &GrammarStats;                 // masks, mean/max mask time, steps watching
 }
 
 pub enum StopResult { Flush, Hold(usize), Matched { emit_up_to: usize } }
@@ -78,7 +115,11 @@ impl StopMatcher {
 ```rust
 let mut sampler = Sampler::new(params, n_vocab);
 let mut stops = StopMatcher::new(request.stop);
-for t in prompt_tokens { sampler.accept(t); }          // llama-server also penalises the prompt
+for t in prompt_tokens { sampler.accept_prompt(t); }   // llama-server also penalises the prompt
+if let Some(spec) = grammar_spec_for(&request) {       // response_format / tools / grammar
+    let g = cache.lock().get_or_compile(&spec, &model.grammar_tokenizer)?;
+    sampler.set_processor(Some(Box::new(GrammarProcessor::new(g, lazy_trigger_for(&template)))));
+}
 let mut sent = 0;
 loop {
     let logits = model.forward(...);
@@ -133,6 +174,98 @@ Only when top-k is disabled and top-p or min-p is active is the full candidate l
 (O(n_vocab log n_vocab)), the same thing llama.cpp does in that configuration. A debug-build test
 over a 262,144-entry vocabulary with `top_k = 40` runs in a few milliseconds per call.
 
+## Constrained decoding (grammar)
+
+`llguidance` 1.9.1 (MIT) is embedded as a crate: no precomputation per grammar, a byte trie of the
+vocabulary built once per model, an Earley parser with a lazily built regex-derivative lexer, and
+"slicer" masks for the common token classes. API used: `ParserFactory::new_simple` (one per
+tokenizer; holds the slicer), `ParserFactory::create_parser(TopLevelGrammar)`, `Matcher`
+(`compute_mask_or_eos`, `consume_token`, `is_stopped`/`stop_reason`, cheap `clone` for a fresh
+parser state), `TopLevelGrammar::{from_json_schema, from_lark, from_regex}`, and `toktrie`'s
+`TokenizerEnv`/`TokTrie`/`SimpleVob`.
+
+### Processor life cycle
+
+```
+Watching ──trigger bytes seen──▶ Active ──grammar accepting & nothing more allowed──▶ Complete
+   │                               │
+   └── no trigger: Active from step 0      └── parser error ──▶ Disabled (unconstrained, warning logged)
+```
+
+- `process`: `Watching`/`Disabled` leave the logits untouched; `Active` computes llguidance's token
+  mask and sets every token outside it to `-inf` (end-of-generation tokens are in the mask exactly
+  when the grammar is in an accepting state); `Complete` keeps only the end-of-generation tokens.
+- `accept`: `Watching` scans the token's rendered bytes for the next trigger (a trigger may span
+  tokens or end mid-token; the bytes after it are fed to the parser); `Active` advances the parser
+  and moves to `Complete` when llguidance reports `NoExtension`/`EndOfSentence`, or to `Disabled`
+  on any error (a token outside the mask, an out-of-range id). Nothing panics mid-generation.
+- Prompt tokens must go through `Sampler::accept_prompt`, not `accept`: the grammar covers only the
+  generated text.
+
+### Lazy triggers
+
+`GrammarProcessor::new(grammar, Some(LazyTrigger::new("</think>")))` keeps decoding unconstrained
+until `</think>` has been generated, then constrains ("think, then JSON"). Triggers compose in
+order: a user trigger is waited for first, then the spec's own trigger — `ToolChoice::Auto` adds
+the family's opener, so `</think>` + `Auto` means "free text and thinking; the first opener after
+the thinking block starts a well-formed call". An opener emitted *inside* the thinking block does
+not count. Triggers are matched on bytes (control tokens render as their text), independent of
+tokenisation.
+
+### Tool-call grammars
+
+| Family | Grammar after the opener | Opener (`auto` trigger) | Format tokens |
+|---|---|---|---|
+| Hermes | `%json` of `{"name": <const>, "arguments": <schema>}` (`anyOf` over the tools), then `</tool_call>`; further `<tool_call>…</tool_call>` blocks allowed | `<tool_call>` | text |
+| QwenXml | `<function=NAME>` then `<parameter=k>` *value* `</parameter>` per parameter, `</function>`, `</tool_call>`; strings are free text up to `</parameter>` (lazy suffix), other types `%json` of the property schema | `<tool_call>` | text |
+| Gemma4 | `call:NAME{k:v,…}` then `<tool_call\|>`; strings between `<\|"\|>` tokens, numbers/booleans/null bare, arrays and objects recursive, enum/const spelled out, anything else `%json` | `<\|tool_call>` | `<\|tool_call>`, `<tool_call\|>`, `<\|"\|>` |
+| Llama3 | `%json` of `{"name": <const>, "parameters": <schema>}`; single call | `<\|python_tag\|>` | `<\|python_tag\|>` |
+| Mistral | `NAME` `[ARGS]` `%json <schema>`; further `[TOOL_CALLS]…` calls allowed | `[TOOL_CALLS]` | `[TOOL_CALLS]`, `[ARGS]` |
+| Harmony | `NAME` (` <\|constrain\|>json`)? `<\|message\|>` `%json <schema>` `<\|call\|>` | `<\|channel\|>commentary to=functions.` | `<\|channel\|>`, `<\|constrain\|>`, `<\|message\|>`, `<\|call\|>` |
+
+`tool_choice`: `Required` starts the grammar at the opener (the first bytes *must* be the opener;
+no EOS before a call); `Named(name)` is `Required` with the tool set reduced to that tool; `Auto`
+is the lazy form above. Format tokens are referenced by id (`<[id]>`) when the tokenizer has them
+as control tokens and as text otherwise, so the same builder works on real and synthetic vocabularies.
+
+Argument schemas: JSON families pass the tool's `parameters` to llguidance as-is (`{}`/missing →
+any object; set `additionalProperties: false` for OpenAI-strict behaviour). The tag families
+(QwenXml, Gemma4) spell parameters out in schema order — required ones mandatory, optional ones
+skippable, each at most once — which matches what the templates teach the models but rejects a
+model that reorders arguments.
+
+Special tokens are never matchable by grammar text: control tokens live behind llguidance's `0xFF`
+marker in the trie, so a literal `"<|python_tag|>"` only matches the plain-text spelling byte by
+byte. Every end-of-generation id of the tokenizer (`eog_ids`) ends a completed grammar. Byte `0xFF`
+(never valid UTF-8) is therefore also unmatchable.
+
+JSON whitespace: every `%json` (sub-)grammar carries `x-guidance.whitespace_pattern =
+[ \t\n\r]{1,40}` unless the caller's schema root already has an `x-guidance` object, and the
+whitespace between tool calls is bounded the same way — like llama.cpp's schema converter, so a
+greedy decode cannot emit blanks forever.
+
+### Cache
+
+`GrammarCache` is keyed by `(GrammarSpec::hash(), GrammarTokenizer::hash())` (FNV-1a over the
+canonical JSON of the spec, and over the vocabulary's pieces, special flags and end-of-generation
+ids). It holds one llguidance `ParserFactory` per tokenizer (the slicer precomputation, 0.2 s in
+release / 1.1–1.4 s in debug for 150k–260k tokens) and an LRU of compiled grammars up to `limit`;
+a hit clones the fresh parser (shared compiled grammar, independent state). Wrap it in a `Mutex`
+to share across request handlers.
+
+### Measured cost (Apple Silicon, this machine)
+
+| | release | debug |
+|---|---|---|
+| 262,144-entry synthetic vocab, JSON-schema grammar, mean mask / max | 52 µs / 1.6 ms | 1.3 ms / 35 ms |
+| Qwen3-1.7B tokenizer (151,936), JSON-schema grammar, mean / max | 41 µs / 1.6 ms | 0.9 ms / 23 ms |
+| Qwen3-1.7B tokenizer, Hermes `required` with two tools, mean / max | 51 µs / 1.6 ms | 1.0 ms / 26 ms |
+| Grammar compile (JSON schema, 5 properties) | 0.7–1 ms | 2.7 ms |
+| `GrammarTokenizer::from_tokenizer` (Qwen3) | 70 ms | 0.46 s |
+
+The max is the first mask of a dense lexeme (a free-form string); later masks hit llguidance's
+slicer cache. The architecture's budget is ~1 ms per token in release.
+
 ## Stop-string semantics
 
 `StopMatcher` works on bytes over the concatenation of every fragment pushed (offsets are into that
@@ -158,7 +291,19 @@ strings are dropped; with no stop strings every push is `Flush` in O(1).
 
 ## Tests
 
-`cargo test -p llmario-engine-decode` — 31 tests: PRNG reference vector and determinism;
+`cargo test -p llmario-engine-decode` — 46 tests. Grammar (15): tokenizer adapter (special
+marking, hash stability, errors); JSON-schema greedy fuzz over 200 seeded random-logit walks, every
+output parsed and checked against the schema; the same through the sampler's multinomial path;
+lazy trigger (`</think>` as one token, split across bytes, and ending mid-token with leftover
+bytes fed to the parser); `tool_choice = required` allows only opener prefixes as the first token
+and no EOS; a completed regex grammar leaves only end-of-generation tokens; control tokens
+unmatchable by text but reachable by `<[id]>`; parser errors fall back to unconstrained without
+panicking; all six families under `required`, `named` and `auto` (free text, opener, then a
+well-formed call; both tools reachable; the named tool pinned); `</think>` then `auto`; cache
+hits/LRU eviction/per-tokenizer keys/independent states; spec hash and serde; mask timing on a
+262,144-entry vocabulary (printed; loose guard: mean < 5 ms release, < 50 ms debug); and, when
+`LLMARIO_TEST_GGUF` names a GGUF, the real Qwen3 tokenizer under a JSON schema and a Hermes
+`required` grammar from fixed logits (output parsed). Sampler/stop (31): PRNG reference vector and determinism;
 parameter defaults and serde; same seed ⇒ same sequence (and after `reset`); greedy argmax;
 top-k, top-p (inclusive cut, renormalisation after top-k), min-p (sorted and unsorted paths) and
 temperature on known distributions; multinomial frequencies; penalty arithmetic against
