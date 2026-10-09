@@ -78,7 +78,11 @@ impl BlockPool {
         PoolStats {
             n_blocks: self.meta.len(),
             free: self.free.len(),
-            cached_free: self.free.iter().filter(|&&b| self.meta[b as usize].hash.is_some()).count(),
+            cached_free: self
+                .free
+                .iter()
+                .filter(|&&b| self.meta[b as usize].hash.is_some())
+                .count(),
             hits: self.hits,
             misses: self.misses,
             evictions: self.evictions,
@@ -233,6 +237,7 @@ pub struct Acquired {
 
 /// Admission helper: a sequence that needs room for `n_tokens` reclaims every cached full
 /// block of its prefix, then allocates the rest.
+#[derive(Clone, Debug)]
 pub struct Sequence {
     pub table: BlockTable,
 }
@@ -390,7 +395,10 @@ mod tests {
         let h2 = chain_hashes(&[9, 2, 3, 4, 5, 6, 7, 8], 4, &k);
         assert_eq!(h1.len(), 2);
         assert_ne!(h1[0], h2[0]);
-        assert_ne!(h1[1], h2[1], "a change in block 0 changes block 1's chained hash");
+        assert_ne!(
+            h1[1], h2[1],
+            "a change in block 0 changes block 1's chained hash"
+        );
         let k2 = CacheKey {
             kv_types: "q8_0/q4_0".into(),
             ..key(b"")
