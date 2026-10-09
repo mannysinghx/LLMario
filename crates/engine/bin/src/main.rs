@@ -284,7 +284,7 @@ fn inspect(path: &std::path::Path, list_tensors: bool) -> Result<()> {
 }
 
 fn raw_run(
-    path: &PathBuf,
+    path: &std::path::Path,
     tokens: &str,
     n: usize,
     threads: Option<usize>,
