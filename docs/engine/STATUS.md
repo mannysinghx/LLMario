@@ -27,6 +27,27 @@ maintainers' Apple M4 Max (16-core, 64 GB, macOS 27) unless stated; every row na
 | Plan tightness | planned ≤ 1.15 × measured | 2.84× | fail (expected: KV reserved but untouched; revisit with the arena in M3) |
 | Warm load ≤ 1.2 × llama.cpp | — | 0.05 s load + warm-up | pass |
 
+## Kernel results (M1, 2026-10-09)
+
+- CPU kernel sets: `scalar` (f32 dequant reference), `int8` (portable int8-activation kernels for
+  Q4_0, Q4_1, Q5_0, Q5_1, Q8_0, Q4_K, Q5_K, Q6_K, F16, BF16, F32), `neon` (NEON+dotprod, bit-exact
+  with `int8`), `avx2` (compiled for x86, not yet run on real hardware). Every set is tested against
+  the f32 reference and against an f64 oracle of `W·Q(x)` (2e-5), so the kernels compute exactly the
+  quantised product; the error versus f32 on real Qwen3-1.7B rows is 0.38–0.39 % RMS, which is the
+  Q8_K activation quantisation that ggml also applies (measured/predicted error 0.97–1.05).
+- Greedy near-tie: on the prompt `def fibonacci(n):\n    ` the f32 path reproduces llama.cpp exactly
+  while the int8 paths flip one token (`return []` vs `return 0`). Since the int8 kernels are provably
+  the quantised product with ggml's quantiser, this is a tie resolved differently by two equally
+  noisy int8 paths, not a defect; a logit comparison at that step against llama.cpp would settle it.
+- Measured on the M4 Max (12 threads, shared machine, lower bounds): Q4_K 6144×2048 matvec 58–63 µs
+  (113–121 GB/s); a plain streaming read from the CPU reaches 280–292 GB/s, so the CPU-side
+  speed-of-light is ≈ 290 GB/s, not the 546 GB/s SoC figure; model-shaped decode step
+  11.25 ms/token (≈ 89 tok/s equivalent) in the kernels alone versus ≈ 16 ms/token end to end —
+  about 5 ms per token is outside the matmuls (attention loops, pool round trips at 3–6 µs × ~200
+  ops, sampling) and is the next CPU optimisation target.
+- NEON `vdotq_s32` and the f16 conversion intrinsics are still nightly-only on Rust 1.92; the kernels
+  use stable `asm!` for `sdot`.
+
 ## Open items carried forward
 
 - KV cache is f32 and contiguous per slot (M3 brings f16/q8_0 and the paged arena).
