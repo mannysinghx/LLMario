@@ -119,7 +119,7 @@ app, so it needs no separate server and no Ollama.
 |---|---|---|---|
 | llama.cpp | GGUF models; Mac, Windows, Linux, CPU, NVIDIA | `brew install llama.cpp` (macOS), `winget install ggml.llamacpp` (Windows), or build [ggml-org/llama.cpp](https://github.com/ggml-org/llama.cpp) | build 11146 (7fe450e19) |
 | MLX-LM | MLX models; Apple Silicon only (usually fastest there) | `./scripts/setup-mlx-venv.sh` (pinned venv) or `pip install mlx-lm` | mlx-lm 0.31.3, mlx 0.32.2 |
-| LLMario engine (preview) | GGUF models on the CPU today (Metal in progress); no install, no Python; built from this repository (`cargo build --release -p llmario-engine`) and enabled with `[backends.native] enabled = true` | ships with LLMario; design in [docs/engine/](docs/engine/README.md) | 0.3.0-beta (llama, mistral3, qwen2, qwen3, smollm3 architectures) |
+| LLMario engine (preview) | GGUF models on macOS (CPU and Metal) and Linux (CPU), not Windows; no install, no Python; built from this repository (`cargo build --release -p llmario-engine`) and enabled with `[backends.native] enabled = true` | ships with LLMario; design in [docs/engine/](docs/engine/README.md), status in [STATUS.md](docs/engine/STATUS.md) | 0.3.0-beta (llama, mistral3, qwen2, qwen3, smollm3, qwen35, gemma4 architectures) |
 
 ### One-command install (macOS)
 
