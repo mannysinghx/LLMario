@@ -8,14 +8,19 @@
 //!   JSON object (mapping) by default, with an automatic fallback to the string form for
 //!   templates that raise on mappings.
 //! * [`ChatTemplate::content_hash`] / [`ChatTemplate::detect_family`] identify the template.
-//!
-//! Only rendering lives here; parsing model output back into tool calls is the decode side's job.
+//! * [`OutputParser`] turns the model's streamed output text back into reasoning, content and
+//!   tool-call events per family (`parser`); [`ToolCallRepair`] validates arguments against
+//!   the tool's JSON Schema and phrases a repair instruction.
 
 mod env;
 mod family;
+pub mod parser;
 mod pyfmt;
 
 pub use family::TemplateFamily;
+pub use parser::{
+    OutputEvent, OutputParser, ParserOptions, RepairVerdict, ToolCallRepair, ToolSpec, ToolTable,
+};
 
 use chrono::{DateTime, FixedOffset};
 use minijinja::value::Value as JValue;

@@ -1,0 +1,14 @@
+{#- Minimal Llama 4 renderer for these tests, written after
+    github.com/meta-llama/llama-models models/llama4/prompt_format.md ("Tool calling"):
+    `[get_weather(city="San Francisco"), get_weather(city="Seattle")]<|eot|>`. Values are
+    rendered as JSON literals, which the pythonic syntax of the document also uses for strings
+    and numbers. The HF chat template is gated and was not consulted. -#}
+{{- bos_token -}}
+{%- for m in messages -%}
+{{- '<|header_start|>' + ('ipython' if m.role == 'tool' else m.role) + '<|header_end|>\n\n' -}}
+{%- if m.role == 'assistant' and m.tool_calls -%}
+{{- '[' -}}{%- for t in m.tool_calls -%}{{- t.function.name + '(' -}}{%- for k, v in t.function.arguments | items -%}{{ k }}={{ v | tojson }}{%- if not loop.last %}, {% endif -%}{%- endfor -%}{{- ')' -}}{%- if not loop.last %}, {% endif -%}{%- endfor -%}{{- ']<|eot|>' -}}
+{%- else -%}{{- m.content + '<|eot|>' -}}
+{%- endif -%}
+{%- endfor -%}
+{%- if add_generation_prompt -%}{{- '<|header_start|>assistant<|header_end|>\n\n' -}}{%- endif -%}

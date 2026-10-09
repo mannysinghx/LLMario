@@ -1,0 +1,30 @@
+{#- Minimal renderer of the Gemma 4 assistant turn, written for these tests after the
+    tokenizer.chat_template of gemma-4-12b-it-qat-q4_0.gguf (the canonical template is not
+    vendored; its licence is not MIT/Apache). The round-trip test asserts byte-identity of the
+    assistant turn with the real template when LLMARIO_TEST_GGUF names that file. -#}
+{%- macro arg(v) -%}
+{%- if v is none -%}null
+{%- elif v is string -%}<|"|>{{ v }}<|"|>
+{%- elif v is boolean -%}{{ 'true' if v else 'false' }}
+{%- elif v is mapping -%}{{ '{' }}{%- for k, x in v | dictsort -%}{%- if not loop.first %},{% endif -%}{{ k }}:{{ arg(x) }}{%- endfor -%}{{ '}' }}
+{%- elif v is sequence -%}[{%- for x in v -%}{{ arg(x) }}{%- if not loop.last %},{% endif -%}{%- endfor -%}]
+{%- else -%}{{ v }}
+{%- endif -%}
+{%- endmacro -%}
+{{- bos_token -}}
+{%- if messages[0].role == 'system' -%}{{- '<|turn>system\n' -}}{%- if enable_thinking -%}{{- '<|think|>\n' -}}{%- endif -%}{{- messages[0].content | trim -}}{{- '<turn|>\n' -}}{%- endif -%}
+{%- for m in messages -%}
+{%- if m.role == 'user' -%}{{- '<|turn>user\n' + (m.content | trim) + '<turn|>\n' -}}
+{%- elif m.role == 'assistant' -%}
+{{- '<|turn>model\n' -}}
+{%- if m.reasoning_content -%}{{- '<|channel>thought\n' + m.reasoning_content + '\n<channel|>' -}}{%- endif -%}
+{%- for tc in m.tool_calls or [] -%}
+{{- '<|tool_call>call:' + tc.function.name + '{' -}}
+{%- for k, x in tc.function.arguments | dictsort -%}{%- if not loop.first %},{% endif -%}{{ k }}:{{ arg(x) }}{%- endfor -%}
+{{- '}<tool_call|>' -}}
+{%- endfor -%}
+{{- m.content | trim -}}
+{%- if m.tool_calls -%}{{- '<|tool_response>' -}}{%- else -%}{{- '<turn|>\n' -}}{%- endif -%}
+{%- endif -%}
+{%- endfor -%}
+{%- if add_generation_prompt -%}{{- '<|turn>model\n' -}}{%- if not enable_thinking -%}{{- '<|channel>thought\n<channel|>' -}}{%- endif -%}{%- endif -%}

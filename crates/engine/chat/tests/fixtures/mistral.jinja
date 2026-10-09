@@ -1,0 +1,22 @@
+{#- Minimal Mistral renderer for these tests. The assistant-turn lines reproduce
+    huggingface.co/mistralai/Devstral-Small-2-24B-Instruct-2512 chat_template.jinja
+    (Apache-2.0): content, then one `[TOOL_CALLS]name[ARGS]{json}` per call, then eos. -#}
+{{- bos_token -}}
+{%- set ns = namespace(tools_emitted=false) -%}
+{%- for message in messages -%}
+{%- if message['role'] == 'system' -%}{{- '[SYSTEM_PROMPT]' + message['content'] + '[/SYSTEM_PROMPT]' -}}
+{%- elif message['role'] == 'user' -%}
+{%- if tools and not ns.tools_emitted -%}{{- '[AVAILABLE_TOOLS]' + (tools | tojson) + '[/AVAILABLE_TOOLS]' -}}{%- set ns.tools_emitted = true -%}{%- endif -%}
+{{- '[INST]' + message['content'] + '[/INST]' -}}
+{%- elif message['role'] == 'assistant' -%}
+{%- if message['content'] -%}{{- message['content'] -}}{%- endif -%}
+{%- for tool in message['tool_calls'] or [] -%}
+{{- '[TOOL_CALLS]' -}}
+{%- set arguments = tool['function']['arguments'] -%}
+{%- if arguments is not string -%}{%- set arguments = arguments|tojson|safe -%}{%- endif -%}
+{{- tool['function']['name'] + '[ARGS]' + arguments -}}
+{%- endfor -%}
+{{- eos_token -}}
+{%- elif message['role'] == 'tool' -%}{{- '[TOOL_RESULTS]' + message['content']|string + '[/TOOL_RESULTS]' -}}
+{%- endif -%}
+{%- endfor -%}
