@@ -57,8 +57,15 @@ pub async fn chat_completions(
 
 async fn handle(st: &AppState, v: Value, started: Instant) -> Result<Response, RuntimeError> {
     let mut req = validate::parse_chat(&v)?;
+    if !req.native_only.is_empty() {
+        // Refuse before loading anything when the model would not be served by the native engine.
+        if let Ok(sel) = st.sup.select(&req.model) {
+            validate::require_native(&req, sel.backend)?;
+        }
+    }
     let lease = st.sup.acquire(&req.model).await?;
     let engine = lease.engine.clone();
+    validate::require_native(&req, engine.backend)?;
     validate::check_limits(&mut req, &engine.profile)?;
 
     let mut body = req.upstream_body(&engine.upstream_model);
@@ -353,7 +360,11 @@ impl Relay {
                             .get(*k)
                             .and_then(Value::as_str)
                             .is_some_and(|s| !s.is_empty())
-                    });
+                    })
+                    || delta
+                        .get("tool_calls")
+                        .and_then(Value::as_array)
+                        .is_some_and(|a| !a.is_empty());
                 if has_text {
                     self.content_chunks += 1;
                     if self.first_token.is_none() {
