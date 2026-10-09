@@ -1,6 +1,8 @@
-//! Zero-copy weight views resolved from a GGUF file for the dense families.
+//! Zero-copy weight views resolved from a GGUF file for the dense families (the hybrid family's
+//! layer views are in `hybrid.rs` and hang off [`Weights::hybrid`]).
 
-use crate::arch::ArchSpec;
+use crate::arch::{ArchSpec, Family};
+use crate::hybrid::HybridWeights;
 use crate::{ModelError, Result};
 use llmario_engine_core::dequant::dequantize_row;
 use llmario_engine_core::GgmlType;
@@ -30,10 +32,13 @@ pub struct Weights<'a> {
     pub output_norm: Vec<f32>,
     /// `None` when the output head is tied to the embedding.
     pub output: Option<QMat<'a>>,
+    /// Dense-family layers (empty for the hybrid family).
     pub layers: Vec<LayerWeights<'a>>,
+    /// Hybrid-family layers (`Some` only for [`Family::Qwen35`]).
+    pub hybrid: Option<HybridWeights<'a>>,
 }
 
-fn mat<'a>(f: &'a GgufFile, name: &str, cols: u32, rows: u32) -> Result<QMat<'a>> {
+pub(crate) fn mat<'a>(f: &'a GgufFile, name: &str, cols: u32, rows: u32) -> Result<QMat<'a>> {
     let t = f
         .tensor(name)
         .ok_or_else(|| ModelError::MissingTensor(name.into()))?;
@@ -53,8 +58,13 @@ fn mat<'a>(f: &'a GgufFile, name: &str, cols: u32, rows: u32) -> Result<QMat<'a>
     ))
 }
 
+/// Load a float tensor of any rank with `len` elements, row-major, into an f32 vector.
+pub(crate) fn vecn(f: &GgufFile, name: &str, len: u32) -> Result<Vec<f32>> {
+    vec1(f, name, len)
+}
+
 /// Load a 1-D float tensor (norm weights, biases) into an f32 vector.
-fn vec1(f: &GgufFile, name: &str, len: u32) -> Result<Vec<f32>> {
+pub(crate) fn vec1(f: &GgufFile, name: &str, len: u32) -> Result<Vec<f32>> {
     let t = f
         .tensor(name)
         .ok_or_else(|| ModelError::MissingTensor(name.into()))?;
@@ -87,6 +97,15 @@ impl<'a> Weights<'a> {
         } else {
             Some(mat(f, "output.weight", spec.d_model, spec.n_vocab)?)
         };
+        if spec.family == Family::Qwen35 {
+            return Ok(Weights {
+                token_embd,
+                output_norm,
+                output,
+                layers: Vec::new(),
+                hybrid: Some(HybridWeights::load(f, spec)?),
+            });
+        }
         let mut layers = Vec::with_capacity(spec.n_layer as usize);
         for l in 0..spec.n_layer {
             let p = |s: &str| format!("blk.{l}.{s}");
@@ -117,6 +136,7 @@ impl<'a> Weights<'a> {
             output_norm,
             output,
             layers,
+            hybrid: None,
         })
     }
 
@@ -130,6 +150,9 @@ impl<'a> Weights<'a> {
             for m in [&l.wq, &l.wk, &l.wv, &l.wo, &l.w_gate, &l.w_up, &l.w_down] {
                 v.push(m.dtype);
             }
+        }
+        if let Some(h) = &self.hybrid {
+            h.push_dtypes(&mut v);
         }
         v.sort();
         v.dedup();
