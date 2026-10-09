@@ -1,7 +1,7 @@
 //! The inference thread: owns the model, the KV cache and the scratch buffers; executes one
 //! generation job at a time from a queue; streams events back over a channel.
 
-use crate::ServeOptions;
+use crate::{Device, ServeOptions};
 use llmario_engine_chat::ChatTemplate;
 use llmario_engine_core::ledger::{DeviceId, Ledger};
 use llmario_engine_decode::{Sampler, SamplingParams, StopMatcher, StopResult};
@@ -81,6 +81,8 @@ pub struct EngineRuntime {
     pub stats: Arc<Stats>,
     pub kernels: &'static str,
     pub threads: usize,
+    /// `"cpu"` or `"metal"`.
+    pub backend: &'static str,
 }
 
 impl EngineRuntime {
@@ -94,7 +96,13 @@ impl EngineRuntime {
         let (tx, rx) = mpsc::channel::<Job>();
         let stats = Arc::new(Stats::default());
         let stats2 = stats.clone();
-        type Ready = anyhow::Result<(ArchSpec, Arc<Tokenizer>, Option<Arc<ChatTemplate>>, usize)>;
+        type Ready = anyhow::Result<(
+            ArchSpec,
+            Arc<Tokenizer>,
+            Option<Arc<ChatTemplate>>,
+            usize,
+            &'static str,
+        )>;
         let (ready_tx, ready_rx) = tokio::sync::oneshot::channel::<Ready>();
         std::thread::Builder::new()
             .name("llmario-infer".into())
@@ -105,7 +113,8 @@ impl EngineRuntime {
                         let spec = worker.backend.spec().clone();
                         let tokenizer = worker.tokenizer.clone();
                         let threads = opts.threads.max(1);
-                        let _ = ready_tx.send(Ok((spec, tokenizer, template, threads)));
+                        let backend = worker.backend.name();
+                        let _ = ready_tx.send(Ok((spec, tokenizer, template, threads, backend)));
                         for job in rx {
                             worker.run(job);
                         }
@@ -117,7 +126,7 @@ impl EngineRuntime {
                     }
                 }
             })?;
-        let (spec, tokenizer, template, threads) = ready_rx
+        let (spec, tokenizer, template, threads, backend) = ready_rx
             .await
             .map_err(|_| anyhow::anyhow!("inference thread exited during load"))??;
         Ok(EngineRuntime {
@@ -126,8 +135,13 @@ impl EngineRuntime {
             tokenizer,
             template,
             stats,
-            kernels: llmario_engine_cpu::simd::kernels().name,
+            kernels: if backend == "metal" {
+                "metal"
+            } else {
+                llmario_engine_cpu::simd::kernels().name
+            },
             threads,
+            backend,
         })
     }
 
@@ -169,15 +183,29 @@ fn load_worker<'a>(
     };
     let threads = opts.threads.max(1);
     let ctx = plan.ctx_per_slot as usize;
-    let backend = CpuBackend::new(file, threads, ctx, plan.n_batch as usize)?;
+    let backend = open_backend(file, opts, threads, ctx, plan.n_batch as usize)?;
     ledger.update(DeviceId::Host, |d| {
         d.weights_mapped = file.tensor_bytes_total();
-        d.kv_arena_reserved = llmario_engine_model::KvCache::bytes(backend.spec(), ctx);
-        d.scratch_reserved = backend.reserved_bytes() - d.kv_arena_reserved;
         d.runtime_fixed = plan.requested.runtime_fixed;
     });
+    match backend.name() {
+        // Metal on unified memory: the weights stay a host mapping; the KV cache and scratch
+        // are GPU buffers (and the weight views are wired by the residency sets when present).
+        "metal" => {
+            let kv = backend.kv_bytes(ctx);
+            let reserved = backend.reserved_bytes();
+            ledger.update(DeviceId::Gpu(0), |d| {
+                d.kv_arena_reserved = kv;
+                d.scratch_reserved = reserved.saturating_sub(kv);
+            });
+        }
+        _ => ledger.update(DeviceId::Host, |d| {
+            d.kv_arena_reserved = llmario_engine_model::KvCache::bytes(backend.spec(), ctx);
+            d.scratch_reserved = backend.reserved_bytes() - d.kv_arena_reserved;
+        }),
+    }
     let mut worker = Worker {
-        backend: Box::new(backend),
+        backend,
         cached: Vec::new(),
         tokenizer,
         stats,
@@ -207,9 +235,70 @@ fn load_worker<'a>(
         threads,
         kernels = llmario_engine_cpu::simd::kernels().name,
         backend = worker.backend.name(),
+        device = ?opts.device,
         "model loaded and warmed up"
     );
     Ok((worker, template))
+}
+
+/// Choose and construct the backend for `opts.device` (Architecture §7.8: `Auto` prefers the GPU
+/// when one is usable, otherwise the CPU; `Metal` on a build or machine without it is an error).
+fn open_backend<'a>(
+    file: &'a GgufFile,
+    opts: &ServeOptions,
+    threads: usize,
+    ctx: usize,
+    n_batch: usize,
+) -> anyhow::Result<Box<dyn ModelBackend + 'a>> {
+    let want_metal = match opts.device {
+        Device::Cpu => false,
+        Device::Metal => true,
+        Device::Auto => metal_available(),
+    };
+    if want_metal {
+        #[cfg(all(feature = "metal", target_os = "macos"))]
+        {
+            match llmario_engine_metal::MetalBackend::new(file, ctx, n_batch) {
+                Ok(backend) => return Ok(Box::new(backend)),
+                // `Auto` falls back to the CPU (e.g. a family the Metal kernels do not cover
+                // yet); an explicit `--device metal` is an error.
+                Err(e) if opts.device == Device::Auto => {
+                    tracing::warn!(error = %e, "Metal backend unavailable for this model; using the CPU backend");
+                }
+                Err(e) => return Err(e.into()),
+            }
+        }
+        #[cfg(not(all(feature = "metal", target_os = "macos")))]
+        {
+            anyhow::bail!("this build has no Metal backend (use --device cpu)");
+        }
+    }
+    Ok(Box::new(CpuBackend::new(file, threads, ctx, n_batch)?))
+}
+
+/// True when the build has the Metal backend and a usable GPU is present.
+pub fn metal_available() -> bool {
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    {
+        llmario_engine_metal::MetalBackend::is_available()
+    }
+    #[cfg(not(all(feature = "metal", target_os = "macos")))]
+    {
+        false
+    }
+}
+
+/// Bytes of K/V the backend holds for `ctx` tokens (f16 on Metal, f32 on the CPU).
+trait KvBytes {
+    fn kv_bytes(&self, ctx: usize) -> u64;
+}
+
+impl KvBytes for dyn ModelBackend + '_ {
+    fn kv_bytes(&self, ctx: usize) -> u64 {
+        let spec = self.spec();
+        let per_elem = if self.name() == "metal" { 2.0 } else { 4.0 };
+        spec.kv_bytes_per_token(per_elem) * ctx as u64
+    }
 }
 
 struct Worker<'a> {

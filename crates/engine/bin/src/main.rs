@@ -5,10 +5,9 @@
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use llmario_engine_cpu::ThreadPool;
 use llmario_engine_formats::GgufFile;
-use llmario_engine_model::forward::Scratch;
-use llmario_engine_model::{ArchSpec, KvCache, Model};
+use llmario_engine_model::{ArchSpec, CpuBackend, ModelBackend};
+use llmario_engine_server::Device;
 use std::path::PathBuf;
 use std::time::Instant;
 
@@ -47,6 +46,9 @@ enum Cmd {
         /// Memory ceiling in bytes for the plan (default: physical memory).
         #[arg(long)]
         memory_limit: Option<u64>,
+        /// Backend: `auto` (Metal when a usable GPU is present, else CPU), `cpu` or `metal`.
+        #[arg(long, default_value = "auto")]
+        device: Device,
     },
     /// Report what this build can run (`--json` for the supervisor).
     Probe {
@@ -89,11 +91,22 @@ enum Cmd {
         /// Context size to reserve.
         #[arg(long, default_value_t = 2048)]
         ctx: usize,
+        /// Backend: `auto`, `cpu` or `metal`.
+        #[arg(long, default_value = "auto")]
+        device: Device,
     },
 }
 
-/// Architectures the dense forward pass covers in this build (M1).
-const ARCHITECTURES: &[&str] = &["llama", "mistral3", "qwen2", "qwen3", "smollm3"];
+/// Architectures the CPU forward pass covers in this build (M1 dense families + the Qwen3.5 hybrid).
+const ARCHITECTURES: &[&str] = &[
+    "llama",
+    "mistral3",
+    "qwen2",
+    "qwen3",
+    "smollm3",
+    "qwen35",
+    "qwen3next",
+];
 
 fn main() -> Result<()> {
     tracing_subscriber::fmt()
@@ -128,6 +141,7 @@ fn main() -> Result<()> {
                 batch,
                 threads: 0,
                 memory_limit,
+                device: Device::Auto,
             };
             let (plan, _) = llmario_engine_server::plan_for(&f, &opts)?;
             if json {
@@ -163,6 +177,7 @@ fn main() -> Result<()> {
             threads,
             model_id,
             memory_limit,
+            device,
         } => {
             let threads = threads.unwrap_or_else(|| {
                 std::thread::available_parallelism()
@@ -183,6 +198,7 @@ fn main() -> Result<()> {
                 batch,
                 threads,
                 memory_limit,
+                device,
             };
             let rt = tokio::runtime::Builder::new_multi_thread()
                 .worker_threads(2)
@@ -196,19 +212,32 @@ fn main() -> Result<()> {
             n,
             threads,
             ctx,
-        } => raw_run(&model, &tokens, n, threads, ctx),
+            device,
+        } => raw_run(&model, &tokens, n, threads, ctx, device),
     }
 }
 
 fn probe(json: bool) -> Result<()> {
     let kernels = llmario_engine_cpu::simd::kernels().name;
+    let metal = metal_info();
     if json {
+        let metal_json = metal.as_ref().map(|m| {
+            serde_json::json!({
+                "name": m.name,
+                "family": m.family,
+                "unified_memory": m.has_unified_memory,
+                "recommended_max_working_set": m.recommended_max_working_set,
+                "residency_sets": m.residency_sets,
+            })
+        });
         println!(
             "{}",
             serde_json::json!({
                 "version": env!("CARGO_PKG_VERSION"),
                 "architectures": ARCHITECTURES,
                 "kernels": kernels,
+                "devices": if metal.is_some() { vec!["cpu", "metal"] } else { vec!["cpu"] },
+                "metal": metal_json,
                 "formats": ["gguf"],
                 "threads_available": std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1),
             })
@@ -217,8 +246,41 @@ fn probe(json: bool) -> Result<()> {
         println!("llmario-engine {}", env!("CARGO_PKG_VERSION"));
         println!("kernels: {kernels}");
         println!("architectures: {}", ARCHITECTURES.join(", "));
+        match metal {
+            Some(m) => println!(
+                "metal: {} ({}), unified memory {}, recommendedMaxWorkingSetSize {:.1} GiB, residency sets {}",
+                m.name,
+                m.family,
+                m.has_unified_memory,
+                m.recommended_max_working_set as f64 / 1073741824.0,
+                m.residency_sets
+            ),
+            None => println!("metal: not available"),
+        }
     }
     Ok(())
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+fn metal_info() -> Option<llmario_engine_metal::DeviceInfo> {
+    llmario_engine_metal::MetalBackend::device_info()
+}
+
+#[cfg(not(all(feature = "metal", target_os = "macos")))]
+fn metal_info() -> Option<llmario_engine_metal_stub::DeviceInfo> {
+    None
+}
+
+/// Stand-in so `probe` has one `DeviceInfo` shape on every target.
+#[cfg(not(all(feature = "metal", target_os = "macos")))]
+mod llmario_engine_metal_stub {
+    pub struct DeviceInfo {
+        pub name: String,
+        pub family: String,
+        pub has_unified_memory: bool,
+        pub recommended_max_working_set: u64,
+        pub residency_sets: bool,
+    }
 }
 
 fn inspect(path: &std::path::Path, list_tensors: bool) -> Result<()> {
@@ -289,6 +351,7 @@ fn raw_run(
     n: usize,
     threads: Option<usize>,
     ctx: usize,
+    device: Device,
 ) -> Result<()> {
     let prompt: Vec<u32> = tokens
         .split(',')
@@ -299,24 +362,41 @@ fn raw_run(
     anyhow::ensure!(!prompt.is_empty(), "empty prompt");
     let t0 = Instant::now();
     let f = GgufFile::open(path)?;
-    let model = Model::load(&f)?;
-    let pool = ThreadPool::new(threads.unwrap_or_else(|| {
+    let threads = threads.unwrap_or_else(|| {
         std::thread::available_parallelism()
             .map(|n| n.get())
             .unwrap_or(1)
-    }));
+    });
+    let use_metal = match device {
+        Device::Cpu => false,
+        Device::Metal => true,
+        Device::Auto => llmario_engine_server::engine::metal_available(),
+    };
+    let n_batch = prompt.len().max(1);
+    let mut backend: Box<dyn ModelBackend> = match (use_metal, device) {
+        (false, _) => Box::new(CpuBackend::new(&f, threads, ctx, n_batch)?),
+        (true, Device::Metal) => Box::new(open_metal(&f, ctx, n_batch)?),
+        // `auto`: a model the Metal kernels do not cover runs on the CPU, with the reason logged.
+        (true, _) => match open_metal(&f, ctx, n_batch) {
+            Ok(b) => Box::new(b),
+            Err(e) => {
+                eprintln!("metal backend unavailable for this model ({e}); using the CPU backend");
+                Box::new(CpuBackend::new(&f, threads, ctx, n_batch)?)
+            }
+        },
+    };
+    let spec = backend.spec().clone();
     eprintln!(
-        "loaded {} ({}) in {:.2}s; threads {}; kernels {}",
-        model.spec.name.clone().unwrap_or_default(),
-        model.spec.arch,
+        "loaded {} ({}) in {:.2}s; backend {}; threads {}; kernels {}",
+        spec.name.clone().unwrap_or_default(),
+        spec.arch,
         t0.elapsed().as_secs_f32(),
-        pool.n_threads(),
+        backend.name(),
+        threads,
         llmario_engine_cpu::simd::kernels().name
     );
-    let mut kv = KvCache::new(&model.spec, ctx);
-    let mut scratch = Scratch::new(&model.spec, prompt.len().max(1));
     let t1 = Instant::now();
-    let logits = model.forward(&pool, &mut kv, &prompt, &mut scratch);
+    let logits = backend.forward(&prompt);
     let mut next = argmax(logits);
     let prefill = t1.elapsed();
     eprintln!(
@@ -327,9 +407,8 @@ fn raw_run(
     );
     let mut out = vec![next];
     let t2 = Instant::now();
-    let mut dec = Scratch::new(&model.spec, 1);
     for _ in 1..n {
-        let logits = model.forward(&pool, &mut kv, &[next], &mut dec);
+        let logits = backend.forward(&[next]);
         next = argmax(logits);
         out.push(next);
     }
@@ -369,4 +448,20 @@ fn argmax(logits: &[f32]) -> u32 {
         }
     }
     best as u32
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+fn open_metal(
+    f: &GgufFile,
+    ctx: usize,
+    n_batch: usize,
+) -> Result<llmario_engine_metal::MetalBackend<'_>> {
+    Ok(llmario_engine_metal::MetalBackend::new(f, ctx, n_batch)?)
+}
+
+#[cfg(not(all(feature = "metal", target_os = "macos")))]
+fn open_metal(f: &GgufFile, ctx: usize, n_batch: usize) -> Result<CpuBackend<'_>> {
+    let _ = (ctx, n_batch);
+    let _ = f;
+    anyhow::bail!("this build has no Metal backend (use --device cpu)")
 }
