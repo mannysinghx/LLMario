@@ -301,7 +301,7 @@ pub fn metal_available() -> bool {
     }
 }
 
-/// Bytes of K/V the backend holds for `ctx` tokens (f16 on Metal, f32 on the CPU).
+/// Bytes of K/V the backend holds for `ctx` tokens (f16 on both backends).
 trait KvBytes {
     fn kv_bytes(&self, ctx: usize) -> u64;
 }
@@ -309,8 +309,7 @@ trait KvBytes {
 impl KvBytes for dyn ModelBackend + '_ {
     fn kv_bytes(&self, ctx: usize) -> u64 {
         let spec = self.spec();
-        let per_elem = if self.name() == "metal" { 2.0 } else { 4.0 };
-        spec.kv_bytes_per_token(per_elem) * ctx as u64
+        spec.kv_bytes_per_token(llmario_engine_model::kv::KV_ELEM_BYTES) * ctx as u64
     }
 }
 
