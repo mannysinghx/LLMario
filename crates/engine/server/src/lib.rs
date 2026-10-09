@@ -5,6 +5,7 @@
 
 pub mod api;
 pub mod engine;
+pub mod footprint;
 pub mod openai;
 
 use anyhow::{Context, Result};

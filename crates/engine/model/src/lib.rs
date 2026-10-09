@@ -9,11 +9,13 @@
 //!   families arrive in M3/M4 as additional blocks.
 
 pub mod arch;
+pub mod backend;
 pub mod forward;
 pub mod kv;
 pub mod weights;
 
 pub use arch::{ArchSpec, Family};
+pub use backend::{CpuBackend, ModelBackend};
 pub use forward::Model;
 pub use kv::KvCache;
 
