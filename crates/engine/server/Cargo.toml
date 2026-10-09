@@ -1,0 +1,27 @@
+[package]
+name = "llmario-engine-server"
+description = "Native engine runtime loop and OpenAI-compatible HTTP server (IPC contract v1)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+llmario-engine-core = { workspace = true }
+llmario-engine-formats = { workspace = true }
+llmario-engine-model = { workspace = true }
+llmario-engine-cpu = { workspace = true }
+llmario-engine-tokenizer = { workspace = true }
+llmario-engine-chat = { workspace = true }
+llmario-engine-decode = { workspace = true }
+llmario-engine-plan = { workspace = true }
+anyhow = { workspace = true }
+axum = { workspace = true }
+futures = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sysinfo = { workspace = true }
+tokio = { workspace = true }
+tokio-stream = { workspace = true }
+tracing = { workspace = true }

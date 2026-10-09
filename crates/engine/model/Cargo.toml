@@ -1,0 +1,18 @@
+[package]
+name = "llmario-engine-model"
+description = "Native engine model descriptions (ArchSpec) and forward passes built from CPU primitives"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+llmario-engine-core = { workspace = true }
+llmario-engine-formats = { workspace = true }
+llmario-engine-cpu = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

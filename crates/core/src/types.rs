@@ -44,6 +44,8 @@ impl FromStr for ModelFormat {
 pub enum BackendKind {
     LlamaCpp,
     Mlx,
+    /// LLMario's own engine (`llmario-engine`), GGUF models.
+    Native,
     Mock,
 }
 
@@ -52,6 +54,7 @@ impl fmt::Display for BackendKind {
         f.write_str(match self {
             BackendKind::LlamaCpp => "llamacpp",
             BackendKind::Mlx => "mlx",
+            BackendKind::Native => "native",
             BackendKind::Mock => "mock",
         })
     }
@@ -63,9 +66,10 @@ impl FromStr for BackendKind {
         match s.to_ascii_lowercase().replace(['.', '-', '_'], "").as_str() {
             "llamacpp" | "llama" => Ok(Self::LlamaCpp),
             "mlx" | "mlxlm" => Ok(Self::Mlx),
+            "native" | "llmario" | "engine" => Ok(Self::Native),
             "mock" => Ok(Self::Mock),
             other => Err(format!(
-                "unknown backend '{other}' (expected llamacpp|mlx|mock)"
+                "unknown backend '{other}' (expected llamacpp|mlx|native|mock)"
             )),
         }
     }
@@ -189,7 +193,12 @@ mod tests {
         ] {
             assert_eq!(k.to_string().parse::<ProfileKind>().unwrap(), k);
         }
-        for b in [BackendKind::LlamaCpp, BackendKind::Mlx, BackendKind::Mock] {
+        for b in [
+            BackendKind::LlamaCpp,
+            BackendKind::Mlx,
+            BackendKind::Native,
+            BackendKind::Mock,
+        ] {
             assert_eq!(b.to_string().parse::<BackendKind>().unwrap(), b);
         }
         assert_eq!(

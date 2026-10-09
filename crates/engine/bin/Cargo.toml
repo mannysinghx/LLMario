@@ -1,0 +1,27 @@
+[package]
+name = "llmario-engine"
+description = "LLMario native inference engine process"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "llmario-engine"
+path = "src/main.rs"
+
+[dependencies]
+llmario-engine-core = { workspace = true }
+llmario-engine-formats = { workspace = true }
+llmario-engine-model = { workspace = true }
+llmario-engine-cpu = { workspace = true }
+llmario-engine-plan = { workspace = true }
+llmario-engine-server = { workspace = true }
+llmario-engine-tokenizer = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+anyhow = { workspace = true }
+clap = { workspace = true }
+serde_json = { workspace = true }

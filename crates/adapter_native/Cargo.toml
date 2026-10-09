@@ -1,0 +1,17 @@
+[package]
+name = "llmario-adapter-native"
+description = "Supervisor adapter for LLMario's own inference engine (llmario-engine)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+llmario-core = { workspace = true }
+llmario-hardware = { workspace = true }
+llmario-registry = { workspace = true }
+llmario-supervisor = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }

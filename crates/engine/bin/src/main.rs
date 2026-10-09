@@ -1,0 +1,375 @@
+//! `llmario-engine`: the native engine process.
+//!
+//! Subcommands grow with the milestones: `inspect` and `raw-run` (M1 development), then `plan`,
+//! `serve`, `probe` and `bench`.
+
+use anyhow::{Context, Result};
+use clap::{Parser, Subcommand};
+use llmario_engine_cpu::ThreadPool;
+use llmario_engine_formats::GgufFile;
+use llmario_engine_model::forward::Scratch;
+use llmario_engine_model::{ArchSpec, KvCache, Model};
+use std::path::PathBuf;
+use std::time::Instant;
+
+#[derive(Parser)]
+#[command(name = "llmario-engine", version, about)]
+struct Cli {
+    #[command(subcommand)]
+    cmd: Cmd,
+}
+
+#[derive(Subcommand)]
+enum Cmd {
+    /// Print a model's metadata, architecture description and tensor type summary.
+    Inspect {
+        model: PathBuf,
+        /// Also list every tensor.
+        #[arg(long)]
+        tensors: bool,
+    },
+    /// Serve a model over HTTP (IPC contract v1) for the LLMario supervisor.
+    Serve {
+        #[arg(long)]
+        model: PathBuf,
+        #[arg(long, default_value = "127.0.0.1:0")]
+        listen: String,
+        #[arg(long, default_value_t = 8192)]
+        ctx: u32,
+        #[arg(long, default_value_t = 1)]
+        parallel: u32,
+        #[arg(long, default_value_t = 512)]
+        batch: u32,
+        #[arg(long)]
+        threads: Option<usize>,
+        #[arg(long)]
+        model_id: Option<String>,
+        /// Memory ceiling in bytes for the plan (default: physical memory).
+        #[arg(long)]
+        memory_limit: Option<u64>,
+    },
+    /// Report what this build can run (`--json` for the supervisor).
+    Probe {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Compute the memory plan for a model without loading it.
+    Plan {
+        model: PathBuf,
+        #[arg(long, default_value_t = 8192)]
+        ctx: u32,
+        #[arg(long, default_value_t = 1)]
+        parallel: u32,
+        #[arg(long, default_value_t = 512)]
+        batch: u32,
+        #[arg(long)]
+        memory_limit: Option<u64>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Tokenize text with the model's tokenizer (development).
+    Tokenize {
+        #[arg(long)]
+        model: PathBuf,
+        #[arg(long)]
+        text: String,
+    },
+    /// Development: run greedy generation from raw token ids (no tokenizer, no template).
+    RawRun {
+        #[arg(long)]
+        model: PathBuf,
+        /// Comma-separated prompt token ids.
+        #[arg(long)]
+        tokens: String,
+        /// Tokens to generate.
+        #[arg(long, default_value_t = 16)]
+        n: usize,
+        #[arg(long)]
+        threads: Option<usize>,
+        /// Context size to reserve.
+        #[arg(long, default_value_t = 2048)]
+        ctx: usize,
+    },
+}
+
+/// Architectures the dense forward pass covers in this build (M1).
+const ARCHITECTURES: &[&str] = &["llama", "mistral3", "qwen2", "qwen3", "smollm3"];
+
+fn main() -> Result<()> {
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_env("LLMARIO_ENGINE_LOG")
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
+        .with_writer(std::io::stderr)
+        .init();
+    let cli = Cli::parse();
+    match cli.cmd {
+        Cmd::Inspect { model, tensors } => inspect(&model, tensors),
+        Cmd::Probe { json } => probe(json),
+        Cmd::Plan {
+            model,
+            ctx,
+            parallel,
+            batch,
+            memory_limit,
+            json,
+        } => {
+            let f = GgufFile::open(&model)?;
+            let opts = llmario_engine_server::ServeOptions {
+                model: model.clone(),
+                model_id: model
+                    .file_stem()
+                    .map(|s| s.to_string_lossy().into_owned())
+                    .unwrap_or_default(),
+                listen: String::new(),
+                ctx,
+                parallel,
+                batch,
+                threads: 0,
+                memory_limit,
+            };
+            let (plan, _) = llmario_engine_server::plan_for(&f, &opts)?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&plan)?);
+            } else {
+                print!("{}", llmario_engine_plan::render(&plan));
+            }
+            if !plan.fits {
+                std::process::exit(2);
+            }
+            Ok(())
+        }
+        Cmd::Tokenize { model, text } => {
+            let f = GgufFile::open(&model)?;
+            let tok = llmario_engine_tokenizer::Tokenizer::from_gguf(&f)?;
+            let ids = tok.encode(&text, tok.add_bos(), true);
+            println!(
+                "{}",
+                ids.iter()
+                    .map(|t| t.to_string())
+                    .collect::<Vec<_>>()
+                    .join(",")
+            );
+            println!("{:?}", tok.decode(&ids));
+            Ok(())
+        }
+        Cmd::Serve {
+            model,
+            listen,
+            ctx,
+            parallel,
+            batch,
+            threads,
+            model_id,
+            memory_limit,
+        } => {
+            let threads = threads.unwrap_or_else(|| {
+                std::thread::available_parallelism()
+                    .map(|n| n.get())
+                    .unwrap_or(1)
+            });
+            let opts = llmario_engine_server::ServeOptions {
+                model_id: model_id.unwrap_or_else(|| {
+                    model
+                        .file_stem()
+                        .map(|s| s.to_string_lossy().into_owned())
+                        .unwrap_or_default()
+                }),
+                model,
+                listen,
+                ctx,
+                parallel,
+                batch,
+                threads,
+                memory_limit,
+            };
+            let rt = tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
+                .enable_all()
+                .build()?;
+            rt.block_on(llmario_engine_server::serve(opts))
+        }
+        Cmd::RawRun {
+            model,
+            tokens,
+            n,
+            threads,
+            ctx,
+        } => raw_run(&model, &tokens, n, threads, ctx),
+    }
+}
+
+fn probe(json: bool) -> Result<()> {
+    let kernels = llmario_engine_cpu::simd::kernels().name;
+    if json {
+        println!(
+            "{}",
+            serde_json::json!({
+                "version": env!("CARGO_PKG_VERSION"),
+                "architectures": ARCHITECTURES,
+                "kernels": kernels,
+                "formats": ["gguf"],
+                "threads_available": std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1),
+            })
+        );
+    } else {
+        println!("llmario-engine {}", env!("CARGO_PKG_VERSION"));
+        println!("kernels: {kernels}");
+        println!("architectures: {}", ARCHITECTURES.join(", "));
+    }
+    Ok(())
+}
+
+fn inspect(path: &PathBuf, list_tensors: bool) -> Result<()> {
+    let f = GgufFile::open(path).with_context(|| format!("open {}", path.display()))?;
+    println!("file: {}", path.display());
+    println!(
+        "gguf version {}, alignment {}, {} tensors, {} metadata keys, {} part(s)",
+        f.version,
+        f.alignment,
+        f.tensors.len(),
+        f.metadata.len(),
+        f.parts.len()
+    );
+    println!("--- metadata");
+    for (k, v) in &f.metadata {
+        if k.starts_with("tokenizer.ggml.")
+            && matches!(v, llmario_engine_formats::MetaValue::Array(_))
+        {
+            println!("{k} = {}", v.summary());
+            continue;
+        }
+        if k == "tokenizer.chat_template" {
+            println!("{k} = <{} bytes>", v.as_str().map(|s| s.len()).unwrap_or(0));
+            continue;
+        }
+        println!("{k} = {}", v.summary());
+    }
+    println!("--- bytes by type");
+    let total = f.tensor_bytes_total();
+    for (t, b) in f.bytes_by_type() {
+        println!(
+            "{t:>8}: {:>10.1} MiB ({:.1}%)",
+            b as f64 / 1048576.0,
+            b as f64 * 100.0 / total as f64
+        );
+    }
+    println!("total weights: {:.2} GiB", total as f64 / 1073741824.0);
+    match ArchSpec::from_gguf(&f) {
+        Ok(spec) => {
+            println!("--- arch");
+            println!("{}", serde_json::to_string_pretty(&spec)?);
+            println!(
+                "kv bytes/token: f16 {} B, f32 {} B",
+                spec.kv_bytes_per_token(2.0),
+                spec.kv_bytes_per_token(4.0)
+            );
+        }
+        Err(e) => println!("--- arch: not runnable by this build: {e}"),
+    }
+    if list_tensors {
+        println!("--- tensors");
+        for t in &f.tensors {
+            println!(
+                "{:<40} {:>8} {:<24} {:>12}",
+                t.name,
+                t.dtype,
+                t.shape.to_string(),
+                t.span.len
+            );
+        }
+    }
+    Ok(())
+}
+
+fn raw_run(
+    path: &PathBuf,
+    tokens: &str,
+    n: usize,
+    threads: Option<usize>,
+    ctx: usize,
+) -> Result<()> {
+    let prompt: Vec<u32> = tokens
+        .split(',')
+        .filter(|s| !s.trim().is_empty())
+        .map(|s| s.trim().parse::<u32>())
+        .collect::<std::result::Result<_, _>>()
+        .context("--tokens must be comma-separated integers")?;
+    anyhow::ensure!(!prompt.is_empty(), "empty prompt");
+    let t0 = Instant::now();
+    let f = GgufFile::open(path)?;
+    let model = Model::load(&f)?;
+    let pool = ThreadPool::new(threads.unwrap_or_else(|| {
+        std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1)
+    }));
+    eprintln!(
+        "loaded {} ({}) in {:.2}s; threads {}; kernels {}",
+        model.spec.name.clone().unwrap_or_default(),
+        model.spec.arch,
+        t0.elapsed().as_secs_f32(),
+        pool.n_threads(),
+        llmario_engine_cpu::simd::kernels().name
+    );
+    let mut kv = KvCache::new(&model.spec, ctx);
+    let mut scratch = Scratch::new(&model.spec, prompt.len().max(1));
+    let t1 = Instant::now();
+    let logits = model.forward(&pool, &mut kv, &prompt, &mut scratch);
+    let mut next = argmax(logits);
+    let prefill = t1.elapsed();
+    eprintln!(
+        "prefill {} tokens in {:.3}s ({:.1} tok/s)",
+        prompt.len(),
+        prefill.as_secs_f32(),
+        prompt.len() as f32 / prefill.as_secs_f32()
+    );
+    let mut out = vec![next];
+    let t2 = Instant::now();
+    let mut dec = Scratch::new(&model.spec, 1);
+    for _ in 1..n {
+        let logits = model.forward(&pool, &mut kv, &[next], &mut dec);
+        next = argmax(logits);
+        out.push(next);
+    }
+    let decode = t2.elapsed();
+    eprintln!(
+        "decode {} tokens in {:.3}s ({:.2} tok/s)",
+        out.len() - 1,
+        decode.as_secs_f32(),
+        (out.len() - 1) as f32 / decode.as_secs_f32().max(1e-9)
+    );
+    println!(
+        "{}",
+        out.iter()
+            .map(|t| t.to_string())
+            .collect::<Vec<_>>()
+            .join(",")
+    );
+    // Rough text for eyeballing: GPT-2 byte-level pieces with the two common markers mapped.
+    if let Some(toks) = f.get_array("tokenizer.ggml.tokens") {
+        let text: String = out
+            .iter()
+            .filter_map(|&t| toks.get(t as usize).and_then(|v| v.as_str()))
+            .collect::<Vec<_>>()
+            .join("")
+            .replace('Ġ', " ")
+            .replace('Ċ', "\n")
+            .replace('▁', " ");
+        eprintln!("text: {text:?}");
+    }
+    Ok(())
+}
+
+fn argmax(logits: &[f32]) -> u32 {
+    let mut best = 0usize;
+    let mut bv = f32::NEG_INFINITY;
+    for (i, &v) in logits.iter().enumerate() {
+        if v > bv {
+            bv = v;
+            best = i;
+        }
+    }
+    best as u32
+}
