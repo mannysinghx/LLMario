@@ -1,0 +1,15 @@
+[package]
+name = "llmario-engine-cpu"
+description = "Native engine CPU backend: quantized matmul, norms, RoPE, attention primitives, thread pool"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+llmario-engine-core = { workspace = true }
+half = { workspace = true }
+serde = { workspace = true }
+
+[dev-dependencies]

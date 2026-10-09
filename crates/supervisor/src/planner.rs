@@ -31,6 +31,29 @@ pub fn backend_for(format: ModelFormat) -> BackendKind {
     }
 }
 
+/// The backend that serves a specific installed model: GGUF goes to LLMario's own engine when
+/// it is enabled, available and reports support for the model's architecture (and llama.cpp is
+/// not explicitly preferred); everything else follows [`backend_for`].
+pub fn backend_of(
+    m: &ModelEntry,
+    statuses: &HashMap<BackendKind, BackendStatus>,
+    cfg: &Config,
+) -> BackendKind {
+    let b = backend_for(m.format);
+    if b == BackendKind::LlamaCpp && cfg.backends.prefer != Some(BackendKind::LlamaCpp) {
+        if let Some(s) = statuses.get(&BackendKind::Native) {
+            let arch_ok = m
+                .architecture
+                .as_deref()
+                .is_some_and(|a| s.supports_architecture(a) == Some(true));
+            if s.available && arch_ok {
+                return BackendKind::Native;
+            }
+        }
+    }
+    b
+}
+
 /// Clamp the profile to what the model supports.
 pub fn effective_profile(
     kind: ProfileKind,
@@ -84,7 +107,7 @@ pub fn select_measured(
     let exact = candidates.len() == 1 && candidates[0].id == name;
 
     let rank = |m: &ModelEntry| -> u8 {
-        let b = backend_for(m.format);
+        let b = backend_of(m, statuses, cfg);
         if cfg.backends.prefer == Some(b) {
             0
         } else if hw.apple_silicon && b == BackendKind::Mlx {
@@ -100,8 +123,9 @@ pub fn select_measured(
     let mut by_measurement = false;
     if cfg.backends.prefer.is_none() {
         let fp = hw.fingerprint();
-        let speed =
-            |m: &ModelEntry| tuned.family_speed(&fp, &[m.id.as_str()], backend_for(m.format));
+        let speed = |m: &ModelEntry| {
+            tuned.family_speed(&fp, &[m.id.as_str()], backend_of(m, statuses, cfg))
+        };
         let measured: Vec<(usize, f64)> = sorted
             .iter()
             .enumerate()
@@ -122,7 +146,7 @@ pub fn select_measured(
 
     let mut rejected = Vec::new();
     for m in sorted {
-        let backend = backend_for(m.format);
+        let backend = backend_of(m, statuses, cfg);
         match statuses.get(&backend) {
             Some(s) if s.available => {
                 if let Some(arch) = m.architecture.as_deref() {

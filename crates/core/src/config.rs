@@ -128,6 +128,21 @@ pub struct BackendsConfig {
     pub prefer: Option<BackendKind>,
     pub llamacpp: LlamaCppConfig,
     pub mlx: MlxConfig,
+    pub native: NativeConfig,
+}
+
+/// LLMario's own engine (`llmario-engine`). Off by default while it is being built; when
+/// enabled and the binary is found, GGUF models it can run are served by it.
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+#[serde(default, deny_unknown_fields)]
+pub struct NativeConfig {
+    pub enabled: bool,
+    /// Path to `llmario-engine`. `None` = next to the running executable, then `PATH`.
+    pub engine_path: Option<PathBuf>,
+    /// CPU threads. `None` = the physical performance cores.
+    pub threads: Option<u32>,
+    /// Extra flags appended verbatim.
+    pub extra_args: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]

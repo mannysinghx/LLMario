@@ -19,6 +19,7 @@ pub fn standard_adapters(
     let mut v: Vec<Arc<dyn EngineAdapter>> = vec![
         Arc::new(llmario_adapter_llamacpp::LlamaCppAdapter),
         Arc::new(llmario_adapter_mlx::MlxAdapter::new(&paths.home)),
+        Arc::new(llmario_adapter_native::NativeAdapter),
     ];
     if let Some(program) = mock_engine {
         v.push(Arc::new(llmario_adapter_mock::MockAdapter {
