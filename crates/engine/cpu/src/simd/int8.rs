@@ -261,37 +261,42 @@ pub fn dot_q5_k(w: &[u8], a: &[u8], n: usize) -> f32 {
     acc
 }
 
+/// Σ (q − 32)·a over one 16-element group of a Q6_K segment: `lo` holds the nibble source
+/// bytes, `hi` the 2-bit source bytes, `lo_shift` / `hi_shift` select the nibble and bit pair.
+#[inline(always)]
+fn q6k_group(lo: &[u8], hi: &[u8], x: &[u8], lo_shift: u32, hi_shift: u32) -> i32 {
+    let mut s = 0i32;
+    for l in 0..16 {
+        let q = ((lo[l] >> lo_shift) & 0xF) | (((hi[l] >> hi_shift) & 3) << 4);
+        s += (q as i32 - 32) * (x[l] as i8 as i32);
+    }
+    s
+}
+
 pub fn dot_q6_k(w: &[u8], a: &[u8], n: usize) -> f32 {
     let nb = n / 256;
     let mut acc = 0f32;
     for b in 0..nb {
         let wb = &w[b * 210..b * 210 + 210];
         let ab = &a[b * Q8_K_BLOCK..(b + 1) * Q8_K_BLOCK];
-        let ql = &wb[0..128];
-        let qh = &wb[128..192];
         let sc = &wb[192..208];
-        let aq = &ab[4..260];
         let mut sumi = 0i32;
         for h in 0..2 {
-            let ql = &ql[h * 64..h * 64 + 64];
-            let qh = &qh[h * 32..h * 32 + 32];
-            let x = &aq[h * 128..h * 128 + 128];
+            let ql = &wb[h * 64..h * 64 + 64];
+            let qh = &wb[128 + h * 32..128 + h * 32 + 32];
+            let x = &ab[4 + h * 128..4 + h * 128 + 128];
             let s = &sc[h * 8..h * 8 + 8];
-            // Four 32-element segments; segment k uses scales s[2k] (l < 16) and s[2k+1].
-            let mut seg = [0i32; 8];
-            for l in 0..32 {
-                let g = l / 16;
-                let q1 = ((ql[l] & 0xF) | ((qh[l] & 3) << 4)) as i32 - 32;
-                let q2 = ((ql[l + 32] & 0xF) | (((qh[l] >> 2) & 3) << 4)) as i32 - 32;
-                let q3 = ((ql[l] >> 4) | (((qh[l] >> 4) & 3) << 4)) as i32 - 32;
-                let q4 = ((ql[l + 32] >> 4) | (((qh[l] >> 6) & 3) << 4)) as i32 - 32;
-                seg[g] += q1 * (x[l] as i8 as i32);
-                seg[2 + g] += q2 * (x[l + 32] as i8 as i32);
-                seg[4 + g] += q3 * (x[l + 64] as i8 as i32);
-                seg[6 + g] += q4 * (x[l + 96] as i8 as i32);
-            }
-            for g in 0..8 {
-                sumi += (s[g] as i8 as i32) * seg[g];
+            // Segment k (elements 32k..32k+32 of this half) = nibble (low for k < 2, high
+            // otherwise) of ql[32·(k % 2)..] | bits 2k..2k+2 of qh, two 16-element groups each
+            // with their own scale s[2k], s[2k + 1].
+            for k in 0..4 {
+                let lo = &ql[(k % 2) * 32..(k % 2) * 32 + 32];
+                let lo_shift = 4 * (k / 2) as u32;
+                let hi_shift = 2 * k as u32;
+                let xs = &x[k * 32..k * 32 + 32];
+                let g0 = q6k_group(&lo[..16], &qh[..16], &xs[..16], lo_shift, hi_shift);
+                let g1 = q6k_group(&lo[16..], &qh[16..], &xs[16..], lo_shift, hi_shift);
+                sumi += (s[2 * k] as i8 as i32) * g0 + (s[2 * k + 1] as i8 as i32) * g1;
             }
         }
         acc = q6k_epilogue(acc, f16_at(wb, 208), f32_at(ab, 0), sumi);

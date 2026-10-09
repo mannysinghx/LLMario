@@ -119,6 +119,54 @@ fn quantises_activations(t: GgmlType) -> bool {
     !matches!(t, GgmlType::F16 | GgmlType::BF16 | GgmlType::F32)
 }
 
+/// `(W · Q(x), Σ|w_i · Q(x)_i|)` per (token, row) in f64, where `Q` is the activation quantiser
+/// the int8 kernels use for `w.dtype` (identity for float weights).
+pub(super) fn exact_quantised_reference(w: &QMat, x: &[f32], n: usize) -> (Vec<f64>, Vec<f64>) {
+    use super::common::{act_row_bytes, quantize_act, RowKernel};
+    use llmario_engine_core::dequant::dequantize_row;
+    let cols = w.cols;
+    let kind = int8::TABLE
+        .lookup(w.dtype)
+        .expect("int8 kernel for this type");
+    let act_type = match kind {
+        RowKernel::Q8K(_) => Some(GgmlType::Q8_K),
+        RowKernel::Q80(_) => Some(GgmlType::Q8_0),
+        RowKernel::F32(_) => None,
+    };
+    let mut xq = vec![0f32; n * cols];
+    for tkn in 0..n {
+        let xt = &x[tkn * cols..(tkn + 1) * cols];
+        let dst = &mut xq[tkn * cols..(tkn + 1) * cols];
+        match act_type {
+            Some(at) => {
+                let mut q = vec![0u8; act_row_bytes(&kind, cols)];
+                quantize_act(&kind, xt, &mut q);
+                dequantize_row(at, &q, dst).unwrap();
+            }
+            None => dst.copy_from_slice(xt),
+        }
+    }
+    let mut exact = vec![0f64; n * w.rows];
+    let mut scale = vec![0f64; n * w.rows];
+    let mut wrow = vec![0f32; cols];
+    for r in 0..w.rows {
+        dequant_row(w, r, &mut wrow);
+        for tkn in 0..n {
+            let xt = &xq[tkn * cols..(tkn + 1) * cols];
+            let mut s = 0f64;
+            let mut a = 0f64;
+            for (wi, xi) in wrow.iter().zip(xt) {
+                let p = *wi as f64 * *xi as f64;
+                s += p;
+                a += p.abs();
+            }
+            exact[tkn * w.rows + r] = s;
+            scale[tkn * w.rows + r] = a;
+        }
+    }
+    (exact, scale)
+}
+
 /// Check one (type, shape, token count) against the scalar reference on every available set,
 /// and the SIMD set(s) against `int8` bit for bit.
 fn check(t: GgmlType, rows: usize, cols: usize, n: usize, pool: &ThreadPool, rng: &mut Rng) {
@@ -150,6 +198,10 @@ fn check(t: GgmlType, rows: usize, cols: usize, n: usize, pool: &ThreadPool, rng
     } else {
         1e-5
     };
+    // Strong oracle: the kernels compute exactly W · Q(x) where Q is the activation quantiser,
+    // so the f64 dot of the dequantised weights with the dequantised *quantised* activation
+    // must match to f32 rounding (the block epilogues are the only f32 arithmetic).
+    let (exact, exact_scale) = exact_quantised_reference(&w, &x, n);
     let mut int8_out = vec![0f32; n * rows];
     for set in available().into_iter().skip(1) {
         let mut out = vec![0f32; n * rows];
@@ -166,6 +218,14 @@ fn check(t: GgmlType, rows: usize, cols: usize, n: usize, pool: &ThreadPool, rng
                 set.name,
                 out[i],
                 reference[i]
+            );
+            let tol = 2e-5 * exact_scale[i] + 1e-7;
+            assert!(
+                (out[i] as f64 - exact[i]).abs() <= tol,
+                "{t} {}: rows={rows} cols={cols} n={n} index {i}: got {} but W·Q(x) = {} (tol {tol})",
+                set.name,
+                out[i],
+                exact[i]
             );
         }
         if set.name == "int8" {

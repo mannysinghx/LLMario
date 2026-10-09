@@ -209,7 +209,12 @@ fn worker_loop(s: Arc<Shared>) {
 
 impl Drop for ThreadPool {
     fn drop(&mut self) {
-        self.shared.stop.store(true, Ordering::Release);
+        // Hold the job lock while raising `stop`: a worker that checked `stop` under the lock
+        // and is about to `wait` cannot miss the notification (lost wake-up).
+        {
+            let _guard = self.shared.job.lock().unwrap();
+            self.shared.stop.store(true, Ordering::Release);
+        }
         self.shared.cv.notify_all();
         for h in self.handles.drain(..) {
             let _ = h.join();
