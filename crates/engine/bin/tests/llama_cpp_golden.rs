@@ -4,7 +4,7 @@
 //! is on `PATH`. For each model and prompt it compares our greedy continuation (our tokenizer,
 //! our forward pass, argmax) with llama.cpp's raw greedy completion of the same prompt, as text.
 //! Numeric differences between two correct implementations can flip a near-tie, so the test
-//! requires an exact match for the first 16 tokens and reports (without failing) where the
+//! requires an exact match for the first 16 characters and reports (without failing) where the
 //! continuations diverge after that.
 
 use std::path::Path;
@@ -59,6 +59,19 @@ fn greedy_matches_llama_cpp() {
         return;
     }
     let engine = env!("CARGO_BIN_EXE_llmario-engine");
+    // Devices to compare against llama.cpp's CPU output: `cpu` by default; add `auto` (Metal where
+    // the backend covers the family, CPU otherwise) with LLMARIO_GOLDEN_DEVICES=cpu,auto.
+    let devices: Vec<String> = std::env::var("LLMARIO_GOLDEN_DEVICES")
+        .unwrap_or_else(|_| "cpu".into())
+        .split(',')
+        .filter(|d| !d.is_empty())
+        .map(str::to_string)
+        .collect();
+    // The CPU leg uses the f32 reference kernels by default. The fast kernels quantise activations
+    // to 8 bits (as llama.cpp's own CPU path does, with different rounding), which can flip a
+    // greedy near-tie and make this a test of rounding luck rather than model correctness.
+    // LLMARIO_GOLDEN_CPU_KERNELS=int8 (or neon, avx2) compares the fast kernels instead.
+    let kernels = std::env::var("LLMARIO_GOLDEN_CPU_KERNELS").unwrap_or_else(|_| "scalar".into());
     for m in models.split(',').filter(|s| !s.is_empty()) {
         let model = Path::new(m);
         for prompt in PROMPTS {
@@ -66,78 +79,79 @@ fn greedy_matches_llama_cpp() {
                 eprintln!("llama-completion failed on {m}; skipping prompt");
                 continue;
             };
-            // Our side: tokenize with the engine's tokenizer, then raw greedy run.
-            let tok = Command::new(engine)
-                .args(["tokenize", "--model", m, "--text", prompt])
-                .output()
-                .expect("run tokenize");
-            assert!(
-                tok.status.success(),
-                "tokenize failed: {}",
-                String::from_utf8_lossy(&tok.stderr)
-            );
-            let ids_line = String::from_utf8_lossy(&tok.stdout)
-                .lines()
-                .next()
-                .unwrap_or_default()
-                .to_string();
-            let run = Command::new(engine)
-                .args([
-                    "raw-run",
-                    "--model",
-                    m,
-                    "--tokens",
-                    &ids_line,
-                    "--n",
-                    &N.to_string(),
-                    "--threads",
-                    "8",
-                    // llama.cpp above runs with -ngl 0; compare the CPU path (`auto` would pick
-                    // Metal on Apple machines).
-                    "--device",
-                    "cpu",
-                ])
-                .output()
-                .expect("run raw-run");
-            assert!(
-                run.status.success(),
-                "raw-run failed: {}",
-                String::from_utf8_lossy(&run.stderr)
-            );
-            let stderr = String::from_utf8_lossy(&run.stderr);
-            let ours = stderr
-                .lines()
-                .find_map(|l| l.strip_prefix("decoded: "))
-                .map(|s| serde_json::from_str::<String>(s).unwrap_or_default())
-                .unwrap_or_default();
-            // Compare token-wise via whitespace-insensitive character prefix: llama.cpp prints
-            // raw text; both sides decode the same ids to the same bytes.
-            let theirs_t = theirs.trim_end_matches('\n');
-            assert!(
-                !theirs_t.is_empty(),
-                "llama-completion printed nothing for {m} / {prompt:?}"
-            );
-            let ours_t = ours.trim_end_matches('\n');
-            let common = theirs_t
-                .chars()
-                .zip(ours_t.chars())
-                .take_while(|(a, b)| a == b)
-                .count();
-            let prefix_ok = common
-                >= MUST_MATCH
-                    .min(theirs_t.chars().count())
-                    .min(ours_t.chars().count());
-            eprintln!(
-                "[{}] {:?}\n  llama.cpp: {:?}\n  ours:      {:?}\n  common chars: {common}",
+            for device in &devices {
+                // Our side: tokenize with the engine's tokenizer, then raw greedy run.
+                let tok = Command::new(engine)
+                    .args(["tokenize", "--model", m, "--text", prompt])
+                    .output()
+                    .expect("run tokenize");
+                assert!(
+                    tok.status.success(),
+                    "tokenize failed: {}",
+                    String::from_utf8_lossy(&tok.stderr)
+                );
+                let ids_line = String::from_utf8_lossy(&tok.stdout)
+                    .lines()
+                    .next()
+                    .unwrap_or_default()
+                    .to_string();
+                let run = Command::new(engine)
+                    .env("LLMARIO_CPU_KERNELS", &kernels)
+                    .args([
+                        "raw-run",
+                        "--model",
+                        m,
+                        "--tokens",
+                        &ids_line,
+                        "--n",
+                        &N.to_string(),
+                        "--threads",
+                        "8",
+                        "--device",
+                        device,
+                    ])
+                    .output()
+                    .expect("run raw-run");
+                assert!(
+                    run.status.success(),
+                    "raw-run failed: {}",
+                    String::from_utf8_lossy(&run.stderr)
+                );
+                let stderr = String::from_utf8_lossy(&run.stderr);
+                let ours = stderr
+                    .lines()
+                    .find_map(|l| l.strip_prefix("decoded: "))
+                    .map(|s| serde_json::from_str::<String>(s).unwrap_or_default())
+                    .unwrap_or_default();
+                // Compare token-wise via whitespace-insensitive character prefix: llama.cpp prints
+                // raw text; both sides decode the same ids to the same bytes.
+                let theirs_t = theirs.trim_end_matches('\n');
+                assert!(
+                    !theirs_t.is_empty(),
+                    "llama-completion printed nothing for {m} / {prompt:?}"
+                );
+                let ours_t = ours.trim_end_matches('\n');
+                let common = theirs_t
+                    .chars()
+                    .zip(ours_t.chars())
+                    .take_while(|(a, b)| a == b)
+                    .count();
+                let prefix_ok = common
+                    >= MUST_MATCH
+                        .min(theirs_t.chars().count())
+                        .min(ours_t.chars().count());
+                eprintln!(
+                "[{} · {device}] {:?}\n  llama.cpp: {:?}\n  ours:      {:?}\n  common chars: {common}",
                 model.file_name().unwrap().to_string_lossy(),
                 prompt,
                 theirs_t,
                 ours_t
             );
-            assert!(
+                assert!(
                 prefix_ok,
-                "greedy continuation diverged within the first {MUST_MATCH} characters for {m} / {prompt:?}"
+                "greedy continuation diverged within the first {MUST_MATCH} characters for {m} / {prompt:?} on {device}"
             );
+            }
         }
     }
 }
