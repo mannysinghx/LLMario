@@ -6,6 +6,8 @@
 //! through the matmul path; decode processes one token through the matvec path. Attention runs
 //! per head in parallel over the pool with fp32 accumulation.
 
+use half::slice::HalfFloatSliceExt;
+
 use crate::arch::{ArchSpec, Family};
 use crate::gemma4;
 use crate::hybrid::{self, HybridScratch};
@@ -248,9 +250,8 @@ impl<'a> Model<'a> {
                 rope(q, n_head, (pos0 + t) as u32, &rp);
                 rope(k, n_kv, (pos0 + t) as u32, &rp);
             }
-            kv.k_row_mut(l, pos0 + t).copy_from_slice(k);
-            kv.v_row_mut(l, pos0 + t)
-                .copy_from_slice(&s.v[t * v_dim..(t + 1) * v_dim]);
+            kv.store_k(l, pos0 + t, k);
+            kv.store_v(l, pos0 + t, &s.v[t * v_dim..(t + 1) * v_dim]);
         }
 
         attend(
@@ -383,37 +384,51 @@ pub(crate) fn attend(
     // Longest score row any query in this batch needs.
     let span = window.map(|w| w.min(n_ctx)).unwrap_or(n_ctx);
     let out_ptr = SendPtr(attn.as_mut_ptr());
-    pool.parallel_for(n * n_head, None, |start, end| {
-        let mut scores = vec![0f32; span];
+    // One task per (token, KV head): each cached f16 row is converted once and used by every
+    // query head of the group (GQA), instead of once per query head.
+    pool.parallel_for(n * n_kv, None, |start, end| {
+        let mut scores = vec![0f32; group * span];
+        let mut row = vec![0f32; hd.max(hdv)];
+        let mut acc = vec![0f32; group * hdv];
         for idx in start..end {
-            let t = idx / n_head;
-            let h = idx % n_head;
-            let kvh = h / group;
-            let q = &q_all[t * q_dim + h * hd..t * q_dim + (h + 1) * hd];
+            let t = idx / n_kv;
+            let kvh = idx % n_kv;
             let t_abs = pos0 + t;
             let p_lo = window.map(|w| (t_abs + 1).saturating_sub(w)).unwrap_or(0);
             let n_pos = t_abs + 1 - p_lo;
             for (i, p) in (p_lo..=t_abs).enumerate() {
                 let s = p % cap;
-                let k = &k_all[s * kv_dim + kvh * hd..s * kv_dim + (kvh + 1) * hd];
-                scores[i] = dot(q, k) * scale;
-            }
-            softmax(&mut scores[..n_pos]);
-            let mut acc = vec![0f32; hdv];
-            for (i, p) in (p_lo..=t_abs).enumerate() {
-                let s = p % cap;
-                let v = &v_all[s * v_dim + kvh * hdv..s * v_dim + (kvh + 1) * hdv];
-                let w = scores[i];
-                for i in 0..hdv {
-                    acc[i] += w * v[i];
+                k_all[s * kv_dim + kvh * hd..s * kv_dim + (kvh + 1) * hd]
+                    .convert_to_f32_slice(&mut row[..hd]);
+                for g in 0..group {
+                    let h = kvh * group + g;
+                    let q = &q_all[t * q_dim + h * hd..t * q_dim + (h + 1) * hd];
+                    scores[g * span + i] = dot(q, &row[..hd]) * scale;
                 }
             }
-            // SAFETY: each (t, h) writes a disjoint hdv-wide slice of `attn`.
+            for g in 0..group {
+                softmax(&mut scores[g * span..g * span + n_pos]);
+            }
+            acc.iter_mut().for_each(|a| *a = 0.0);
+            for (i, p) in (p_lo..=t_abs).enumerate() {
+                let s = p % cap;
+                v_all[s * v_dim + kvh * hdv..s * v_dim + (kvh + 1) * hdv]
+                    .convert_to_f32_slice(&mut row[..hdv]);
+                for g in 0..group {
+                    let w = scores[g * span + i];
+                    let a = &mut acc[g * hdv..(g + 1) * hdv];
+                    for j in 0..hdv {
+                        a[j] += w * row[j];
+                    }
+                }
+            }
+            // SAFETY: each (t, kvh) writes the disjoint hdv-wide slices of its own query heads
+            // kvh*group .. (kvh+1)*group in token t's row of `attn`.
             unsafe {
                 std::ptr::copy_nonoverlapping(
                     acc.as_ptr(),
-                    out_ptr.get().add(t * attn_dim + h * hdv),
-                    hdv,
+                    out_ptr.get().add(t * attn_dim + kvh * group * hdv),
+                    group * hdv,
                 );
             }
         }

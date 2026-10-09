@@ -293,9 +293,8 @@ fn attention_mixer(
         per_head_norm(k, hd, &a.k_norm, spec.rms_eps);
         rope(q, n_head, (pos0 + t) as u32, &rp);
         rope(k, n_kv, (pos0 + t) as u32, &rp);
-        kv.k_row_mut(al, pos0 + t).copy_from_slice(k);
-        kv.v_row_mut(al, pos0 + t)
-            .copy_from_slice(&s.v[t * v_dim..(t + 1) * v_dim]);
+        kv.store_k(al, pos0 + t, k);
+        kv.store_v(al, pos0 + t, &s.v[t * v_dim..(t + 1) * v_dim]);
     }
     attend(
         pool,
@@ -686,7 +685,7 @@ mod tests {
         assert_eq!(kv.rs[0].state.len(), 4 * 8 * 8);
         assert_eq!(
             KvCache::bytes(&spec, 16),
-            (8 + 8) * 4 * 16 + 3 * (3 * 64 + 4 * 8 * 8) * 4
+            (8 + 8) * 2 * 16 + 3 * (3 * 64 + 4 * 8 * 8) * 4
         );
         assert_eq!(spec.kv_bytes_per_token(4.0), 16 * 4);
     }
