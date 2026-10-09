@@ -4,11 +4,9 @@
 use crate::ServeOptions;
 use llmario_engine_chat::ChatTemplate;
 use llmario_engine_core::ledger::{DeviceId, Ledger};
-use llmario_engine_cpu::ThreadPool;
 use llmario_engine_decode::{Sampler, SamplingParams, StopMatcher, StopResult};
 use llmario_engine_formats::GgufFile;
-use llmario_engine_model::forward::Scratch;
-use llmario_engine_model::{ArchSpec, KvCache, Model};
+use llmario_engine_model::{ArchSpec, CpuBackend, ModelBackend};
 use llmario_engine_plan::Plan;
 use llmario_engine_tokenizer::{Detokenizer, Tokenizer};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -104,9 +102,9 @@ impl EngineRuntime {
                 let loaded = load_worker(&file, &opts, &plan, &ledger, stats2);
                 match loaded {
                     Ok((mut worker, template)) => {
-                        let spec = worker.model.spec.clone();
+                        let spec = worker.backend.spec().clone();
                         let tokenizer = worker.tokenizer.clone();
-                        let threads = worker.pool.n_threads();
+                        let threads = opts.threads.max(1);
                         let _ = ready_tx.send(Ok((spec, tokenizer, template, threads)));
                         for job in rx {
                             worker.run(job);
@@ -145,11 +143,11 @@ fn load_worker<'a>(
     file: &'a GgufFile,
     opts: &ServeOptions,
     plan: &Plan,
-    ledger: &Ledger,
+    ledger: &Arc<Ledger>,
     stats: Arc<Stats>,
 ) -> anyhow::Result<(Worker<'a>, Option<Arc<ChatTemplate>>)> {
+    let ledger_handle = ledger.clone();
     let t0 = Instant::now();
-    let model = Model::load(file)?;
     let tokenizer = Arc::new(Tokenizer::from_gguf(file)?);
     let template = match tokenizer.chat_template() {
         Some(src) => {
@@ -170,61 +168,64 @@ fn load_worker<'a>(
         None => None,
     };
     let threads = opts.threads.max(1);
-    let pool = ThreadPool::new(threads);
     let ctx = plan.ctx_per_slot as usize;
-    let kv = KvCache::new(&model.spec, ctx);
-    let prefill = Scratch::new(&model.spec, plan.n_batch as usize);
-    let decode = Scratch::new(&model.spec, 1);
+    let backend = CpuBackend::new(file, threads, ctx, plan.n_batch as usize)?;
     ledger.update(DeviceId::Host, |d| {
         d.weights_mapped = file.tensor_bytes_total();
-        d.kv_arena_reserved = KvCache::bytes(&model.spec, ctx);
-        d.scratch_reserved =
-            Scratch::bytes(&model.spec, plan.n_batch as usize) + Scratch::bytes(&model.spec, 1);
+        d.kv_arena_reserved = llmario_engine_model::KvCache::bytes(backend.spec(), ctx);
+        d.scratch_reserved = backend.reserved_bytes() - d.kv_arena_reserved;
         d.runtime_fixed = plan.requested.runtime_fixed;
     });
     let mut worker = Worker {
-        model,
-        pool,
-        kv,
-        prefill,
-        decode,
-        n_batch: plan.n_batch as usize,
+        backend: Box::new(backend),
         cached: Vec::new(),
         tokenizer,
         stats,
+        ledger: ledger_handle,
     };
     // Warm-up: one token through every kernel so the first request pays nothing.
     let bos = worker.tokenizer.bos().unwrap_or(0);
-    worker
-        .model
-        .forward(&worker.pool, &mut worker.kv, &[bos], &mut worker.decode);
-    worker.kv.clear();
+    worker.backend.forward(&[bos]);
+    worker.backend.clear();
+    if let Some(m) = crate::footprint::current() {
+        ledger.record_measured_peak(m);
+        let planned = plan.planned_peak.max(1);
+        tracing::info!(
+            measured_mib = m / (1024 * 1024),
+            planned_mib = planned / (1024 * 1024),
+            ratio = format!("{:.2}", planned as f64 / m as f64),
+            "memory after load: measured vs planned"
+        );
+        if m > planned {
+            tracing::warn!(
+                "measured memory exceeds the plan; the plan's runtime constant is too small"
+            );
+        }
+    }
     tracing::info!(
         secs = t0.elapsed().as_secs_f32(),
         threads,
         kernels = llmario_engine_cpu::simd::kernels().name,
+        backend = worker.backend.name(),
         "model loaded and warmed up"
     );
     Ok((worker, template))
 }
 
 struct Worker<'a> {
-    model: Model<'a>,
-    pool: ThreadPool,
-    kv: KvCache,
-    prefill: Scratch,
-    decode: Scratch,
-    n_batch: usize,
+    backend: Box<dyn ModelBackend + 'a>,
     /// Tokens whose K/V are in the cache (prefix reuse between requests).
     cached: Vec<u32>,
     tokenizer: Arc<Tokenizer>,
     stats: Arc<Stats>,
+    ledger: Arc<Ledger>,
 }
 
 impl Worker<'_> {
     fn run(&mut self, job: Job) {
         self.stats.requests.fetch_add(1, Ordering::Relaxed);
-        let max_ctx = self.kv.max_ctx;
+        let max_ctx = self.backend.max_ctx();
+        let n_batch = self.backend.max_batch();
         if job.prompt.is_empty() {
             let _ = job
                 .events
@@ -247,15 +248,13 @@ impl Worker<'_> {
             .take_while(|(a, b)| a == b)
             .count()
             .min(job.prompt.len() - 1);
-        self.kv.truncate(common);
+        self.backend.truncate(common);
         self.cached.truncate(common);
         let t0 = Instant::now();
         let mut logits_owned: Vec<f32> = Vec::new();
         let rest = &job.prompt[common..];
-        for chunk in rest.chunks(self.n_batch) {
-            let logits = self
-                .model
-                .forward(&self.pool, &mut self.kv, chunk, &mut self.prefill);
+        for chunk in rest.chunks(n_batch) {
+            let logits = self.backend.forward(chunk);
             logits_owned.clear();
             logits_owned.extend_from_slice(logits);
             self.cached.extend_from_slice(chunk);
@@ -271,7 +270,7 @@ impl Worker<'_> {
             .prompt_micros
             .fetch_add((prompt_ms * 1e3) as u64, Ordering::Relaxed);
 
-        let mut sampler = Sampler::new(job.params.clone(), self.model.spec.n_vocab as usize);
+        let mut sampler = Sampler::new(job.params.clone(), self.backend.spec().n_vocab as usize);
         for &t in &job.prompt {
             sampler.accept(t);
         }
@@ -315,13 +314,11 @@ impl Worker<'_> {
             if n_gen >= job.max_tokens {
                 break;
             }
-            if self.kv.len + 1 >= max_ctx {
+            if self.backend.kv_len() + 1 >= max_ctx {
                 reason = "length";
                 break;
             }
-            let logits = self
-                .model
-                .forward(&self.pool, &mut self.kv, &[next], &mut self.decode);
+            let logits = self.backend.forward(&[next]);
             logits_owned.clear();
             logits_owned.extend_from_slice(logits);
             self.cached.push(next);
@@ -348,6 +345,9 @@ impl Worker<'_> {
         self.stats
             .decode_micros
             .fetch_add((decode_ms * 1e3) as u64, Ordering::Relaxed);
+        if let Some(m) = crate::footprint::current() {
+            self.ledger.record_measured_peak(m);
+        }
         let _ = job.events.blocking_send(Event::Done(Finish {
             reason,
             prompt_tokens: job.prompt.len(),
