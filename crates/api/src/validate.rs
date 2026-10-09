@@ -51,7 +51,7 @@ pub struct ValidatedChat {
 
 /// Refuse native-only features on the other backends.
 pub fn require_native(v: &ValidatedChat, backend: BackendKind) -> Result<(), RuntimeError> {
-    if v.native_only.is_empty() || backend == BackendKind::Native || backend == BackendKind::Mock {
+    if v.native_only.is_empty() || backend == BackendKind::Native {
         return Ok(());
     }
     Err(RuntimeError::Unsupported(format!(
