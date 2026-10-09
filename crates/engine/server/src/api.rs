@@ -2,6 +2,7 @@
 
 use crate::engine::{EngineRuntime, Event, Job};
 use crate::openai::{self, ChatRequest, PromptTokensDetails, Timings, Usage};
+use crate::toolcall;
 use crate::ServeOptions;
 use axum::body::Body;
 use axum::extract::State;
@@ -87,7 +88,7 @@ async fn models(State(s): State<Shared>) -> Json<Value> {
             "engine": {"backend": "native", "plan_hash": s.plan.hash, "arch": s.plan.arch,
                        "context": s.plan.ctx_per_slot, "kernels": s.runtime.kernels,
                        "device": s.runtime.backend,
-                       "capabilities": {"tools": false, "json_schema": false, "vision": false}}
+                       "capabilities": {"tools": true, "json_schema": true, "vision": false}}
         }]
     }))
 }
@@ -156,10 +157,58 @@ async fn chat(State(s): State<Shared>, body: axum::body::Bytes) -> Response {
         Ok(r) => r,
         Err(e) => return bad_request(&format!("invalid request: {e}")),
     };
-    if req.tools.is_some() || req.tool_choice.is_some() {
-        return bad_request("tools are not supported by the native engine yet (M5)");
+    if req.n.is_some_and(|n| n > 1) {
+        return bad_request("n > 1 is not supported");
     }
-    let grammar = match &req.response_format {
+    let Some(template) = s.runtime.template.clone() else {
+        return bad_request("this model has no chat template");
+    };
+    let family = template.detect_family();
+    let choice = match toolcall::parse_tool_choice(req.tool_choice.as_ref()) {
+        Ok(c) => c,
+        Err(e) => return bad_request(&e),
+    };
+    let tools = req
+        .tools
+        .clone()
+        .filter(|t| t.as_array().is_some_and(|a| !a.is_empty()));
+    if let (toolcall::Choice::Named(n), Some(t)) = (&choice, &tools) {
+        let known = t
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|d| d.pointer("/function/name").and_then(|v| v.as_str()) == Some(n.as_str()));
+        if !known {
+            return bad_request(&format!("tool_choice names '{n}', which is not in tools"));
+        }
+    }
+    // tool_choice "none": the model is not shown the tools and its output is not parsed for calls.
+    let render_tools = if choice == toolcall::Choice::None {
+        None
+    } else {
+        tools.clone()
+    };
+    let messages = match toolcall::to_chat_messages(&req.messages) {
+        Ok(m) => m,
+        Err(e) => return bad_request(&e),
+    };
+    let mut rr = RenderRequest {
+        messages,
+        add_generation_prompt: true,
+        tools: render_tools.clone(),
+        enable_thinking: req.enable_thinking,
+        ..Default::default()
+    };
+    if let Some(kw) = &req.chat_template_kwargs {
+        rr.extra = kw.clone();
+    }
+    let prompt_text = match template.render(&rr) {
+        Ok(t) => t,
+        Err(e) => return bad_request(&format!("chat template: {e}")),
+    };
+    let reasoning_close =
+        toolcall::expected_reasoning_close(family, &prompt_text, req.enable_thinking);
+    let response_grammar = match &req.response_format {
         None => None,
         Some(rf) => match rf.get("type").and_then(|t| t.as_str()) {
             None | Some("text") => None,
@@ -176,31 +225,19 @@ async fn chat(State(s): State<Shared>, body: axum::body::Bytes) -> Response {
             }
         },
     };
-    // With thinking explicitly on, the grammar starts after the reasoning block.
-    let lazy_trigger = match (&grammar, req.enable_thinking) {
-        (Some(_), Some(true)) => Some("</think>".to_string()),
-        _ => None,
+    // Tools take precedence over response_format; either starts after the reasoning block when
+    // the model is expected to reason first.
+    let (grammar, lazy_trigger) = match &render_tools {
+        Some(t) => match toolcall::tool_grammar(family, t, &choice, reasoning_close) {
+            Some((g, lazy)) => (Some(g), lazy),
+            None => (None, None),
+        },
+        None => match response_grammar {
+            Some(g) => (Some(g), reasoning_close.map(str::to_string)),
+            None => (None, None),
+        },
     };
-    if req.n.is_some_and(|n| n > 1) {
-        return bad_request("n > 1 is not supported");
-    }
-    let Some(template) = s.runtime.template.clone() else {
-        return bad_request("this model has no chat template");
-    };
-    let mut rr = RenderRequest {
-        messages: req.messages.clone(),
-        add_generation_prompt: true,
-        tools: None,
-        enable_thinking: req.enable_thinking,
-        ..Default::default()
-    };
-    if let Some(kw) = &req.chat_template_kwargs {
-        rr.extra = kw.clone();
-    }
-    let prompt_text = match template.render(&rr) {
-        Ok(t) => t,
-        Err(e) => return bad_request(&format!("chat template: {e}")),
-    };
+    let assembler = toolcall::Assembler::new(family, render_tools.as_ref(), &prompt_text);
     let tok = s.runtime.tokenizer.clone();
     let prompt = tok.encode(&prompt_text, tok.add_bos(), true);
     let max_tokens = req
@@ -258,12 +295,14 @@ async fn chat(State(s): State<Shared>, body: axum::body::Bytes) -> Response {
     let include_usage = req.stream_options.as_ref().is_some_and(|o| o.include_usage);
 
     if !req.stream {
-        let mut text = String::new();
+        let mut assembler = assembler;
         let mut finish = None;
         let mut rx = rx;
         while let Some(ev) = rx.recv().await {
             match ev {
-                Event::Text(t) => text.push_str(&t),
+                Event::Text(t) => {
+                    assembler.push(&t);
+                }
                 Event::Done(f) => {
                     finish = Some(f);
                     break;
@@ -279,9 +318,11 @@ async fn chat(State(s): State<Shared>, body: axum::body::Bytes) -> Response {
             prompt_ms: 0.0,
             decode_ms: 0.0,
         });
+        assembler.finish();
+        assembler.prune_incomplete();
         let body = json!({
             "id": id, "object": "chat.completion", "created": created, "model": model,
-            "choices": [{"index": 0, "message": {"role": "assistant", "content": text}, "finish_reason": f.reason}],
+            "choices": [{"index": 0, "message": assembler.message(), "finish_reason": assembler.finish_reason(f.reason)}],
             "usage": usage_of(&f),
             "timings": timings_of(&f),
         });
@@ -298,18 +339,23 @@ async fn chat(State(s): State<Shared>, body: axum::body::Bytes) -> Response {
     let stream = tokio_stream::wrappers::ReceiverStream::new(rx);
     let model2 = model.clone();
     let id2 = id.clone();
+    let mut assembler = assembler;
     let body_stream = futures::stream::once(async move { sse(&first) })
         .chain(stream.flat_map(move |ev| {
             let items: Vec<String> = match ev {
-                Event::Text(t) => vec![sse(&openai::chunk(
-                    &id2,
-                    &model2,
-                    created,
-                    json!({"content": t}),
-                    None,
-                ))],
+                Event::Text(t) => assembler
+                    .push(&t)
+                    .into_iter()
+                    .map(|d| sse(&openai::chunk(&id2, &model2, created, d, None)))
+                    .collect(),
                 Event::Done(f) => {
-                    let mut v = vec![sse(&openai::chunk(&id2, &model2, created, json!({}), Some(f.reason)))];
+                    let mut v: Vec<String> = assembler
+                        .finish()
+                        .into_iter()
+                        .map(|d| sse(&openai::chunk(&id2, &model2, created, d, None)))
+                        .collect();
+                    let reason = assembler.finish_reason(f.reason);
+                    v.push(sse(&openai::chunk(&id2, &model2, created, json!({}), Some(reason))));
                     if include_usage {
                         v.push(sse(&json!({
                             "id": id2, "object": "chat.completion.chunk", "created": created, "model": model2,

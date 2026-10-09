@@ -52,7 +52,7 @@ pub(crate) enum BodyKind {
     Llama,
 }
 
-pub(crate) trait CallBody {
+pub(crate) trait CallBody: Send {
     /// `body` is all text after the opener so far. `Ok(Some(n))`: the call is complete and
     /// occupied `body[..n]`. `Ok(None)`: wait for more text. `Err`: malformed.
     fn advance(&mut self, body: &str, em: &mut Emitter) -> Result<Option<usize>, String>;
