@@ -29,6 +29,10 @@ allow = [
   "BSL-1.0",
   "MPL-2.0",
   "CDLA-Permissive-2.0",
+  # MIT No Attribution (OSI-approved; MIT without the notice requirement). Reviewed 2026-10-09:
+  # `borrow-or-share`, via `fluent-uri` <- `referencing` <- llguidance (constrained decoding)
+  # and jsonschema (tool-argument validation).
+  "MIT-0",
 ]
 
 [bans]

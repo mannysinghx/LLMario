@@ -1,0 +1,34 @@
+[package]
+name = "llmario-engine-tools"
+description = "Native engine: tool registry, Rule-of-Two policy gate, SSRF-guarded web_fetch, web_search providers, MCP host, audit log and sandbox launcher"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+# rmcp 3.5 requires 1.88; the workspace floor is 1.80.
+rust-version = "1.88"
+
+[dependencies]
+chrono = { workspace = true }
+dom_query = { workspace = true }
+dom_smoothie = { workspace = true }
+futures = { workspace = true }
+htmd = { workspace = true }
+ipnet = { workspace = true }
+jsonschema = { workspace = true }
+lru = { workspace = true }
+rand = { workspace = true }
+reqwest = { workspace = true }
+rmcp = { workspace = true, features = ["client", "transport-child-process", "transport-streamable-http-client-reqwest", "reqwest"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+texting_robots = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+toml = { workspace = true }
+tracing = { workspace = true }
+url = { workspace = true }
+
+[dev-dependencies]
+rmcp = { workspace = true, features = ["server"] }
