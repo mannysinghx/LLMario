@@ -409,6 +409,8 @@ mod tests {
         assert!(!bwrap_args(&no_ports, &cmd()).contains(&"--share-net".to_string()));
     }
 
+    // Unix paths: the sandbox plans target macOS and Linux, and the engine is not built for Windows.
+    #[cfg(unix)]
     #[test]
     fn plans_per_platform() {
         let mac = plan_for(TargetOs::MacOs, &spec(), &cmd()).unwrap();
@@ -435,6 +437,7 @@ mod tests {
         assert!(matches!(rel, Err(ToolsError::Sandbox(_))));
     }
 
+    #[cfg(unix)]
     #[test]
     fn command_from_plan_clears_env_and_sets_cwd() {
         let plan = plan_for(TargetOs::MacOs, &spec(), &cmd()).unwrap();
