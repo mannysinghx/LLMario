@@ -10,6 +10,10 @@ use serde::{Deserialize, Serialize};
 pub const QK_K: usize = 256;
 pub const K_SCALE_SIZE: usize = 12;
 
+/// First id of the engine-private element types (those that have no ggml id). A GGUF tensor can
+/// never carry one of these ids: [`GgmlType::from_id`] refuses them.
+pub const ENGINE_PRIVATE_ID: u32 = 1000;
+
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 #[allow(non_camel_case_types)]
@@ -49,11 +53,16 @@ pub enum GgmlType {
     NVFP4,
     Q1_0,
     Q2_0,
+    /// Engine-private (no ggml id): the safetensors `U8` dtype.
+    U8,
+    /// Engine-private (no ggml id): the safetensors `U32` dtype, in which MLX stores its packed
+    /// affine-quantised weights (`dequant::mlx_affine_row`).
+    U32,
 }
 
 impl GgmlType {
     /// All types, in id order.
-    pub const ALL: [GgmlType; 35] = [
+    pub const ALL: [GgmlType; 37] = [
         GgmlType::F32,
         GgmlType::F16,
         GgmlType::Q4_0,
@@ -89,9 +98,11 @@ impl GgmlType {
         GgmlType::NVFP4,
         GgmlType::Q1_0,
         GgmlType::Q2_0,
+        GgmlType::U8,
+        GgmlType::U32,
     ];
 
-    /// The GGUF / ggml type id.
+    /// The GGUF / ggml type id (engine-private types return ids from [`ENGINE_PRIVATE_ID`] up).
     pub fn id(self) -> u32 {
         match self {
             GgmlType::F32 => 0,
@@ -129,11 +140,22 @@ impl GgmlType {
             GgmlType::NVFP4 => 40,
             GgmlType::Q1_0 => 41,
             GgmlType::Q2_0 => 42,
+            GgmlType::U8 => ENGINE_PRIVATE_ID,
+            GgmlType::U32 => ENGINE_PRIVATE_ID + 1,
         }
     }
 
+    /// Look up a ggml type id as found in a GGUF header. Engine-private ids are refused.
     pub fn from_id(id: u32) -> Option<GgmlType> {
+        if id >= ENGINE_PRIVATE_ID {
+            return None;
+        }
         GgmlType::ALL.iter().copied().find(|t| t.id() == id)
+    }
+
+    /// True for types that exist only inside the engine (no ggml id, never in a GGUF file).
+    pub fn is_engine_private(self) -> bool {
+        self.id() >= ENGINE_PRIVATE_ID
     }
 
     /// ggml's type name (what `llama-gguf` and the catalog print).
@@ -174,6 +196,8 @@ impl GgmlType {
             GgmlType::NVFP4 => "nvfp4",
             GgmlType::Q1_0 => "q1_0",
             GgmlType::Q2_0 => "q2_0",
+            GgmlType::U8 => "u8",
+            GgmlType::U32 => "u32",
         }
     }
 
@@ -187,7 +211,9 @@ impl GgmlType {
             | GgmlType::I8
             | GgmlType::I16
             | GgmlType::I32
-            | GgmlType::I64 => 1,
+            | GgmlType::I64
+            | GgmlType::U8
+            | GgmlType::U32 => 1,
             GgmlType::Q4_0
             | GgmlType::Q4_1
             | GgmlType::Q5_0
@@ -206,10 +232,10 @@ impl GgmlType {
     pub fn block_bytes(self) -> usize {
         const HALF: usize = 2;
         match self {
-            GgmlType::F32 | GgmlType::I32 => 4,
+            GgmlType::F32 | GgmlType::I32 | GgmlType::U32 => 4,
             GgmlType::F16 | GgmlType::BF16 | GgmlType::I16 => 2,
             GgmlType::F64 | GgmlType::I64 => 8,
-            GgmlType::I8 => 1,
+            GgmlType::I8 | GgmlType::U8 => 1,
             GgmlType::Q4_0 => HALF + 32 / 2,
             GgmlType::Q4_1 => 2 * HALF + 32 / 2,
             GgmlType::Q5_0 => HALF + 4 + 32 / 2,
@@ -320,7 +346,12 @@ mod tests {
 
     #[test]
     fn block_geometry_matches_gguf_py_and_header() {
-        assert_eq!(GGUF_PY.len(), GgmlType::ALL.len());
+        let ggml: Vec<GgmlType> = GgmlType::ALL
+            .iter()
+            .copied()
+            .filter(|t| !t.is_engine_private())
+            .collect();
+        assert_eq!(GGUF_PY.len(), ggml.len());
         for &(t, elems, bytes) in GGUF_PY {
             assert_eq!(t.block_elems(), elems, "{t} block elems");
             assert_eq!(t.block_bytes(), bytes, "{t} block bytes");
@@ -330,10 +361,29 @@ mod tests {
     #[test]
     fn ids_round_trip() {
         for t in GgmlType::ALL {
-            assert_eq!(GgmlType::from_id(t.id()), Some(t));
+            if t.is_engine_private() {
+                assert_eq!(
+                    GgmlType::from_id(t.id()),
+                    None,
+                    "{t} must not load from GGUF"
+                );
+            } else {
+                assert_eq!(GgmlType::from_id(t.id()), Some(t));
+            }
         }
         assert_eq!(GgmlType::from_id(4), None); // Q4_2 was removed from ggml
         assert_eq!(GgmlType::from_id(5), None);
+    }
+
+    #[test]
+    fn engine_private_types() {
+        assert!(GgmlType::U32.is_engine_private());
+        assert!(GgmlType::U8.is_engine_private());
+        assert!(!GgmlType::I32.is_engine_private());
+        assert_eq!(GgmlType::U32.block_bytes(), 4);
+        assert_eq!(GgmlType::U8.block_bytes(), 1);
+        assert_eq!(GgmlType::U32.row_bytes(256), 1024);
+        assert_ne!(GgmlType::U8.id(), GgmlType::U32.id());
     }
 
     #[test]

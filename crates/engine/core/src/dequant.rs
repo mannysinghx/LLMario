@@ -389,6 +389,194 @@ pub fn quantize_row_q8_k(x: &[f32], dst: &mut [u8]) {
     }
 }
 
+/// Scalar element types MLX uses for the per-group `scales` and `biases` of affine-quantised
+/// weights (they are stored in the model's compute dtype: BF16 for most Qwen exports, F16 for
+/// the Llama ones, F32 when quantised from F32).
+#[inline]
+fn scalar_at(dtype: GgmlType, b: &[u8], i: usize) -> Result<f32> {
+    Ok(match dtype {
+        GgmlType::F16 => f16_at(b, i * 2),
+        GgmlType::BF16 => bf16_to_f32(b[i * 2], b[i * 2 + 1]),
+        GgmlType::F32 => f32::from_le_bytes(b[i * 4..i * 4 + 4].try_into().unwrap()),
+        other => {
+            return Err(EngineError::Format(format!(
+                "MLX scales/biases must be f16, bf16 or f32, not {other}"
+            )))
+        }
+    })
+}
+
+/// Bit widths `mlx.core.quantize(mode="affine")` supports.
+pub const MLX_AFFINE_BITS: [u32; 6] = [2, 3, 4, 5, 6, 8];
+
+/// Validate the geometry of one MLX affine-quantised row and return the number of groups.
+fn mlx_affine_check(
+    bits: u32,
+    group_size: usize,
+    n_words: usize,
+    scale_dtype: GgmlType,
+    scales_len: usize,
+    biases_len: usize,
+    n: usize,
+) -> Result<usize> {
+    if !MLX_AFFINE_BITS.contains(&bits) {
+        return Err(EngineError::Format(format!(
+            "MLX affine quantisation: {bits} bits is not one of {MLX_AFFINE_BITS:?}"
+        )));
+    }
+    if group_size == 0 || n % group_size != 0 {
+        return Err(EngineError::InvalidShape(format!(
+            "MLX affine row of {n} elements is not a multiple of group_size {group_size}"
+        )));
+    }
+    let total_bits = n * bits as usize;
+    if total_bits % 32 != 0 {
+        return Err(EngineError::InvalidShape(format!(
+            "MLX affine row: {n} x {bits} bits does not fill whole u32 words"
+        )));
+    }
+    let words = total_bits / 32;
+    if n_words < words {
+        return Err(EngineError::Format(format!(
+            "MLX affine row needs {words} packed words, got {n_words}"
+        )));
+    }
+    let groups = n / group_size;
+    let elem = scale_dtype.block_bytes();
+    if scales_len < groups * elem || biases_len < groups * elem {
+        return Err(EngineError::Format(format!(
+            "MLX affine row needs {groups} scales and biases of {elem} bytes, got {scales_len} and {biases_len} bytes"
+        )));
+    }
+    Ok(groups)
+}
+
+/// Dequantise one row of MLX affine-quantised weights: `w[i] = scale[g] * q[i] + bias[g]` with
+/// `g = i / group_size` and `q` the `bits`-wide unsigned integers packed into `u32` words from the
+/// least significant bit up (`mlx.core.quantize`, mode `"affine"`). Elements never skip bits: the
+/// row is one contiguous little-endian bit stream, so for 3, 5 and 6 bits an element can straddle
+/// two words (verified bit-exact against `mlx.core.dequantize` for every bits/group_size pair,
+/// see `scripts/engine/mlx_ref.py`).
+///
+/// `scales` and `biases` are the row's group values as raw little-endian bytes of `scale_dtype`
+/// (F16, BF16 or F32). `out.len()` is the row length in elements.
+pub fn mlx_affine_row(
+    bits: u32,
+    group_size: usize,
+    packed_row: &[u32],
+    scale_dtype: GgmlType,
+    scales: &[u8],
+    biases: &[u8],
+    out: &mut [f32],
+) -> Result<()> {
+    let groups = mlx_affine_check(
+        bits,
+        group_size,
+        packed_row.len(),
+        scale_dtype,
+        scales.len(),
+        biases.len(),
+        out.len(),
+    )?;
+    mlx_affine_unpack(
+        bits,
+        group_size,
+        groups,
+        |w| packed_row[w],
+        scale_dtype,
+        scales,
+        biases,
+        out,
+    )
+}
+
+/// [`mlx_affine_row`] over the packed row's raw little-endian bytes (a safetensors data region is
+/// only guaranteed byte-aligned, so the mapped weights cannot be viewed as `&[u32]`).
+pub fn mlx_affine_row_le_bytes(
+    bits: u32,
+    group_size: usize,
+    packed_row: &[u8],
+    scale_dtype: GgmlType,
+    scales: &[u8],
+    biases: &[u8],
+    out: &mut [f32],
+) -> Result<()> {
+    let groups = mlx_affine_check(
+        bits,
+        group_size,
+        packed_row.len() / 4,
+        scale_dtype,
+        scales.len(),
+        biases.len(),
+        out.len(),
+    )?;
+    mlx_affine_unpack(
+        bits,
+        group_size,
+        groups,
+        |w| u32::from_le_bytes(packed_row[w * 4..w * 4 + 4].try_into().unwrap()),
+        scale_dtype,
+        scales,
+        biases,
+        out,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn mlx_affine_unpack(
+    bits: u32,
+    group_size: usize,
+    groups: usize,
+    word: impl Fn(usize) -> u32,
+    scale_dtype: GgmlType,
+    scales: &[u8],
+    biases: &[u8],
+    out: &mut [f32],
+) -> Result<()> {
+    let mask = (1u64 << bits) - 1;
+    let bits = bits as usize;
+    for g in 0..groups {
+        let s = scalar_at(scale_dtype, scales, g)?;
+        let b = scalar_at(scale_dtype, biases, g)?;
+        for (j, y) in out[g * group_size..(g + 1) * group_size]
+            .iter_mut()
+            .enumerate()
+        {
+            let bit = (g * group_size + j) * bits;
+            let w = bit / 32;
+            let shift = bit % 32;
+            // Read two words so an element straddling a word boundary comes out whole; the
+            // second word exists whenever the straddle happens (total bits fill whole words).
+            let mut v = word(w) as u64 >> shift;
+            if shift + bits > 32 {
+                v |= (word(w + 1) as u64) << (32 - shift);
+            }
+            let q = (v & mask) as f32;
+            *y = s * q + b;
+        }
+    }
+    Ok(())
+}
+
+/// Pack a row of `bits`-wide unsigned integers the way MLX does (inverse of the unpacking in
+/// [`mlx_affine_row`]); used by tests and by the synthetic-model writers.
+pub fn mlx_affine_pack(bits: u32, q: &[u32]) -> Vec<u32> {
+    assert!(MLX_AFFINE_BITS.contains(&bits));
+    let total = q.len() * bits as usize;
+    let mut words = vec![0u32; total.div_ceil(32)];
+    for (i, &v) in q.iter().enumerate() {
+        assert!(v < (1 << bits), "q value {v} does not fit in {bits} bits");
+        let bit = i * bits as usize;
+        let w = bit / 32;
+        let shift = bit % 32;
+        words[w] |= v << shift;
+        if shift + bits as usize > 32 {
+            words[w + 1] |= v >> (32 - shift);
+        }
+    }
+    words
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -470,5 +658,196 @@ mod tests {
         let mut y = vec![0f32; 32];
         assert!(dequantize_row(GgmlType::Q4_0, &[0; 10], &mut y).is_err());
         assert!(dequantize_row(GgmlType::IQ2_XXS, &[0; 66], &mut vec![0f32; 256]).is_err());
+    }
+
+    /// Rows produced by `mlx.core.quantize(w, group_size=32, bits=b)` (mlx 0.32.3) from
+    /// integer-valued `w` spanning the full range in every group, so every scale is exactly
+    /// -1 and every bias exactly 2^b - 1: `(bits, packed words, expected q)`. 3, 5 and 6 bits
+    /// straddle word boundaries. Generated with `scripts/engine/mlx_ref.py --fixtures`.
+    const MLX_FIXTURES: &[(u32, &[u32], &[u32])] = &[
+        (
+            2,
+            &[0xe4e4e4e3, 0xe4e4e4e4, 0xe4e4e4e3, 0xe4e4e4e4],
+            &[
+                3, 0, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3,
+                0, 1, 2, 3, 3, 0, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3,
+                0, 1, 2, 3, 0, 1, 2, 3,
+            ],
+        ),
+        (
+            3,
+            &[
+                0xac688f87, 0x8fac688f, 0x688fac68, 0xac688f87, 0x8fac688f, 0x688fac68, 0xac688f87,
+                0x8fac688f, 0x688fac68,
+            ],
+            &[
+                7, 0, 6, 7, 0, 1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3, 4, 5, 6, 7,
+                0, 1, 2, 3, 7, 0, 6, 7, 0, 1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3,
+                4, 5, 6, 7, 0, 1, 2, 3, 7, 0, 6, 7, 0, 1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3, 4, 5, 6, 7,
+                0, 1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3,
+            ],
+        ),
+        (
+            4,
+            &[
+                0xb2907e0f, 0x3a18f6d4, 0xb2907e5c, 0x3a18f6d4, 0xb2907e0f, 0x3a18f6d4, 0xb2907e5c,
+                0x3a18f6d4, 0xb2907e0f, 0x3a18f6d4, 0xb2907e5c, 0x3a18f6d4,
+            ],
+            &[
+                15, 0, 14, 7, 0, 9, 2, 11, 4, 13, 6, 15, 8, 1, 10, 3, 12, 5, 14, 7, 0, 9, 2, 11, 4,
+                13, 6, 15, 8, 1, 10, 3, 15, 0, 14, 7, 0, 9, 2, 11, 4, 13, 6, 15, 8, 1, 10, 3, 12,
+                5, 14, 7, 0, 9, 2, 11, 4, 13, 6, 15, 8, 1, 10, 3, 15, 0, 14, 7, 0, 9, 2, 11, 4, 13,
+                6, 15, 8, 1, 10, 3, 12, 5, 14, 7, 0, 9, 2, 11, 4, 13, 6, 15, 8, 1, 10, 3,
+            ],
+        ),
+        (
+            5,
+            &[
+                0xb203b81f, 0x87dba45c, 0xf8ac9e82, 0xb4d8930b, 0x1aa38f99, 0xb203b81f, 0x87dba45c,
+                0xf8ac9e82, 0xb4d8930b, 0x1aa38f99, 0xb203b81f, 0x87dba45c, 0xf8ac9e82, 0xb4d8930b,
+                0x1aa38f99,
+            ],
+            &[
+                31, 0, 14, 7, 0, 25, 18, 11, 4, 29, 22, 15, 8, 1, 26, 19, 12, 5, 30, 23, 16, 9, 2,
+                27, 20, 13, 6, 31, 24, 17, 10, 3, 31, 0, 14, 7, 0, 25, 18, 11, 4, 29, 22, 15, 8, 1,
+                26, 19, 12, 5, 30, 23, 16, 9, 2, 27, 20, 13, 6, 31, 24, 17, 10, 3, 31, 0, 14, 7, 0,
+                25, 18, 11, 4, 29, 22, 15, 8, 1, 26, 19, 12, 5, 30, 23, 16, 9, 2, 27, 20, 13, 6,
+                31, 24, 17, 10, 3,
+            ],
+        ),
+        (
+            6,
+            &[
+                0x609ee03f, 0x6f442d26, 0x4da868bf, 0x70dfe14c, 0x63546e2a, 0x8eac78fc, 0x401ce03f,
+                0x6764af2e, 0xcfa0483d, 0x505de96c, 0x6b74ec22, 0x0ca4587e, 0x609ee03f, 0x6f442d26,
+                0x4da868bf, 0x70dfe14c, 0x63546e2a, 0x8eac78fc,
+            ],
+            &[
+                63, 0, 46, 39, 32, 25, 18, 11, 4, 61, 54, 47, 40, 33, 26, 19, 12, 5, 62, 55, 48,
+                41, 34, 27, 20, 13, 6, 63, 56, 49, 42, 35, 63, 0, 14, 7, 0, 57, 50, 43, 36, 29, 22,
+                15, 8, 1, 58, 51, 44, 37, 30, 23, 16, 9, 2, 59, 52, 45, 38, 31, 24, 17, 10, 3, 63,
+                0, 46, 39, 32, 25, 18, 11, 4, 61, 54, 47, 40, 33, 26, 19, 12, 5, 62, 55, 48, 41,
+                34, 27, 20, 13, 6, 63, 56, 49, 42, 35,
+            ],
+        ),
+        (
+            8,
+            &[
+                0xe7ee00ff, 0xcbd2d9e0, 0xafb6bdc4, 0x939aa1a8, 0x777e858c, 0x5b626970, 0x3f464d54,
+                0x232a3138, 0x070e00ff, 0xebf2f900, 0xcfd6dde4, 0xb3bac1c8, 0x979ea5ac, 0x7b828990,
+                0x5f666d74, 0x434a5158, 0x272e00ff, 0x0b121920, 0xeff6fd04, 0xd3dae1e8, 0xb7bec5cc,
+                0x9ba2a9b0, 0x7f868d94, 0x636a7178,
+            ],
+            &[
+                255, 0, 238, 231, 224, 217, 210, 203, 196, 189, 182, 175, 168, 161, 154, 147, 140,
+                133, 126, 119, 112, 105, 98, 91, 84, 77, 70, 63, 56, 49, 42, 35, 255, 0, 14, 7, 0,
+                249, 242, 235, 228, 221, 214, 207, 200, 193, 186, 179, 172, 165, 158, 151, 144,
+                137, 130, 123, 116, 109, 102, 95, 88, 81, 74, 67, 255, 0, 46, 39, 32, 25, 18, 11,
+                4, 253, 246, 239, 232, 225, 218, 211, 204, 197, 190, 183, 176, 169, 162, 155, 148,
+                141, 134, 127, 120, 113, 106, 99,
+            ],
+        ),
+    ];
+
+    #[test]
+    fn mlx_unpacking_matches_mlx_core_fixtures() {
+        for &(bits, words, q) in MLX_FIXTURES {
+            let n = q.len();
+            assert_eq!(
+                words.len() * 32,
+                n * bits as usize,
+                "{bits}-bit fixture geometry"
+            );
+            let groups = n / 32;
+            let scales: Vec<u8> = (0..groups)
+                .flat_map(|_| f16::from_f32(-1.0).to_le_bytes())
+                .collect();
+            let biases: Vec<u8> = (0..groups)
+                .flat_map(|_| f16::from_f32(((1u32 << bits) - 1) as f32).to_le_bytes())
+                .collect();
+            let mut out = vec![0f32; n];
+            mlx_affine_row(bits, 32, words, GgmlType::F16, &scales, &biases, &mut out).unwrap();
+            for i in 0..n {
+                let expect = ((1u32 << bits) - 1) as f32 - q[i] as f32;
+                assert_eq!(out[i], expect, "{bits}-bit element {i}");
+            }
+            // The byte entry point and the packer agree with the word entry point.
+            let bytes: Vec<u8> = words.iter().flat_map(|w| w.to_le_bytes()).collect();
+            let mut out2 = vec![0f32; n];
+            mlx_affine_row_le_bytes(bits, 32, &bytes, GgmlType::F16, &scales, &biases, &mut out2)
+                .unwrap();
+            assert_eq!(out, out2);
+            assert_eq!(mlx_affine_pack(bits, q), words, "{bits}-bit repack");
+        }
+    }
+
+    #[test]
+    fn mlx_affine_scale_dtypes_and_groups() {
+        // 4-bit, two groups of 32 with different scales/biases, in bf16 and f32.
+        let q: Vec<u32> = (0..64).map(|i| (i * 5 + 1) % 16).collect();
+        let words = mlx_affine_pack(4, &q);
+        let sc = [0.5f32, -2.0];
+        let bi = [1.0f32, 3.0];
+        let bf16 = |x: f32| (x.to_bits() >> 16) as u16;
+        let scales_bf: Vec<u8> = sc.iter().flat_map(|&s| bf16(s).to_le_bytes()).collect();
+        let biases_bf: Vec<u8> = bi.iter().flat_map(|&s| bf16(s).to_le_bytes()).collect();
+        let scales_f32: Vec<u8> = sc.iter().flat_map(|s| s.to_le_bytes()).collect();
+        let biases_f32: Vec<u8> = bi.iter().flat_map(|s| s.to_le_bytes()).collect();
+        let mut a = vec![0f32; 64];
+        let mut b = vec![0f32; 64];
+        mlx_affine_row(
+            4,
+            32,
+            &words,
+            GgmlType::BF16,
+            &scales_bf,
+            &biases_bf,
+            &mut a,
+        )
+        .unwrap();
+        mlx_affine_row(
+            4,
+            32,
+            &words,
+            GgmlType::F32,
+            &scales_f32,
+            &biases_f32,
+            &mut b,
+        )
+        .unwrap();
+        assert_eq!(a, b);
+        for i in 0..64 {
+            let g = i / 32;
+            assert_eq!(a[i], sc[g] * q[i] as f32 + bi[g]);
+        }
+        // Rejections: bad bits, row not a multiple of the group, short inputs, bad scale dtype.
+        let mut out = vec![0f32; 64];
+        let f = GgmlType::F32;
+        assert!(mlx_affine_row(7, 32, &words, f, &scales_f32, &biases_f32, &mut out).is_err());
+        assert!(mlx_affine_row(4, 48, &words, f, &scales_f32, &biases_f32, &mut out).is_err());
+        assert!(mlx_affine_row(4, 32, &words[..7], f, &scales_f32, &biases_f32, &mut out).is_err());
+        assert!(mlx_affine_row(4, 32, &words, f, &scales_f32[..4], &biases_f32, &mut out).is_err());
+        let q4 = GgmlType::Q4_0;
+        assert!(mlx_affine_row(4, 32, &words, q4, &scales_f32, &biases_f32, &mut out).is_err());
+        let mut short = vec![0f32; 32];
+        assert!(mlx_affine_row(4, 32, &words, f, &scales_f32, &biases_f32, &mut short).is_ok());
+    }
+
+    #[test]
+    fn mlx_pack_unpack_round_trip_every_width() {
+        for &bits in &MLX_AFFINE_BITS {
+            let n = 128 * 3;
+            let q: Vec<u32> = (0..n as u32)
+                .map(|i| i.wrapping_mul(2654435761).wrapping_add(i * i) >> (32 - bits))
+                .collect();
+            let words = mlx_affine_pack(bits, &q);
+            assert_eq!(words.len(), n * bits as usize / 32);
+            let scales: Vec<u8> = (0..n / 128).flat_map(|_| 1.0f32.to_le_bytes()).collect();
+            let biases: Vec<u8> = (0..n / 128).flat_map(|_| 0.0f32.to_le_bytes()).collect();
+            let mut out = vec![0f32; n];
+            mlx_affine_row(bits, 128, &words, GgmlType::F32, &scales, &biases, &mut out).unwrap();
+            let back: Vec<u32> = out.iter().map(|&v| v as u32).collect();
+            assert_eq!(back, q, "{bits}-bit round trip");
+        }
     }
 }
