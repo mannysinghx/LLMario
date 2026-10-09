@@ -1,0 +1,13 @@
+{#- Minimal Llama 3.1 renderer for these tests, written after
+    github.com/meta-llama/llama-models models/llama3_1/prompt_format.md ("JSON based tool
+    calling"): `<|python_tag|>{"type": "function", "name": ..., "parameters": {...}}<|eom_id|>`,
+    single call only. The HF chat template is gated and was not consulted. -#}
+{{- bos_token -}}
+{%- for m in messages -%}
+{{- '<|start_header_id|>' + ('ipython' if m.role == 'tool' else m.role) + '<|end_header_id|>\n\n' -}}
+{%- if m.role == 'assistant' and m.tool_calls -%}
+{{- '<|python_tag|>' -}}{%- for t in m.tool_calls -%}{{- {'type': 'function', 'name': t.function.name, 'parameters': t.function.arguments} | tojson -}}{%- endfor -%}{{- '<|eom_id|>' -}}
+{%- else -%}{{- m.content + '<|eot_id|>' -}}
+{%- endif -%}
+{%- endfor -%}
+{%- if add_generation_prompt -%}{{- '<|start_header_id|>assistant<|end_header_id|>\n\n' -}}{%- endif -%}

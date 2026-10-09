@@ -1,0 +1,22 @@
+{#- Minimal LFM2 renderer for these tests, written after huggingface.co/LiquidAI/LFM2-1.2B
+    chat_template.jinja: calls are `<|tool_call_start|>[f(a='b', n=1)]<|tool_call_end|>`,
+    strings single-quoted with \\ \' \n \r escapes, mappings/lists as JSON, other scalars
+    Python str(). -#}
+{{- bos_token -}}
+{%- macro fav(v) -%}
+{%- if v is string -%}'{{ v | replace("\\", "\\\\") | replace("'", "\\'") | replace("\n", "\\n") | replace("\r", "\\r") }}'
+{%- elif v is mapping or v is iterable -%}{{ v | tojson }}
+{%- else -%}{{ v | string }}
+{%- endif -%}
+{%- endmacro -%}
+{%- for m in messages -%}
+{%- if m.role == 'system' -%}{{- '<|im_start|>system\n' + m.content -}}{%- if tools -%}{{- '\nList of tools: <|tool_list_start|>' + (tools | tojson) + '<|tool_list_end|>' -}}{%- endif -%}{{- '<|im_end|>\n' -}}
+{%- elif m.role == 'assistant' and m.tool_calls -%}
+{{- '<|im_start|>assistant\n' -}}{%- if m.content -%}{{- m.content -}}{%- endif -%}
+{{- '<|tool_call_start|>[' -}}
+{%- for t in m.tool_calls -%}{{- t.function.name + '(' -}}{%- for k, v in t.function.arguments | items -%}{{ k }}={{ fav(v) }}{%- if not loop.last %}, {% endif -%}{%- endfor -%}{{- ')' -}}{%- if not loop.last %}, {% endif -%}{%- endfor -%}
+{{- ']<|tool_call_end|><|im_end|>\n' -}}
+{%- else -%}{{- '<|im_start|>' + m.role + '\n' + m.content + '<|im_end|>\n' -}}
+{%- endif -%}
+{%- endfor -%}
+{%- if add_generation_prompt -%}{{- '<|im_start|>assistant\n' -}}{%- endif -%}

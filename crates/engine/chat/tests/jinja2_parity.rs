@@ -354,7 +354,7 @@ fn expected_family(arch: &str) -> Option<TemplateFamily> {
         "gemma4" => TemplateFamily::Gemma4,
         "gpt-oss" => TemplateFamily::Harmony,
         "smollm3" => TemplateFamily::Hermes,
-        "olmo2" => TemplateFamily::ChatMl,
+        "olmo2" => TemplateFamily::Olmo3,
         _ => return None,
     })
 }
