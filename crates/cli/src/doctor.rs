@@ -12,7 +12,7 @@ pub async fn run(as_json: bool) -> anyhow::Result<()> {
     let orphans = llmario_supervisor::engine::find_orphans(&paths.run_dir());
     let other_app = llmario_supervisor::sibling::sibling_usage(&paths);
 
-    let backends: Vec<_> = [BackendKind::LlamaCpp, BackendKind::Mlx]
+    let backends: Vec<_> = [BackendKind::LlamaCpp, BackendKind::Mlx, BackendKind::Native]
         .iter()
         .filter_map(|k| sup.statuses().get(k).cloned())
         .collect();

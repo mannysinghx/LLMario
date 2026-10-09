@@ -34,7 +34,7 @@ pub async fn supervisor(cfg: Config, paths: Paths) -> anyhow::Result<Arc<Supervi
 }
 
 pub fn print_backends(sup: &Supervisor) {
-    for kind in [BackendKind::LlamaCpp, BackendKind::Mlx] {
+    for kind in [BackendKind::LlamaCpp, BackendKind::Mlx, BackendKind::Native] {
         if let Some(s) = sup.statuses().get(&kind) {
             let mark = if s.available { "✓" } else { "✗" };
             eprintln!(

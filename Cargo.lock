@@ -608,6 +608,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a31eee39dddec8330830986fcd7625edb5a24ec90ea038215273bbc3adb08ac6"
 
 [[package]]
+name = "crunchy"
+version = "0.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "460fbee9c2c2f33933d720630a6a0bac33ba7053db5344fac858d4b8952d77d5"
+
+[[package]]
 name = "crypto-common"
 version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -637,7 +643,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d045de693cb712d0b22c6a64be5b953f67b3ce00ab5ad3dd5d8b441886ab8e1a"
 dependencies = [
  "quote",
- "syn 2.0.119",
+ "syn 3.0.6",
 ]
 
 [[package]]
@@ -940,6 +946,17 @@ checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "fancy-regex"
+version = "0.19.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d301f5bf187b3c295fce6468d3875037a0bccc5f6b151c63cac2f85babf21912"
+dependencies = [
+ "bit-set",
+ "regex-automata",
+ "regex-syntax",
 ]
 
 [[package]]
@@ -1417,6 +1434,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "half"
+version = "2.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6ea2d84b969582b4b1864a92dc5d27cd2b77b622a8d79306834f1be5ba20d84b"
+dependencies = [
+ "cfg-if",
+ "crunchy",
+ "zerocopy",
+]
+
+[[package]]
 name = "hashbrown"
 version = "0.12.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1574,7 +1602,7 @@ dependencies = [
  "js-sys",
  "log",
  "wasm-bindgen",
- "windows-core 0.61.2",
+ "windows-core 0.62.2",
 ]
 
 [[package]]
@@ -2047,6 +2075,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "llmario-adapter-native"
+version = "0.3.0-beta.3"
+dependencies = [
+ "llmario-core",
+ "llmario-hardware",
+ "llmario-registry",
+ "llmario-supervisor",
+ "serde",
+ "serde_json",
+ "tracing",
+]
+
+[[package]]
 name = "llmario-api"
 version = "0.3.0-beta.3"
 dependencies = [
@@ -2144,6 +2185,161 @@ dependencies = [
 ]
 
 [[package]]
+name = "llmario-engine"
+version = "0.3.0-beta.3"
+dependencies = [
+ "anyhow",
+ "clap",
+ "llmario-engine-core",
+ "llmario-engine-cpu",
+ "llmario-engine-formats",
+ "llmario-engine-model",
+ "llmario-engine-plan",
+ "llmario-engine-server",
+ "llmario-engine-tokenizer",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "llmario-engine-chat"
+version = "0.3.0-beta.3"
+dependencies = [
+ "chrono",
+ "llmario-engine-core",
+ "llmario-engine-formats",
+ "minijinja",
+ "minijinja-contrib",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "llmario-engine-core"
+version = "0.3.0-beta.3"
+dependencies = [
+ "half",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "llmario-engine-cpu"
+version = "0.3.0-beta.3"
+dependencies = [
+ "half",
+ "llmario-engine-core",
+ "serde",
+]
+
+[[package]]
+name = "llmario-engine-decode"
+version = "0.3.0-beta.3"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "llmario-engine-formats"
+version = "0.3.0-beta.3"
+dependencies = [
+ "llmario-engine-core",
+ "memmap2",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "llmario-engine-kv"
+version = "0.3.0-beta.3"
+dependencies = [
+ "llmario-engine-core",
+]
+
+[[package]]
+name = "llmario-engine-model"
+version = "0.3.0-beta.3"
+dependencies = [
+ "llmario-engine-core",
+ "llmario-engine-cpu",
+ "llmario-engine-formats",
+ "serde",
+ "tempfile",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "llmario-engine-plan"
+version = "0.3.0-beta.3"
+dependencies = [
+ "hex",
+ "llmario-engine-core",
+ "llmario-engine-formats",
+ "llmario-engine-model",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "llmario-engine-sched"
+version = "0.3.0-beta.3"
+dependencies = [
+ "llmario-engine-core",
+]
+
+[[package]]
+name = "llmario-engine-server"
+version = "0.3.0-beta.3"
+dependencies = [
+ "anyhow",
+ "axum",
+ "futures",
+ "llmario-engine-chat",
+ "llmario-engine-core",
+ "llmario-engine-cpu",
+ "llmario-engine-decode",
+ "llmario-engine-formats",
+ "llmario-engine-model",
+ "llmario-engine-plan",
+ "llmario-engine-tokenizer",
+ "serde",
+ "serde_json",
+ "sysinfo",
+ "tokio",
+ "tokio-stream",
+ "tracing",
+]
+
+[[package]]
+name = "llmario-engine-testkit"
+version = "0.3.0-beta.3"
+dependencies = [
+ "llmario-engine-core",
+]
+
+[[package]]
+name = "llmario-engine-tokenizer"
+version = "0.3.0-beta.3"
+dependencies = [
+ "fancy-regex",
+ "llmario-engine-core",
+ "llmario-engine-formats",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tracing",
+]
+
+[[package]]
 name = "llmario-hardware"
 version = "0.3.0-beta.3"
 dependencies = [
@@ -2187,6 +2383,7 @@ dependencies = [
  "llmario-adapter-llamacpp",
  "llmario-adapter-mlx",
  "llmario-adapter-mock",
+ "llmario-adapter-native",
  "llmario-core",
  "llmario-hardware",
  "llmario-registry",
@@ -2269,6 +2466,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 
 [[package]]
+name = "memmap2"
+version = "0.9.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d1219ed1b7f229ee7104d281dd01d6802fe28bb6e95d292942c4daacdeb798c0"
+dependencies = [
+ "libc",
+]
+
+[[package]]
+name = "memo-map"
+version = "0.3.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5449c8c750f1a07ea702bbd212bd999fceece9b3d1508b17023b3e174583124b"
+
+[[package]]
 name = "memoffset"
 version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2282,6 +2494,28 @@ name = "mime"
 version = "0.3.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6877bb514081ee2a7ff5ef9de3281f14a4dd4bceac4c09388074a6b5df8a139a"
+
+[[package]]
+name = "minijinja"
+version = "2.24.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "86886cf6dbf4e614b19c9a1eec9775f021869d7eadde0fc73921a81b90c9b4c9"
+dependencies = [
+ "indexmap 2.14.2",
+ "memo-map",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "minijinja-contrib"
+version = "2.24.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bd3e5f077bc2379f0f7d911e7cfdd921114ed99fc884533dca502944cb355b11"
+dependencies = [
+ "minijinja",
+ "serde",
+]
 
 [[package]]
 name = "miniz_oxide"
@@ -3410,6 +3644,7 @@ version = "1.0.151"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c841b55ecdae098c80dcae9cf767f6f8a0c2cdb3416bbef72181df4d0fe73f14"
 dependencies = [
+ "indexmap 2.14.2",
  "itoa",
  "memchr",
  "serde",
@@ -4046,7 +4281,7 @@ dependencies = [
  "serde_with",
  "swift-rs",
  "thiserror 2.0.21",
- "toml 0.9.12+spec-1.1.0",
+ "toml 1.1.6+spec-1.1.0",
  "url",
  "urlpattern",
  "uuid",
@@ -4216,6 +4451,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c9cc2678c2cdd569ef8215e2afd7954ada2ae20b4fdd2c5fe6139a3b02d105db"
 dependencies = [
  "rustls",
+ "tokio",
+]
+
+[[package]]
+name = "tokio-stream"
+version = "0.1.19"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a3d06f0b082ba57c26b79407372e57cf2a1e28124f78e9479fe80322cf53420b"
+dependencies = [
+ "futures-core",
+ "pin-project-lite",
  "tokio",
 ]
 
@@ -5409,6 +5655,26 @@ dependencies = [
  "quote",
  "syn 3.0.6",
  "synstructure",
+]
+
+[[package]]
+name = "zerocopy"
+version = "0.8.62"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "86502bf56ac7c77571a32e2647bb2a15894565e981fb2a48d7bde2d91c965a9d"
+dependencies = [
+ "zerocopy-derive",
+]
+
+[[package]]
+name = "zerocopy-derive"
+version = "0.8.62"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5457206954b06561e2608c7e19cf58b1926586d999c246eebe4502f7e2039d1a"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
 ]
 
 [[package]]
