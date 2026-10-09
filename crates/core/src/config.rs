@@ -141,6 +141,11 @@ pub struct NativeConfig {
     pub engine_path: Option<PathBuf>,
     /// CPU threads. `None` = the physical performance cores.
     pub threads: Option<u32>,
+    /// Let models use the built-in `web_fetch` tool (and `web_search` when `searxng_url` is
+    /// set). Off by default; requests must still ask for the tools.
+    pub web_access: bool,
+    /// Self-hosted SearXNG instance (JSON output enabled) for `web_search`.
+    pub searxng_url: Option<String>,
     /// Extra flags appended verbatim.
     pub extra_args: Vec<String>,
 }

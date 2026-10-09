@@ -3,6 +3,7 @@
 //! (IPC contract v1: OpenAI-compatible chat completions with SSE, `GET /health`), plus the
 //! `/engine/*` extension endpoints (plan, ledger, stats, control).
 
+pub mod agent;
 pub mod api;
 pub mod engine;
 pub mod footprint;
@@ -51,6 +52,10 @@ pub struct ServeOptions {
     /// Ceiling for the plan; `None` = physical memory.
     pub memory_limit: Option<u64>,
     pub device: Device,
+    /// Allow the built-in `web_fetch` tool (and `web_search` with `searxng_url`). Off by default.
+    pub web: bool,
+    /// Self-hosted SearXNG instance for `web_search`.
+    pub searxng_url: Option<String>,
 }
 
 /// Build the plan for `opts` against the memory ceiling (no allocation).
@@ -98,7 +103,11 @@ pub async fn serve(opts: ServeOptions) -> Result<()> {
             .await
             .context("engine runtime")?;
     emit_state("ready");
-    api::serve_http(runtime, file, opts, plan, ledger).await
+    let web = Arc::new(agent::WebTools::new(opts.web, opts.searxng_url.as_deref())?);
+    if !web.available().is_empty() {
+        tracing::info!(tools = ?web.available(), "web access on for built-in tools");
+    }
+    api::serve_http(runtime, file, opts, plan, ledger, web).await
 }
 
 /// One-line JSON state records on stdout for the supervisor and `doctor`.
