@@ -11,6 +11,11 @@ rust-version.workspace = true
 name = "llmario-engine"
 path = "src/main.rs"
 
+[features]
+default = ["metal"]
+# Metal GPU backend (macOS only); forwards to the server crate's feature.
+metal = ["llmario-engine-server/metal", "dep:llmario-engine-metal"]
+
 [dependencies]
 llmario-engine-core = { workspace = true }
 llmario-engine-formats = { workspace = true }
@@ -25,6 +30,9 @@ tracing-subscriber = { workspace = true }
 anyhow = { workspace = true }
 clap = { workspace = true }
 serde_json = { workspace = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+llmario-engine-metal = { workspace = true, optional = true }
 
 [dev-dependencies]
 serde_json = { workspace = true }
