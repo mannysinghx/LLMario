@@ -224,9 +224,11 @@ print(reply.choices[0].message.content)
 | `GET /metrics` | Prometheus: requests by outcome, tokens, TTFT and duration histograms, engine memory |
 
 Supported: `messages` (text), `stream`, `stream_options.include_usage`, `max_tokens`,
-`temperature`, `top_p`, `top_k`, `min_p`, `stop`, `seed`, penalties. **Not supported yet (clear
-400 error):** tools/function calling, JSON mode / constrained output, images/audio, logprobs,
-`n > 1`. Closing the connection cancels generation. Full details: [docs/API.md](docs/API.md).
+`temperature`, `top_p`, `top_k`, `min_p`, `stop`, `seed`, penalties. **With LLMario's own engine
+(preview):** tool calling, JSON mode / JSON-schema output, and built-in `web_search` / `web_fetch`
+tools that let a local model read the web (off by default). **Not supported yet (clear 400 error):**
+images/audio, logprobs, `n > 1`, and tools / JSON mode on the llama.cpp and MLX backends. Closing the
+connection cancels generation. Full details: [docs/API.md](docs/API.md).
 
 ## Models
 
@@ -400,6 +402,8 @@ memory_profile = "standard" # standard | small | auto (small on 16 GB or less): 
 enabled = false             # true: GGUF models whose architecture it supports run on it
 # engine_path = "/path/to/llmario-engine"   # default: next to the llmario binary, then PATH
 # threads = 12              # default: the physical performance cores
+web_access = false          # true: models may use the built-in web_fetch tool (SSRF-guarded)
+# searxng_url = "http://127.0.0.1:8080"   # self-hosted SearXNG (JSON enabled) for web_search
 [backends.llamacpp]
 # server_path = "/opt/homebrew/bin/llama-server"
 # gpu_layers = 999

@@ -23,17 +23,31 @@ OpenAI list/model objects for installed models, plus an `llmario` object:
 
 | Field | Behaviour |
 |---|---|
-| `messages` | `system`, `developer` (sent as `system`), `user`, `assistant`. Content may be a string or an array of `text` parts. |
+| `messages` | `system`, `developer` (sent as `system`), `user`, `assistant`; `tool` (with `tool_call_id`) and assistant `tool_calls` on the native engine. Content may be a string or an array of `text` parts. |
 | `stream`, `stream_options.include_usage` | SSE streaming. Usage chunk is sent only when requested. |
 | `max_tokens` / `max_completion_tokens` | Default: profile default, capped by remaining context. |
 | `temperature` (0–2), `top_p`, `top_k`, `min_p`, `stop`, `seed`, `presence_penalty`, `frequency_penalty`, `repetition_penalty` | Forwarded. On MLX, `seed` is dropped when decoding is greedy so batching stays enabled (output-identical). |
 | `n` | Only `1`. |
-| `response_format` | Only `{"type":"text"}`. |
-| `tools`, `tool_choice`, `functions`, `logprobs`, `logit_bias`, `audio`, `modalities`, `prediction`, image/audio content parts, `tool` role | **400 `unsupported_feature`** — not implemented in this release. |
+| `response_format` | `{"type":"text"}` everywhere. `json_object` and `json_schema` on the native engine only: output is grammar-constrained to valid JSON (matching the schema); with reasoning models the constraint starts after the reasoning block. Other backends: **400 `unsupported_feature`**. |
+| `tools`, `tool_choice`, `parallel_tool_calls` | Native engine only (other backends: **400 `unsupported_feature`**). Function tools in OpenAI format; calls come back as `message.tool_calls` / `delta.tool_calls` with `finish_reason: "tool_calls"`; `tool_choice` `required` or a named function is enforced by grammar for the Hermes, Qwen XML, Gemma 4, Mistral and Harmony template families (parsed but not enforced for the others). Built-in tools `{"type":"web_search"}` and `{"type":"web_fetch"}` are run by the engine itself — see below. |
+| `functions`, `logprobs`, `logit_bias`, `audio`, `modalities`, `prediction`, image/audio content parts | **400 `unsupported_feature`** — not implemented in this release. |
 | anything else (`user`, `metadata`, `store`, …) | Dropped, never forwarded to the engine. |
 
-Reasoning models: engines may stream thinking as `delta.reasoning_content` (llama.cpp) or
-`delta.reasoning` (MLX-LM); llmario relays them unchanged.
+Reasoning models: engines may stream thinking as `delta.reasoning_content` (llama.cpp and the native
+engine) or `delta.reasoning` (MLX-LM); llmario relays them unchanged.
+
+### Built-in web tools (native engine)
+
+With `[backends.native] web_access = true`, a request may add `{"type":"web_fetch"}` (open a page,
+move within it, follow numbered links, find text) and, when `[backends.native] searxng_url` points at
+a self-hosted [SearXNG](https://github.com/searxng/searxng) instance with JSON output enabled,
+`{"type":"web_search"}`. The engine runs these calls itself and continues generating, up to 4 tool
+rounds, then answers. Fetching is SSRF-guarded (http/https on ports 80/443 only, private, loopback,
+link-local and metadata addresses refused, DNS pinned, redirects re-checked, 600 KB / 20 s limits,
+`robots.txt` honoured); page text is wrapped as untrusted data before the model sees it. Streams show
+each call as a `delta.llmario_tool_event` (`name`, `arguments`, `status`, `url`, `ms`); non-streaming
+responses list them in `llmario.tool_events`. Requests for a built-in tool that is not enabled get a
+400 that names the setting. No hosted or paid search API is used.
 
 ### Errors
 
