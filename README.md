@@ -119,6 +119,7 @@ app, so it needs no separate server and no Ollama.
 |---|---|---|---|
 | llama.cpp | GGUF models; Mac, Windows, Linux, CPU, NVIDIA | `brew install llama.cpp` (macOS), `winget install ggml.llamacpp` (Windows), or build [ggml-org/llama.cpp](https://github.com/ggml-org/llama.cpp) | build 11146 (7fe450e19) |
 | MLX-LM | MLX models; Apple Silicon only (usually fastest there) | `./scripts/setup-mlx-venv.sh` (pinned venv) or `pip install mlx-lm` | mlx-lm 0.31.3, mlx 0.32.2 |
+| LLMario engine (preview) | GGUF models on the CPU today (Metal in progress); no install, no Python; built from this repository (`cargo build --release -p llmario-engine`) and enabled with `[backends.native] enabled = true` | ships with LLMario; design in [docs/engine/](docs/engine/README.md) | 0.3.0-beta (llama, mistral3, qwen2, qwen3, smollm3 architectures) |
 
 ### One-command install (macOS)
 
@@ -394,7 +395,11 @@ memory_profile = "standard" # standard | small | auto (small on 16 GB or less): 
 # gpu_memory_limit_gb = 10  # cap on GPU memory the planner may use (default: detected)
 
 [backends]
-# prefer = "mlx"            # llamacpp | mlx
+# prefer = "mlx"            # llamacpp | mlx | native
+[backends.native]           # LLMario's own engine (preview; off by default)
+enabled = false             # true: GGUF models whose architecture it supports run on it
+# engine_path = "/path/to/llmario-engine"   # default: next to the llmario binary, then PATH
+# threads = 12              # default: the physical performance cores
 [backends.llamacpp]
 # server_path = "/opt/homebrew/bin/llama-server"
 # gpu_layers = 999
@@ -428,6 +433,8 @@ extra_args = []
 |---|---|---|
 | macOS, Apple Silicon | MLX-LM | ✅ validated (M4 Max, macOS 27) |
 | macOS, Apple Silicon | llama.cpp (Metal) | ✅ validated (build 11146) |
+| macOS, Apple Silicon, CPU | LLMario engine (native, preview) | 🟡 preview: greedy output identical to llama.cpp on Qwen3-1.7B, full chat through the app's gateway; CPU decode 1.7× llama.cpp's CPU path (`docs/engine/STATUS.md`); Metal backend in progress |
+| Linux / Windows, CPU | LLMario engine (native, preview) | 🔬 compiles and passes unit tests in CI; not run on real hardware |
 | Linux x86_64 + NVIDIA | llama.cpp (CUDA) | 🔬 implemented: `nvidia-smi` detection, hybrid CPU/GPU offload planning. Unvalidated |
 | Linux / macOS, CPU only | llama.cpp | 🔬 implemented, unvalidated |
 | Windows x64, CPU | llama.cpp | 🟡 preview: download, chat and engine cleanup pass in CI (Windows Server 2025, build 11146); not benchmarked or used day to day |

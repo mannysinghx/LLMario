@@ -1,6 +1,6 @@
 [package]
 name = "llmario-engine-kv"
-description = "Native engine: kv (scaffold)"
+description = "Native engine KV cache: fixed-block paged arena, block tables, salted prefix-cache hash chain"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -9,3 +9,4 @@ rust-version.workspace = true
 
 [dependencies]
 llmario-engine-core = { workspace = true }
+sha2 = { workspace = true }

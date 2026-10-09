@@ -22,6 +22,17 @@ models = ["qwen3-1.7b-gguf-q4km"]
 evidence = "benchmarks/results/2026-09-29/"
 
 [[path]]
+platform = "macos-aarch64"
+hardware = "Apple M4 Max, 64 GB"
+os = "macOS 27.0.1"
+backend = "native"
+backend_version = "llmario-engine 0.3.0-beta (CPU, NEON kernels)"
+status = "partial"
+models = ["qwen3-1.7b-gguf-q4km"]
+evidence = "docs/engine/STATUS.md"
+notes = "preview: greedy parity with llama.cpp on Qwen3-1.7B; chat through the gateway; Metal backend in progress"
+
+[[path]]
 platform = "linux-x86_64"
 backend = "llamacpp"
 accelerator = "cuda"
