@@ -35,7 +35,7 @@ judged against the quantitative targets in its Section 1.5:
    speed-of-light per device and treats a shortfall as a bug.
 3. Tensor placement across CPU, GPU and NPU planned before load; parallelism only where it cannot cause contention
    (one GPU-issuing thread per device, a parked P-core pool, per-device byte budgets).
-4. Internet access that is safe by construction: template-driven tool calling, grammar-enforced arguments, an
+4. Internet access that is safe by construction (with self-hosted, open-source search only): template-driven tool calling, grammar-enforced arguments, an
    MCP client, built-in search/fetch/retrieve tools, a Rule-of-Two policy gate and an OS sandbox with an egress
    allowlist.
 
@@ -108,6 +108,10 @@ These come from the repository's own standing rules and from the project owner. 
 - Engine work lands on the beta branch or a feature branch, never directly on `main`.
 
 **Engineering constraints**
+- Open-source only (Architecture §16, rule 0): every dependency, runtime, kernel toolchain and service must be
+  OSI-licensed. No CUDA, no Apple Accelerate/BNNS, no closed NPU runtimes, no proprietary or paid search APIs, no
+  build step that needs Xcode's shader compiler or a vendor SDK. The operating systems' own APIs (Metal, DXGI/Win32,
+  Vulkan loaders) are allowed through open-source crates. If a task seems to need something closed, stop and say so.
 - Stable Rust only on the main path (`rust-version` in `Cargo.toml`; raise it to 1.89 for stable AVX-512
   intrinsics if needed and say so). No nightly features. SME2/AMX paths use `asm!` or FFI.
 - Licence policy (Architecture §16): port only from MIT/Apache-2.0/BSD sources with attribution in `NOTICE` and
@@ -115,7 +119,7 @@ These come from the repository's own standing rules and from the project owner. 
   LayerSkip, Cake, koboldcpp, GPTQModel's Swordfish kernel). `cargo deny check` must pass.
 - `unsafe` only in `cpu::simd`, backend FFI layers and the mmap layer, each block with a `SAFETY` comment; CPU
   `unsafe` paths run under Miri or ASan in CI where feasible.
-- Kernels are written in each API's native language (MSL, CUDA C++, GLSL) under `crates/engine/kernels/`, compiled
+- Kernels are written in each API's native language (MSL, GLSL) under `crates/engine/kernels/`, compiled
   at build time into embedded artefacts with runtime JIT fallbacks; every kernel has a scalar Rust reference and a
   tolerance test. No Rust-native GPU kernel languages in v1.
 - Nothing in the engine may allocate outside its plan: weights, KV and scratch never go through `malloc`; caches
@@ -154,9 +158,9 @@ first two milestones, which sets the pattern for the rest.
 
 ### M0 — Baselines and scaffolding
 
-1. Workspace: add `crates/engine/{core,formats,tokenizer,model,plan,kv,cpu,metal,cuda,vulkan,npu,sched,decode,chat,tools,server,bin,testkit}`
+1. Workspace: add `crates/engine/{core,formats,tokenizer,model,plan,kv,cpu,metal,vulkan,npu,sched,decode,chat,tools,server,bin,testkit}`
    as `llmario-engine-*` crates with README stubs, and `crates/adapter_native`; add them to `default-members`
-   (the desktop app stays excluded); backends behind cargo features (`metal`, `cuda`, `vulkan`, `npu-openvino`).
+   (the desktop app stays excluded); backends behind cargo features (`metal`, `vulkan`, `npu-openvino`).
 2. `core`: `BlockType` with per-type block sizes transcribed from ggml's `ggml-common.h` (not from `gguf-py`), and
    a test that recomputes the tensor byte counts of real GGUF files from the catalog and matches their headers;
    `TensorView`; `Device`/`Buffer` traits; `Ledger` types (Architecture §5.1).
@@ -211,7 +215,7 @@ first two milestones, which sets the pattern for the rest.
 ### M2 … M9
 
 Use the same pattern: scope, model list and exit criteria from Architecture §13; task breakdown in the plan file;
-measurements in `benchmarks/results/`. Flag hardware you do not have (NVIDIA for M6; Strix Halo/Intel Arc and an
+measurements in `benchmarks/results/`. Flag hardware you do not have (an NVIDIA or AMD discrete GPU for M6; Strix Halo/Intel Arc and an
 Intel NPU laptop for M7; an M5-class Mac for M8) at the start of the plan and propose what can be built and tested
 without it (CPU paths, mocks, CI) versus what must wait.
 
@@ -261,13 +265,15 @@ Keep the report short and factual; the plan file and `STATUS.md` hold the detail
 - Do not reimplement the inference graph in a managed language, define a new model file format, implement
   sub-4-bit KV codebooks, dense-weight SSD streaming, score-based KV eviction, in-machine CPU–GPU tensor
   parallelism, or multi-machine transports in v1 (Architecture §1.3 and the report's "avoid" column).
-- Do not use `wgpu`/WGSL as a primary GPU path, `cudaMallocManaged`, `mlock`/`VirtualLock` of multi-gigabyte
+- Do not use `wgpu`/WGSL as a primary GPU path, host-visible or managed memory for weights on discrete GPUs, `mlock`/`VirtualLock` of multi-gigabyte
   weights by default, fraction-of-device-memory pools, or caches bounded only by a memory limit.
 - Do not spin-wait for more than tens of microseconds, use SMT siblings or efficiency cores in barrier-synchronised
   matmul pools, or let more than one thread issue work to a device.
 - Do not trust MCP annotations, rely on pattern filters as the defence against prompt injection, log prompts, or
   pass tokens through to tools.
 - Do not raise `iogpu.wired_limit_mb` or change any system setting; print the command and the risk instead.
+- Do not add CUDA, ROCm's closed components, QAIRT/GenieX, Ryzen AI software, Accelerate/BNNS, Core ML, or any
+  paid or hosted API as a dependency; the GPU path for every non-Apple GPU is Vulkan.
 - Do not present unmeasured numbers as results.
 
 ## 10. First session

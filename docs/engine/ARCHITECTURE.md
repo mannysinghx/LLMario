@@ -1,6 +1,6 @@
 # LLMario Native Inference Engine — Technical Architecture
 
-**Status:** Draft v0.1 for review · **Date:** 2026-10-08 · **Applies to:** LLMario ≥ 0.3 (beta channel first)
+**Status:** Draft v0.2 for review (v0.2, 2026-10-09: open-source-only constraint applied) · **Date:** 2026-10-08 · **Applies to:** LLMario ≥ 0.3 (beta channel first)
 **Relation to ADR 0001:** ADR 0001 ("control plane over existing engines") stays in force. This document proposes
 the native engine as a *third adapter* behind the same supervisor and gateway, and becomes ADR 0002 when accepted.
 
@@ -57,11 +57,15 @@ It is designed around four commitments that no current local engine makes togeth
    any state-changing or exfiltration-capable tool call needs human approval. Fetchers and local MCP servers run in
    an OS sandbox with an egress allowlist.
 
-Everything else — GGUF and safetensors readers, quantized kernels for CPU/Metal/CUDA/Vulkan, paged KV cache, prefix
+Everything else — GGUF and safetensors readers, quantized kernels for CPU/Metal/Vulkan, paged KV cache, prefix
 caching, continuous batching, speculative decoding — is implemented from the same MIT/Apache sources every other
 engine learned from, with the specific traps the research catalogued (uncapped buffer caches, worst-case KV
 preallocation, Windows system-memory fallback, macOS compression of unwired weights, 4-bit keys collapsing some
-models, spin-waiting threads starving the GPU) designed out rather than patched.
+models, spin-waiting threads starving the GPU) designed out rather than patched. **Only open-source technology is used** (Section 16, rule 0): every library,
+runtime, kernel toolchain and service the engine depends on is OSI-licensed; the only exceptions are the operating
+systems' own APIs (Metal, DXGI/Win32), reached through open-source crates. That rules out CUDA, Apple's Accelerate
+framework, closed NPU runtimes and paid search APIs, and it is why the single GPU path for every non-Apple GPU is
+Vulkan.
 
 The delivery plan (Section 13) has ten milestones. The first is baselines on the maintainers' own machines, because
 the one comparison the research could not find anywhere is a Rust CPU engine against llama.cpp on the same box.
@@ -92,12 +96,13 @@ issues.* The research report translates each into measurable terms, and this sec
 | # | Goal | What it means concretely |
 |---|---|---|
 | G1 | Predictable, minimal memory | Peak measured memory ≤ planned peak for every supported model and profile; planned ≤ 1.15 × measured; zero growth over an 8-hour soak; weights shared through the page cache across processes; nothing is ever paged to swap by design |
-| G2 | Bandwidth-bound decode, compute-bound prefill | Dense decode ≥ 0.6 × roofline on CPU, Metal and CUDA for 4–32B 4-bit models; CPU MoE decode ≥ 0.5 × active-bytes roofline; prefill within the measured envelope of llama.cpp on the same device (≥ 0.8× at M2 exit, ≥ 1.0× by M8) |
+| G2 | Bandwidth-bound decode, compute-bound prefill | Dense decode ≥ 0.6 × roofline on CPU, Metal and Vulkan for 4–32B 4-bit models; CPU MoE decode ≥ 0.5 × active-bytes roofline; prefill within the measured envelope of llama.cpp on the same device (≥ 0.8× at M2 exit, ≥ 1.0× by M8) |
 | G3 | Small and mid-size open models | All 37 families in `docs/MODELS.md` plus the 2026 additions in the report (dense GQA, sliding-window, MLA, Gated DeltaNet, Mamba-2, short-conv hybrids, MoE with shared experts, MXFP4/NVFP4 experts, MTP drafters) on 8/16/32/64/128 GB machines, from GGUF and safetensors files without re-quantization |
 | G4 | Internet-connected models | Tool calling for every template family in the catalog, built-in `web_search` / `web_fetch` / `retrieve` tools, an MCP client, and a Responses-shaped agent loop with budgets; safe by construction (policy gate, sandbox, SSRF guard, provenance tagging) |
 | G5 | Parallelism without resource issues | Continuous batching over N slots sharing one KV arena; tensor placement across CPU, GPU and NPU planned before load; thread pool sized to physical performance cores with bounded spinning; a single GPU-issuing thread per device; per-device byte budgets enforced by the supervisor; thermal and power adaptation; multi-device as an interface |
 | G6 | Observability | The plan, the ledger, the speed-of-light, kernel-matrix choices, speculative acceptance, preemptions and effective bandwidth are logged and exported, so that "slow and silent" becomes "slow with a reason" |
-| G7 | Platform coverage | macOS/Apple silicon (Metal) first; Linux and Windows with NVIDIA (CUDA) second; AMD/Intel/integrated GPUs (Vulkan) third; NPUs behind a delegate boundary; CPU-only everywhere |
+| G7 | Platform coverage | macOS/Apple silicon through Metal (the OS GPU API, reached only through the open-source `objc2-metal` crate) first; every other GPU (NVIDIA, AMD, Intel, integrated) through one open-standard Vulkan backend second; Intel NPUs through the open-source OpenVINO runtime; CPU-only everywhere |
+| G8 | Open-source only | Every dependency, runtime, kernel toolchain and service is OSI-licensed; no CUDA, no Accelerate/BNNS, no closed NPU runtimes, no proprietary search APIs; the build never needs Xcode's shader compiler or a vendor SDK (Section 16) |
 
 ### 1.3 Non-goals (v1)
 
@@ -139,7 +144,7 @@ benchmark numbers rot within months (Report §Decode already runs at 55–80 %).
 | Time to first token | ≤ llama.cpp + 10 % at M2 exit | same |
 | Load time (warm page cache) | ≤ 1.2 × llama.cpp mmap load | engine log |
 | Idle | after unload, engine process exits and the supervisor's ledger returns to baseline within 2 s | supervisor test |
-| Greedy fidelity | greedy 64-token outputs identical across CPU/Metal/CUDA for f16 KV, and KLD ≤ 0.01 versus the CPU f32 reference per backend | golden tests |
+| Greedy fidelity | greedy 64-token outputs identical across CPU/Metal/Vulkan for f16 KV, and KLD ≤ 0.01 versus the CPU f32 reference per backend | golden tests |
 | Tool-call parsing | 100 % of a pinned corpus of template renders per family parse to the expected calls, streaming and non-streaming | parser corpus tests |
 | Safety | SSRF corpus fully blocked; injection corpus cannot trigger a state-changing tool without an approval event | security tests |
 
@@ -277,9 +282,8 @@ All engine crates live under `crates/engine/` and are prefixed `llmario-engine-`
 | `kv` | Three cache classes, paged arena, block tables, prefix cache (hash chain), checkpoints, RAM/SSD tiers, KV quantization with rotation | `sha2` |
 | `cpu` | CPU backend: ISA dispatch, block kernels (GEMV/GEMM/dequant), attention, SSM/DeltaNet scans, MoE path, thread pool, repack cache | `rayon` is *not* used (own pool); `libc`, `windows-sys` |
 | `metal` | Metal backend (Apple silicon) | `objc2-metal` (Zlib/Apache/MIT), `objc2-foundation` |
-| `cuda` | CUDA backend | `cudarc` (Apache/MIT) with dynamic loading |
 | `vulkan` | Vulkan backend | `ash` (Apache/MIT), `shaderc`/`naga` at build time |
-| `npu` | NPU delegate trait, mock delegate, optional OpenVINO GenAI / QAIRT / Lemonade sidecar delegates behind features | vendor C APIs via FFI |
+| `npu` | NPU delegate trait, mock delegate, optional OpenVINO GenAI delegate behind a feature (the only NPU runtime with an open-source licence at the time of writing) | OpenVINO GenAI C API via FFI (Apache-2.0) |
 | `sched` | Slots, continuous batching, token budget steps, admission per request, preemption by recompute, idle policy | — |
 | `decode` | Sampling (CPU and on-device), logit processors, grammar masks, speculative decoding (n-gram, MTP, DFlash/EAGLE), greedy-equivalence checks | `llguidance` (MIT) |
 | `chat` | Jinja chat templates, per-family tool-call formats and incremental parsers, auto-parser, thinking-history policies, Responses item model and Chat Completions projection | `minijinja` (Apache-2.0) |
@@ -311,8 +315,7 @@ All engine crates live under `crates/engine/` and are prefixed `llmario-engine-`
 
 Rules that keep this free of resource issues (G5):
 
-- **Exactly one thread issues device commands** (Metal command buffers, CUDA stream launches, Vulkan queue
-  submits) per device: the inference thread. Tool and HTTP work never touches a device.
+- **Exactly one thread issues device commands** (Metal command buffers, Vulkan queue submits) per device: the inference thread. Tool and HTTP work never touches a device.
 - **The CPU pool is sized to the number of physical performance-class cores** (all performance clusters on Apple
   silicon — llama.cpp's `hw.perflevel0.physicalcpu` default undercounts the M5 Max by 3×; P-cores only on Intel
   hybrids; physical cores, never SMT siblings, on AMD/Intel desktops). The count is a plan parameter and a user
@@ -371,7 +374,7 @@ Ledger
   per device:
     weights_mapped          bytes of model files mapped (file-backed, evictable by the OS)
     weights_resident_est    sampled with mincore / QueryWorkingSetEx / vm_region (estimate, labelled as such)
-    weights_wired           bytes pinned: Metal residency sets, mlock, cudaMalloc copies
+    weights_wired           bytes pinned: Metal residency sets, mlock, device-local Vulkan allocations
     weights_private         anonymous copies: repacked tiles, in-situ-quantised tensors, dequantised scratch
     kv_arena_reserved       bytes reserved once at admission
     kv_arena_in_use         blocks in use × block bytes (+ recurrent state × sequences)
@@ -391,7 +394,7 @@ both. Prometheus gauges mirror every row.
 |---|---|---|---|---|
 | macOS | `MTLDevice.recommendedMaxWorkingSetSize` (≈2/3 of RAM below 32 GB, ≈3/4 above; community) — the GPU can wire no more; raising it needs root and the undocumented `iogpu.wired_limit_mb` sysctl, which the engine never runs itself (it prints the command and the risk) | physical RAM − OS reserve − sampled resident memory of other processes | `DispatchSource.makeMemoryPressureSource` (normal/warning/critical); `os_proc_available_memory` is not available on macOS | none from the OS; the supervisor enforces by sleep-then-kill |
 | Windows | `IDXGIAdapter3::QueryVideoMemoryInfo` local-segment `Budget` (the OS's own per-process GPU budget) or `VK_EXT_memory_budget` | `GlobalMemoryStatusEx` available minus reserve | `CreateMemoryResourceNotification` low/high; DXGI budget-change event | job object with `JOB_OBJECT_LIMIT_PROCESS_MEMORY` = planned peak + margin; `PeakProcessMemoryUsed` read back for free |
-| Linux | CUDA `cudaMemGetInfo` / `VK_EXT_memory_budget`; integrated GPUs share the host ceiling | cgroup v2 `memory.max`/`memory.high` if present, else `MemAvailable` minus reserve | PSI `some`/`full` triggers; cgroup events | the engine places itself in a child cgroup with `memory.high` = planned peak + margin where it has permission; `oom_score_adj` raised so the engine dies before the desktop session |
+| Linux | `VK_EXT_memory_budget`; integrated GPUs share the host ceiling | cgroup v2 `memory.max`/`memory.high` if present, else `MemAvailable` minus reserve | PSI `some`/`full` triggers; cgroup events | the engine places itself in a child cgroup with `memory.high` = planned peak + margin where it has permission; `oom_score_adj` raised so the engine dies before the desktop session |
 
 Headroom per device = max(1 GiB, 10 % of the ceiling) by default (llama.cpp's `--fit-target` of 1,024 MiB and
 Ollama's 80 % rule bracket this), plus a user-visible "keep N GB free for other apps" setting that LLMario already
@@ -445,7 +448,7 @@ returns it.
 | Weights (default) | read-only shared `mmap` of the model file (`PROT_READ, MAP_SHARED`; `FILE_MAP_READ` on Windows); bounded prefault of the tensors the plan marks hot (`madvise(MADV_WILLNEED)` / `MADV_POPULATE_READ` on Linux ≥ 5.14, `PrefetchVirtualMemory` on Windows); on macOS Metal buffers are created over the mapping with `newBufferWithBytesNoCopy` in shared storage mode (page-aligned views, each ≤ `maxBufferLength`) and kept resident with `MTLResidencySet`s | one mapping per file, shared through the page cache with any other process using the same file; no private copies unless the plan says `private`; `mlock`/`VirtualLock` only for explicitly marked latency-critical regions and only via `MLOCK_ONFAULT` where available |
 | Weights (cold GPU load, discrete GPU) | direct I/O (`O_DIRECT`/`FILE_FLAG_NO_BUFFERING`, io_uring on Linux) straight into device buffers | used only when the plan places a tensor group on a discrete device and the file is cold; measured 10× faster cold loads on NVMe, but slower warm loads on Macs, so never the default on unified memory (Report §Memory governance) |
 | Weights (repacked / in-situ quantised) | a derived cache file under `$LLMARIO_HOME/cache/packed/<model-digest>/<layout-id>.bin`, itself mmapped | generated in the background after first load, only for tensors the prefill GEMM path uses; deletable at any time; counted as `repack_cache_mapped`; never produced as anonymous memory at load (llama.cpp's load-time repack costs 17 → 77 s on Phi-4 and defeats page-cache sharing) |
-| KV arena | one reservation per device at admission: `MTLHeap` (placement heap) on Metal, `cuMemAddressReserve` + physical pages mapped in large fixed chunks on CUDA (ggml-cuda's 32 GB VA reservation pattern), one anonymous mapping (`MADV_HUGEPAGE` where available) on CPU | carved into fixed blocks (Section 8.2); freed by index; never grown by reallocation; recurrent state in a separate pool with its own block size |
+| KV arena | one reservation per device at admission: `MTLHeap` (placement heap) on Metal, one device-local `VkDeviceMemory` block per plan on Vulkan, sub-allocated by the engine (sparse binding to grow in fixed chunks where the device supports it; ggml-cuda's reserve-once-grow-in-chunks pattern), one anonymous mapping (`MADV_HUGEPAGE` where available) on CPU | carved into fixed blocks (Section 8.2); freed by index; never grown by reallocation; recurrent state in a separate pool with its own block size |
 | Scratch / activations | static per-graph plan with ggml-alloc-style lifetimes (best-fit over free blocks, in-place reuse only for a whitelisted op set, inputs never overwritten, outputs never freed), reserved once per graph shape from the same heap/arena family | the plan's scratch number is exact because it is the allocator's own simulation |
 | Caches | size-bucketed buffer cache with an explicit byte limit from the plan, purged on pressure; prompt cache (RAM) with a byte limit; grammar cache with an entry limit | nothing is "bounded only by the memory limit" |
 | Small objects | `mimalloc` (MIT) as the global allocator for metadata, strings, JSON, tokens | never for weights, KV or scratch, which bypass `malloc` entirely so they can be aligned, locked and accounted individually |
@@ -462,10 +465,7 @@ speculation and extra slots; *critical* or Low Power Mode → concurrency 1, no 
 App Sandbox (for a future App Store build) is compatible with everything here except raising the wired limit.
 
 **Windows.** DXGI budget polled and subscribed; if `CurrentUsage` approaches `Budget` the engine treats it as
-*warning*. **Sysmem fallback detection:** NVIDIA's driver (since 536.40) lets `cudaMalloc` succeed into system RAM
-and cannot report it; the engine detects it by comparing `cudaMemGetInfo` with the plan and by a per-step time
-regression check (a step that becomes ≥ 3× slower while VRAM reads as full), then logs the exact Control Panel
-setting ("Prefer No Sysmem Fallback") and refuses to admit more. The supervisor wraps the engine in a job object
+*warning*. **System-memory spill detection:** NVIDIA's Windows driver (since 536.40) silently lets GPU allocations spill into system RAM at a 5–10× slowdown (measured for CUDA; the Vulkan-specific behaviour is unverified), so the engine never allocates beyond the `VK_EXT_memory_budget`/DXGI budget, samples shared-GPU-memory growth into the ledger, runs a per-step time regression check (a step that becomes ≥ 3× slower while the local heap reads as full), then logs the driver setting that disables the spill ("Prefer No Sysmem Fallback") and refuses to admit more. The supervisor wraps the engine in a job object
 with a memory limit equal to the plan plus margin, reads `PeakProcessMemoryUsed` after load, and sets EcoQoS when
 the engine is backgrounded.
 
@@ -532,7 +532,7 @@ The engine never writes a distribution format. It writes one derived artefact: t
 |---|---|---|
 | P0 (M1) | F32, F16, BF16, Q8_0, Q4_0, Q4_K, Q5_K, Q6_K, Q8_K (activations) | the installed base: every mainstream GGUF and every `output.weight` (Q6_K) |
 | P1 (M3) | Q4_1, Q5_0, Q5_1, Q2_K, Q3_K, IQ4_NL, IQ4_XS | UD-Q3/Q4 recipes, bartowski IQ4_XS files |
-| P2 (M4) | MXFP4 (gpt-oss, `MXFP4_MOE` recipes), NVFP4 | gpt-oss and Blackwell-native files; prefill on sm_120 tensor cores |
+| P2 (M4) | MXFP4 (gpt-oss, `MXFP4_MOE` recipes), NVFP4 | gpt-oss and Blackwell-native files; native FP4 tensor-core prefill is CUDA-only today, so under Vulkan these types run through the dequant-to-int8/f16 paths (decode is unaffected: bandwidth-bound) |
 | P3 (M4) | IQ3_S/XXS, IQ2_XXS/XS/S/M, IQ1_S/M (codebook grids) | every Unsloth low-bit file needs them; slower decode (5–10 %) is acceptable |
 | P4 (M9) | TQ1_0, TQ2_0 | ternary models only if the catalog adopts them |
 | Parallel track (M3) | MLX affine 2/3/4/5/6/8-bit, group 32/64/128 | Apple ecosystem files already on users' disks |
@@ -569,7 +569,7 @@ arguments stay JSON objects internally.
 ```text
 open files → parse headers → ArchSpec → plan (or validate the supervisor's plan hash)
   → map files (mmap; direct I/O for cold discrete-GPU groups)
-  → create device views (Metal: shared-mode buffers over the mapping; CUDA: copies into the VMM arena;
+  → create device views (Metal: shared-mode buffers over the mapping; Vulkan on discrete GPUs: copies into the device-local arena;
     CPU: the mapping itself) → bounded prefault of hot tensors
   → reserve KV arena and scratch from the plan → build and compile graphs for each shape bucket
   → warm-up (one tiny prefill + one decode step; compiles pipeline states, probes Metal 4 tensor path)
@@ -604,8 +604,7 @@ pitfalls).
 ### 7.1 Graph IR and execution
 
 - **Static graphs per shape bucket.** The graph for a decode step and for each prefill chunk size is built once,
-  planned once (buffer lifetimes), and replayed with new KV positions and block tables. On CUDA this is a captured
-  graph with the warm-up / compare-node-properties / update-or-reinstantiate strategy ggml uses; on Metal one
+  planned once (buffer lifetimes), and replayed with new KV positions and block tables. On Vulkan this is a pre-recorded command buffer per shape bucket, re-recorded only when node properties change (the warm-up / compare / update idea ggml uses for CUDA graphs); on Metal one
   command buffer per step with pre-built pipeline states; on CPU a pre-scheduled op list.
 - **Fusion passes** (applied before planning): RMSNorm + residual + scale; RoPE + write-to-KV; gate/up GLU for
   dense and expert matmuls; top-k routing (softmax/sigmoid + top-k + renormalise); MoE weighted reduction; SSM
@@ -668,11 +667,15 @@ for mixed SME2/NEON execution (static splits lost up to 2×); bounded spin then 
 NUMA: first-touch allocation per node, per-node thread groups, no cross-node repack (interleaved repack regressed
 7.5–15 % on a dual Xeon).
 
-**Optional accelerators.** Accelerate `cblas`/BNNS for fp32/fp16 prefill GEMM on macOS (routes to AMX on M1–M3 and
-SME on M4+, as MLX does); KleidiAI SME2 int4 kernels through FFI; T-MAC/bitnet-style LUT kernels only if ternary
-models enter the catalog.
+**Optional accelerators.** KleidiAI (Apache-2.0) SME2 int4 kernels through FFI on M4+ and Snapdragon X, and the engine's own `asm!` SME2 GEMM where KleidiAI has no kernel; T-MAC/bitnet-style LUT kernels (MIT) only if ternary models enter the catalog. Apple's Accelerate/BNNS framework is closed source and is not used, so the undocumented AMX unit on M1–M3 is not reached; SME on M4+ is reachable from open code, which is where the measured prefill gains are anyway.
 
 ### 7.4 Metal backend (phase 1 GPU)
+
+Metal is the operating system's GPU API, not a bundled library: the engine reaches it only through the open-source
+`objc2-metal` crate and shader source it owns, and nothing proprietary is linked or required at build time. The
+all-open-stack alternative on macOS is the Vulkan backend over Mesa's KosmicKrisp (MIT, macOS 26+) or MoltenVK
+(Apache-2.0), measured 10–20 % slower on the one cross-API data point; it is kept as a test path and as the fallback
+if the maintainers decide not to target Metal at all (Section 15).
 
 - **Buffers.** Weights: `newBufferWithBytesNoCopy` over the mmap in `MTLResourceStorageModeShared`, page-aligned
   views each ≤ `maxBufferLength`, overlapping views so every tensor fits in one view, at most 64 buffers (ggml's
@@ -680,8 +683,7 @@ models enter the catalog.
   keep-alive thread (5 ms while active, 3-minute counter), released on sleep.
 - **Budget.** `recommendedMaxWorkingSetSize`; opt-in flag to plan against a raised `iogpu.wired_limit_mb` with the
   command and the swap risk printed; `currentAllocatedSize` sampled into the ledger.
-- **Kernels** (`kernels/metal/*.metal`, compiled to a `.metallib` in `build.rs` with `xcrun metal` when available,
-  else runtime `newLibraryWithSource` from the embedded source; `MTLCompileOptions.languageVersion` set explicitly —
+- **Kernels** (`kernels/metal/*.metal`, compiled at runtime by the OS Metal compiler through `newLibraryWithSource` from the embedded source and cached per OS build; an optional `.metallib` precompile exists for release builds but the build never requires Xcode; `MTLCompileOptions.languageVersion` set explicitly —
   the Metal 4 tensor path was silently inert in llama.cpp until this was fixed):
   bandwidth-tuned quantised GEMV per block type (decode); simdgroup-matrix GEMM (prefill); few-row GEMM for 2–16
   rows (speculative verification, small batches, MoE expert batches — the kernels that turned MTP from a 12–45 %
@@ -697,22 +699,18 @@ models enter the catalog.
 - **Binding.** `objc2-metal` 0.3.x (the `metal` crate is deprecated). Resource and synchronisation calls are
   `unsafe`; they are wrapped in a small safe layer with debug assertions.
 
-### 7.5 CUDA backend (phase 2 GPU)
+### 7.5 NVIDIA, AMD and Intel GPUs: Vulkan only (no CUDA)
 
-- `cudarc` with dynamic loading (no toolkit required at build time); kernels in CUDA C++ compiled by NVRTC at first
-  use into a PTX/cubin cache keyed by (kernel source hash, `sm_XX`, driver version); optional build-time `nvcc`
-  path for CI.
-- Memory: VMM arena per device (`cuMemAddressReserve` once, `cuMemCreate`/`cuMemMap` in granularity-sized chunks);
-  no `cudaMallocManaged` even on unified-memory boards (measured 10 % slower on DGX Spark); pinned host staging for
-  host-resident experts; sysmem-fallback detection (Section 5.5).
-- Execution: CUDA graphs captured after warm-up with ggml's compare-and-update strategy; graphs disabled for steps
-  that need a stream sync (MoE `mul_mat_id` with host experts); MMVQ GEMV and int8 MMQ GEMM for quantised types,
-  cuBLASLt for dense f16/bf16; FP4 (NVFP4/MXFP4) matmuls on sm_120 tensor cores; own FA2-style attention with block
-  tables; FlashInfer considered later for long-context prefill.
-- Windows: WDDM shared-memory growth sampled into the ledger; job-object enforcement; `Prefer No Sysmem Fallback`
-  guidance printed when fallback is detected.
+CUDA is a proprietary SDK and is excluded by the open-source-only rule. Every non-Apple GPU is served by the
+Vulkan backend below, which runs on the vendor driver the OS ships or on open-source drivers (Mesa RADV, ANV, NVK)
+and needs no vendor toolkit at build time. What this costs, with the measured basis: on an RTX 5090 llama.cpp's
+Vulkan backend reaches ~79 % of CUDA prefill and ~91 % of CUDA decode (community-measured); native FP4
+tensor-core prefill (+43–68 % on NVFP4 files) and CUDA-graph launch savings (≤ 1.2×) are not available, and the
+hot-expert GPU cache was measured under CUDA but the technique is backend-neutral. Decode, the part users feel at
+batch 1, is bandwidth-bound and therefore nearly unaffected. ROCm/HIP (open source, MIT/Apache) is a possible
+later prefill path for AMD if a measurement shows ≥ 1.2× over Vulkan on the same device; it is not a v1 backend.
 
-### 7.6 Vulkan backend (phase 3 GPU, universal fallback)
+### 7.6 Vulkan backend (phase 2 GPU, the single path for every non-Apple GPU)
 
 - `ash` (not `wgpu`, which hides cooperative matrices and f16/int8 dot features); GLSL compiled to SPIR-V at build
   time; runtime probing of `VK_KHR_cooperative_matrix`, `VK_NV_cooperative_matrix2`,
@@ -739,9 +737,11 @@ pub trait NpuDelegate: Send {
 }
 ```
 
-Implementations wrap vendor runtimes (OpenVINO GenAI C API for Intel NPUs; QAIRT/GenieX or llama.cpp's Hexagon
-backend for Qualcomm; Lemonade/FastFlowLM as an HTTP sidecar for AMD XDNA2) behind cargo features; v1 ships the
-trait, a mock, and OpenVINO. The delegate is a budgeted, one-model-at-a-time device used, in priority order, for
+Implementations wrap open-source runtimes only: OpenVINO GenAI (Apache-2.0; Intel NPUs, with Intel's MIT Linux NPU
+driver) ships in v1 behind a cargo feature. Qualcomm Hexagon (QAIRT/GenieX: closed binaries, redistribution terms
+unverified), AMD XDNA2 (Ryzen AI software and FastFlowLM kernels are closed; the open mlir-aie/IRON toolchain still
+needs a licensed `xchesscc`) and the Apple Neural Engine (Core ML only) are not targeted until an open-source runtime
+exists; the delegate trait is where they would plug in. The delegate is a budgeted, one-model-at-a-time device used, in priority order, for
 embeddings, ≤ 2B draft models, prefill offload of 4–8B models on laptops, and full decode only for ≤ 2B assistants
 in battery mode (measured 8B decode on NPUs is 8–12 tok/s against 2–4× that on the same machine's iGPU). The
 Apple Neural Engine is not targeted (Core ML only, 32 MB SRAM working set).
@@ -756,20 +756,20 @@ reads the cache to choose per-op backends and to compute the speed-of-light. Use
 
 ### 7.9 Kernel authoring and testing rules
 
-- Kernels live under `crates/engine/kernels/{cpu,metal,cuda,vulkan}/`; each has a scalar Rust reference in
+- Kernels live under `crates/engine/kernels/{cpu,metal,vulkan}/`; each has a scalar Rust reference in
   `testkit`; every (kernel × dtype × shape class) is tested against the reference with per-dtype tolerances, plus
   property tests on random block data and fuzzing of the block decoders.
 - Kernel source hashes feed every cache key (PTX cache, repack cache, autotune).
-- No Rust-native GPU kernel language in v1 (CubeCL, rust-gpu, cuda-oxide are tracked, not depended on).
+- No Rust-native GPU kernel language in v1 (CubeCL, rust-gpu are tracked, not depended on).
 - Unsafe code is confined to `cpu::simd`, backend FFI layers and the mmap layer, each with a `SAFETY` comment and a
   Miri/ASan job in CI for the CPU paths.
 
 **Decisions.** Static per-shape graphs with explicit lifetimes; ops run where their bytes live; int8-dot CPU kernels
-with native-layout GEMV and cached interleaved GEMM; rewritten MoE path; Metal → CUDA → Vulkan order; NPUs behind a
+with native-layout GEMV and cached interleaved GEMM; rewritten MoE path; Metal → Vulkan order with no CUDA (proprietary); NPUs behind a
 delegate; native kernel languages; autotune cached per device.
 **Evidence.** Report §CPU execution (ISA matrix, repack gains, barrier losses, MoE shortfall, Rust reachability),
-§GPU and NPU backends (Metal buffer/residency/tensor-path structure, BaseRT decode/prefill split, CUDA graph and
-VMM patterns, Vulkan parity and bugs, NPU measurements, kernel-authoring options).
+§GPU and NPU backends (Metal buffer/residency/tensor-path structure, BaseRT decode/prefill split, graph-replay and
+arena patterns, Vulkan parity and bugs, NPU measurements, kernel-authoring options).
 
 ---
 
@@ -791,7 +791,7 @@ table, not a copy. Appendix A has the per-token numbers for 13 catalog models.
 ### 8.2 Paged arena
 
 - Reserved once per device at admission (Section 5.4); carved into fixed blocks of 32 tokens (CPU, Metal) or 64
-  (CUDA), configurable, always ≥ the attention kernel's tile; each block holds K and V (or latent) for one layer
+  (Vulkan on discrete GPUs), configurable, always ≥ the attention kernel's tile; each block holds K and V (or latent) for one layer
   group; per-sequence block tables per layer group; reference counts for sharing; an LRU free queue; freed by
   index; no defragmentation needed because blocks are fixed-size.
 - Layer groups: layers with identical cache class and shape share one block pool (vLLM's hybrid manager idea);
@@ -808,7 +808,7 @@ table, not a copy. Appendix A has the per-token numbers for 13 catalog models.
 | q8_0 keys and values | default on 8/16 GB machines and whenever the ladder reaches step 4 | near-lossless (Qwen2.5-7B PPL 7.9605 → 7.9940, KLD 0.0018; measured) |
 | q8_0 keys, q4_0 values | allowed by the ladder | values are nearly free at 4 bits (1 of 500 ARC answers changed) |
 | q4_0 keys | never automatic | keys collapse some models (Qwen2.5-7B PPL → 1,561); opt-in only, and the engine runs a 30-second KLD/answer-churn check against q8_0 on load and refuses if it fails |
-| FP8 keys/values | M6 on tensor-core GPUs | vLLM's finding: "FP8 is the best default" |
+| FP8 keys/values | deferred: needs 8-bit float storage in the Vulkan driver (unverified) | vLLM's finding: "FP8 is the best default" |
 | int8 recurrent state | deferred | SGLang/Quamba2 do it; fp32 until measured |
 
 Block Hadamard rotation (64-wide) is applied to Q, K and V before caching on all models except MLA (llama.cpp's
@@ -901,7 +901,7 @@ research vs. shipped tiering, CVE and inversion results, RoPE interface).
 | CPU matmul/GEMV | row partitions across the P-core pool; (expert, chunk) work stealing for MoE; global chunk queue for prefill | pool size = physical performance cores; bounded spin; parked when a GPU owns the step |
 | CPU ↔ GPU during MoE decode | host experts computed on CPU while the GPU runs attention of the *same* step only where the graph exposes independence (KTransformers' expert deferral, up to 1.45×); otherwise sequential | explicit dependency edges; the inference thread remains the only issuer |
 | GPU streams | independent graph branches (Q/K/V, parallel FFN) on 2–3 streams when the autotune shows a gain | per-device allow list from the autotune (regressed on GB10); explicit buffer lifetimes prevent the allocator-reuse race |
-| Launch overhead | CUDA graphs; Metal single command buffer per step; pre-built pipeline states | graphs disabled around host-sync ops |
+| Launch overhead | pre-recorded Vulkan command buffers; Metal single command buffer per step; pre-built pipeline states | graphs disabled around host-sync ops |
 | Transfers | double-buffered, per-layer batched activation transfers for host-resident experts | one transfer per layer, counted in the plan's scratch |
 
 ### 9.4 Placement across devices
@@ -929,7 +929,7 @@ per layer at batch 1 are the same "sequential and latency-bound" regime that cos
 ```rust
 pub trait Device: Send + Sync {
     fn id(&self) -> DeviceId;
-    fn kind(&self) -> DeviceKind;               // Cpu, Metal, Cuda, Vulkan, Npu, Remote
+    fn kind(&self) -> DeviceKind;               // Cpu, Metal, Vulkan, Npu, Remote
     fn memory(&self) -> MemoryDescriptor;       // ceiling, headroom, wired cap, page size
     fn bandwidth(&self) -> BandwidthDescriptor; // measured GB/s (autotune), host<->device GB/s
     fn latency(&self) -> LatencyDescriptor;     // per-dispatch and per-transfer microseconds (autotune)
@@ -1027,7 +1027,7 @@ and counted in `runtime_fixed`. XGrammar-2 structural tags are a later option be
 
 | Tool | Design |
 |---|---|
-| `web_search` | provider adapters behind one result schema (title, url, snippet, published, source): self-hosted SearXNG (JSON format must be enabled on the instance), Brave Search API (key; $5/1k requests with $5 monthly credit; results not stored beyond the plan's storage rights), Exa (key; $4/1k search, $1/1k contents), Ollama hosted search (account; ≤ 10 results). Default: none configured → tool absent; the desktop app offers a setup panel. Max 10 results, each truncated to 8,000 characters before windowing. |
+| `web_search` | provider adapters behind one result schema (title, url, snippet, published, source): self-hosted SearXNG (AGPL-3.0, called over HTTP as a service, so its licence does not reach the engine; the JSON format must be enabled on the instance) and a generic JSON/OpenSearch endpoint adapter for any other self-hosted engine (for example YaCy, or a Meilisearch/OpenSearch index over the user's own documents). Proprietary hosted APIs (Brave, Exa, Ollama's hosted search) are not integrated; a user who wants one can expose it through an MCP server of their own. Default: none configured → tool absent; the desktop app offers a SearXNG setup panel (instance URL). Max 10 results, each truncated to 8,000 characters before windowing. |
 | `web_fetch` | SSRF guard → fetch → extract → page model. Guard: `http`/`https` on 80/443 (plus user-allowed ports); block RFC1918, loopback, link-local, CGNAT (100.64/10), cloud-metadata ranges, `::1`, `fc00::/7`, `fe80::/10` and IPv4-mapped IPv6 forms; resolve, validate every address, connect only to validated addresses (DNS pinning), re-validate every redirect; text content types only; 600 KB cap and 20 s deadline by default; `texting_robots` for `robots.txt` (on by default, user-overridable); per-provider rate limits. Extract: `dom_smoothie` (Readability) → `htmd` (Markdown); strip hidden/off-screen/zero-font/transparent text and invisible Unicode. Page model (gpt-oss `simple_browser`): 80-column wrap, numbered `L{i}:` lines, 1,024-token view windows, `find` within page, link ids `【id†title†domain】`, per-session page cache, citations `【cursor†L{a}-L{b}】` rewritten to `url_citation` annotations, "do not quote more than 10 words" instruction in the tool description. Headless Chromium (`chromiumoxide`) for SPAs is deferred (enlarges the attack surface). |
 | `retrieve` | a local index over fetched pages and user-added documents: Markdown-aware chunks of 300–800 tokens with URL/title/heading path prepended (contextual retrieval), embeddings from the engine's own GGUF path (Qwen3-Embedding-0.6B, EmbeddingGemma 2 270M; Apache-2.0) or `fastembed-rs`, hybrid BM25 + vector search in `sqlite-vec` under the app directory, optional reranker. |
 | `code_exec` | not in v1 (M10 candidate; requires the full sandbox story and its own policy class) |
@@ -1145,7 +1145,7 @@ The gateway's allowlist (`crates/api/validate.rs`) is extended for the new field
 | Tokenizers and templates | round-trip corpora per family against llama.cpp's tokenizer output; rendered prompts against `apply_chat_template` fixtures pinned to template hashes |
 | Parsers and grammars | the eight-family corpus (streaming at every byte boundary and whole); fuzz: tokens sampled under a grammar always decode to schema-valid JSON; `tool_choice` enforcement |
 | Planner and allocator | determinism (same inputs → same plan hash); simulated sizes equal real allocation sizes; ladder steps reproduce documented fixtures; refusal messages name the limiting device |
-| Golden fidelity | per family: greedy 64-token outputs identical across CPU/Metal/CUDA at f16 KV; KLD ≤ 0.01 vs the CPU f32 reference per backend; the `(1+w)` norm, sinks, MLA, GDN/Mamba state, sliding-window and K=V paths each have a dedicated fixture |
+| Golden fidelity | per family: greedy 64-token outputs identical across CPU/Metal/Vulkan at f16 KV; KLD ≤ 0.01 vs the CPU f32 reference per backend; the `(1+w)` norm, sinks, MLA, GDN/Mamba state, sliding-window and K=V paths each have a dedicated fixture |
 | Memory | plan bound and tightness for every model in the fit matrix (CPU small models in CI; the Mac suite before release); 8-hour soak with < 1 % drift; sleep/wake returns to baseline; residency keep-alive measured (no idle cliff) |
 | Isolation | multi-slot cross-contamination test for recurrent-state models (the bug class that yanked mlx-lm 0.31.0 and llama.cpp #29002); salted prefix cache never shares across API keys; checkpoint restore equals recompute |
 | Speculation | greedy equivalence on the fixture set; acceptance auto-disable thresholds |
@@ -1170,15 +1170,15 @@ report under `benchmarks/results/` and an entry in `docs/OPS_LOG.md` for anythin
 | M3 | KV subsystem, hybrids, multi-slot, safetensors | paged arena with three cache classes; prefix cache; checkpoints and RAM tier; KV q8_0/q4_0 with rotation and the 4-bit-key guard; 4/16-slot continuous batching with retraction; Gated DeltaNet, Mamba-2, gated short-conv blocks; sliding-window, K=V, per-layer embeddings, soft-capping; safetensors BF16 (ISQ) and MLX affine reader; P1 block types | Qwen3.5 0.8B–9B, Qwen3.6-27B, Qwen3.8-27B, Ornith 1.5 9B, Gemma 4 E2B/E4B/12B/31B, LFM2.5 1.2B/2.6B, Granite 4.0-H Small, Nemotron 3 Nano (text), an MLX 4-bit Qwen3.5-9B | recurrent-state isolation tests pass under 16-slot batching; 4-slot aggregate ≥ llama.cpp `balanced`; Gemma 4 12B at 128K within plan on a 32 GB budget; greedy match vs mlx-lm on the MLX fixture; prefix-cache hit path measured | XL |
 | M4 | MoE, placement and the degradation ladder | router variants, shared experts, grouped expert GEMM; MXFP4/NVFP4 and I-quant types; the CPU expert path; host/device placement planner with per-tensor overrides; ladder steps 5–6 end to end; MLA absorbed cache; AWQ/GPTQ repack-at-load | gpt-oss-20b, Qwen3.6-35B-A3B, Qwen3 Coder 30B-A3B, Gemma 4 26B-A4B, GLM-4.7-Flash, LFM2.5-8B-A1B, Nemotron 3.5 Lightning, gpt-oss-120b on 64 GB via the ladder | CPU MoE decode ≥ 0.5 × active-bytes roofline (x86 runner and M4 Max CPU); gpt-oss-20b on Metal ≥ 0.9 × llama.cpp; ladder fixtures reproduce documented refusals; plan bound on every model | XL |
 | M5 | Tools and internet | Responses API and Chat Completions tools; eight parser families + auto-parser; `llguidance`; MCP host (`rmcp`); `web_search`/`web_fetch`/`retrieve`; policy gate; sandbox + egress proxy on all three OSes; desktop *Web access* setting, approval dialog, MCP panel; audit; `THREAT_MODEL.md` update | Qwen3.5-9B, Gemma 4 12B, gpt-oss-20b, GLM-4.7-Flash, Ministral 3 14B, Granite 4.2 8B, LFM2.5-2.6B as tool-calling fixtures | parser corpus 100 %; grammar fuzz clean; SSRF and injection suites pass; an end-to-end search+fetch+answer run on Qwen3.5-9B with citations; approval flow exercised from the desktop app and from the API | L |
-| M6 | CUDA backend | `cudarc` + NVRTC cache; VMM arena; CUDA graphs; MMVQ/MMQ; block-table attention; NVFP4/MXFP4 on sm_120; hot-expert GPU cache; sysmem-fallback detection; Windows job objects and EcoQoS. **Needs an NVIDIA machine** (Linux and Windows), which LLMario does not have validated today | the M1–M4 sets | decode ≥ 0.9 × llama.cpp CUDA; prefill ≥ 0.8 ×; plan bound including WDDM shared-memory growth; 8-hour soak on Windows; hot-expert cache ≥ 1.5 × on a host-offloaded MoE | L |
-| M7 | Vulkan backend and NPU delegate | `ash` path with coopmat probing, deny list, self-test, autotune; OpenVINO delegate (embeddings, prefill offload, ≤ 2B decode). **Needs a Strix Halo or Intel Arc machine and an Intel NPU laptop** for validation | the M1 and M4 sets on Vulkan; Qwen3.5-0.8B/2B and an embedding model on the NPU | ≥ 0.85 × llama.cpp Vulkan on the same device; self-test catches a deliberately corrupted kernel; delegate passes embedding and ≤ 2B decode tests within its budget | M |
-| M8 | Speculative decoding and Metal 4 tensor path | n-gram lookup; MTP heads (side-car and in-file); DFlash2/EAGLE-3 drafter loading; few-row GEMM on all backends; greedy-equivalence; Metal 4 `matmul2d` path with test-compile probe (**needs an M5-class Mac**) | Qwen3.8-27B (+ `mtp-` side-car), Gemma 4 31B (+ drafter), Qwen3.5-9B | ≥ +40 % decode on Qwen3.8-27B with MTP on Metal and CUDA; zero regression with speculation off; greedy equivalence on fixtures; prefill ≥ 1.0 × llama.cpp on the M5 machine with the tensor path | M |
+| M6 | Vulkan backend (NVIDIA, AMD, Intel, integrated) | `ash` path with GLSL→SPIR-V at build time; KHR/NV cooperative-matrix and integer-dot-product probing with scalar fallbacks; per-device deny list; self-test; autotune; device-local arena; pre-recorded command buffers; block-table attention; hot-expert GPU cache; Windows DXGI budget, job objects and EcoQoS; system-memory spill detection. **Needs an NVIDIA or AMD discrete-GPU machine** (Linux and Windows), which LLMario does not have validated today | the M1–M4 sets | decode ≥ 0.9 × llama.cpp Vulkan and ≥ 0.8 × llama.cpp CUDA on the same NVIDIA device; prefill ≥ 0.8 × llama.cpp Vulkan; plan bound including WDDM shared-memory growth; 8-hour soak on Windows; hot-expert cache ≥ 1.5 × on a host-offloaded MoE | L |
+| M7 | NPU delegate and wider GPU validation | OpenVINO GenAI delegate (embeddings, prefill offload, ≤ 2B decode) on Intel NPUs; Vulkan validation on Strix Halo, Intel Arc and integrated GPUs; an optional open-source ROCm prefill path only if measured ≥ 1.2 × over Vulkan on the same AMD device. **Needs a Strix Halo or Intel Arc machine and an Intel NPU laptop** | the M1 and M4 sets on Vulkan; Qwen3.5-0.8B/2B and an embedding model on the NPU | ≥ 0.85 × llama.cpp Vulkan on each device; self-test catches a deliberately corrupted kernel; delegate passes embedding and ≤ 2B decode tests within its budget | M |
+| M8 | Speculative decoding and Metal 4 tensor path | n-gram lookup; MTP heads (side-car and in-file); DFlash2/EAGLE-3 drafter loading; few-row GEMM on all backends; greedy-equivalence; Metal 4 `matmul2d` path with test-compile probe (**needs an M5-class Mac**) | Qwen3.8-27B (+ `mtp-` side-car), Gemma 4 31B (+ drafter), Qwen3.5-9B | ≥ +40 % decode on Qwen3.8-27B with MTP on Metal and Vulkan; zero regression with speculation off; greedy equivalence on fixtures; prefill ≥ 1.0 × llama.cpp on the M5 machine with the tensor path | M |
 | M9 | Hardening and beta release | LoRA loading; `mmproj` recognition (vision itself deferred); SSD KV tier; P4 types; catalog licence flags; capability report in `doctor`; ADR 0002; docs; soak on all platforms; security review; beta channel release per `llmario-beta-branch` conventions | the full catalog | every target in 1.5 met on the validated machines; beta release notes published | M |
 
 **Later (M10+).** Vision and audio encoders; `code_exec` sandbox; multi-device transports; XGrammar-2 structural
 tags; overlap scheduler; int8 recurrent state; FP8 KV; radix-tree prefix cache; headless-browser fetch.
 
-**Hardware the plan assumes.** The M4 Max 64 GB (have); an NVIDIA machine with Linux and Windows (M6); a Strix Halo
+**Hardware the plan assumes.** The M4 Max 64 GB (have); an NVIDIA or AMD discrete-GPU machine with Linux and Windows (M6); a Strix Halo
 or Intel Arc box and an Intel NPU laptop (M7); an M5-class Mac (M8); memory-tier tests on 8 GB and 16 GB Macs or,
 until then, the existing `--memory-limit-gb` emulation.
 
@@ -1202,9 +1202,9 @@ choice, which is the point of the layering.
 | macOS wired cap below "fits in RAM" | medium | thrash | plan against `recommendedMaxWorkingSetSize`; opt-in raise with explicit risk text; never silent |
 | Licence contamination from GPL/NC references | medium | legal | Section 16 policy; `cargo deny` (`deny.toml` exists) with an allowlist; clean-room rule for flagged methods; NOTICE propagation |
 | Tool-use security incidents (injection → exfiltration) | medium | user harm | Rule-of-Two gate default; two-layer sandbox; red-team corpus in CI; conservative default profile (search + fetch only) |
-| Provider terms (Brave storage rights, SearXNG public instances) | low | compliance | no persistence of provider results beyond the session; user-supplied instances/keys; documented terms |
+| Search provider availability (public SearXNG instances disable JSON output; rate limits) | low | feature gaps | user-supplied self-hosted instance; the generic endpoint adapter; no persistence of results beyond the session |
 | Scope creep | high | schedule | milestone exit criteria; the "later" list; the avoid column of Report §Adopt first, defer, avoid |
-| Unvalidated platforms (Linux/CUDA, Windows GPU, NPUs) | high | coverage claims | the support matrix (`docs/support-matrix.toml`) only claims what was measured; hardware acquisition is called out per milestone |
+| Unvalidated platforms (Linux and Windows GPUs, NPUs) | high | coverage claims | the support matrix (`docs/support-matrix.toml`) only claims what was measured; hardware acquisition is called out per milestone |
 | Benchmark rot | certain | comparisons | every number carries a version; baselines re-measured per milestone on the same machine |
 
 ---
@@ -1220,6 +1220,7 @@ choice, which is the point of the layering.
 | Approval UX for API clients without a UI | reject by default vs. queue with timeout | queue the `mcp_approval_request` with a 60-second timeout then reject; a per-key "auto-approve read-only" setting |
 | Telemetry | none (current) vs opt-in local-only stats | keep none; `/metrics` stays local |
 | Raising `iogpu.wired_limit_mb` | never vs print command vs run with sudo | print the command and the risk; never run it |
+| Metal vs an all-open Vulkan stack on macOS | Metal through `objc2-metal` (the OS API, open-source bindings) vs Vulkan over Mesa KosmicKrisp/MoltenVK only | Metal: it is the OS API reached through open-source code only, and 10–20 % faster on the one data point; keep Vulkan-on-macOS as a test target and fallback |
 | Safetensors priority vs GGUF-only until M4 | as planned (M3) vs later | as planned: Apple users have MLX folders on disk already |
 | Gemma 4 E2B/E4B licence label in the catalog | "Gemma Terms of Use" (current) vs Apache-2.0 (Hub tag and tech report) | recheck and correct the catalog (flagged by the research) |
 | Catalog flags for non-OSI licences | add a "restricted" badge | add it: Flash-Next (qwen-community-1.0), Nemotron 3.5 (OpenMDW-1.1), LFM2.5 (LFM Open License), Llama (community), Falcon-H1, MiniMax, Kimi |
@@ -1228,15 +1229,21 @@ choice, which is the point of the layering.
 
 ## 16. Licensing policy
 
+0. **Open-source only.** Every library, runtime, kernel toolchain and service the engine builds against or calls at
+   runtime must be open source under an OSI-approved licence. The only exceptions are the operating systems' own
+   APIs and the GPU drivers the OS ships (Metal, DXGI/Win32, Vulkan loaders), reached through open-source crates.
+   Consequences: no CUDA, no Apple Accelerate/BNNS, no closed NPU runtimes (QAIRT/GenieX, Ryzen AI software,
+   FastFlowLM kernels, Core ML), no proprietary search APIs; the build never requires Xcode's shader compiler or a
+   vendor SDK; `cargo deny` enforces the dependency side and code review enforces the runtime side.
 1. The engine is Apache-2.0. Code ported from MIT, Apache-2.0 or BSD-3 projects is allowed with copyright notices
    kept and `NOTICE` updated (`docs/LICENSES.md` is the inventory).
 2. Reference material that is GPL-3.0 (QTIP, QuIP#), AGPL (koboldcpp, forge-ml, GPTQModel's Swordfish kernel),
    CC-BY-NC (SpinQuant, any4/tinygemm, LayerSkip, Nexa OmniNeural), BUSL (gmlx/mlx-kquant) or FAIR (Cake) may be
    read for understanding only; nothing is ported from it, and any clean-room re-implementation from a paper is a
    decision for counsel, recorded in `docs/LICENSES.md`.
-3. Vendor runtimes behind the NPU delegate (OpenVINO GenAI Apache-2.0; QAIRT/GenieX and FastFlowLM kernels with
-   unverified redistribution terms) are optional cargo features and are never bundled until their terms are
-   verified.
+3. Only open-source NPU runtimes are integrated (OpenVINO GenAI, Apache-2.0, plus Intel's MIT Linux NPU driver)
+   behind an optional cargo feature. Closed runtimes (QAIRT/GenieX, Ryzen AI software, FastFlowLM kernels, Core
+   ML/ANE) stay out until an open-source path exists.
 4. Model weights keep their own licences; the catalog shows them and flags non-OSI terms (Section 15).
 5. `cargo deny` runs in CI with an allowlist of licences; a new dependency outside the allowlist fails the build.
 6. Reusable, verified-permissive sources this design draws on: llama.cpp/ggml and the GGUF spec (MIT); MLX
@@ -1336,7 +1343,7 @@ auto-parser. Source: Report §Internet and tools.
 
 | Need | macOS | Windows | Linux |
 |---|---|---|---|
-| GPU/host ceiling | `MTLDevice.recommendedMaxWorkingSetSize`; `iogpu.wired_limit_mb` (root, non-persistent) | `IDXGIAdapter3::QueryVideoMemoryInfo` budget; `VK_EXT_memory_budget` | `cudaMemGetInfo`; `VK_EXT_memory_budget`; cgroup v2 `memory.max`/`memory.high`; `MemAvailable` |
+| GPU/host ceiling | `MTLDevice.recommendedMaxWorkingSetSize`; `iogpu.wired_limit_mb` (root, non-persistent) | `IDXGIAdapter3::QueryVideoMemoryInfo` budget; `VK_EXT_memory_budget` | `VK_EXT_memory_budget`; cgroup v2 `memory.max`/`memory.high`; `MemAvailable` |
 | Pressure signal | `DispatchSource.makeMemoryPressureSource` (warning/critical) | `CreateMemoryResourceNotification`; DXGI budget-change event | PSI triggers (`/proc/pressure/memory`, cgroup `memory.pressure`); cgroup events |
 | Enforce a cap | none (supervisor sleep-then-kill) | job object `JOB_OBJECT_LIMIT_PROCESS_MEMORY`; `PeakProcessMemoryUsed` | child cgroup `memory.high`; `oom_score_adj` |
 | Keep GPU memory resident | `MTLResidencySet` + keep-alive | n/a (WDDM manages; detect sysmem fallback) | n/a |
@@ -1420,7 +1427,7 @@ token. **Taint** — the session flag set once untrusted content has entered the
 | Formats, block types, quant quality ranking, repack cache | Report §Read GGUF and safetensors natively; notes `quantization_and_formats.md` |
 | KV classes, paging, precision policy, prefix cache, checkpoints, RoPE | Report §KV cache; notes `kv_cache_and_attention.md` |
 | CPU ISA matrix, kernels, threading, MoE path | Report §CPU execution; notes `cpu_execution.md` KQ2–KQ8 |
-| Metal/CUDA/Vulkan/NPU designs and ordering | Report §GPU and NPU backends; notes `gpu_npu_backends.md` KQ1–KQ9 |
+| Metal/Vulkan/NPU designs and ordering (CUDA excluded as proprietary) | Report §GPU and NPU backends; notes `gpu_npu_backends.md` KQ1–KQ9 |
 | Placement, process model, scheduling, speculative decoding, incidents | Report §Sharding and scheduling; notes `sharding_parallelism_distributed.md` |
 | Tool formats, grammars, MCP, web tools, security | Report §Internet and tools and §Security; notes `internet_tools_and_agents.md` |
 | Model coverage, operator union, fit matrix, catalog flags | Report §Target models; notes `target_models_2026.md` |
