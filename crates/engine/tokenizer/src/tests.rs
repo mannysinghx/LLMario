@@ -105,7 +105,7 @@ fn spm_merges_by_score_and_falls_back_to_bytes() {
     assert!(t.add_space_prefix());
     assert_eq!(t.chat_template(), Some("{{ messages }}"));
     assert_eq!(t.encode("", true, true), [1]);
-    assert_eq!(t.encode("", false, true), []);
+    assert_eq!(t.encode("", false, true), Vec::<u32>::new());
     assert_eq!(t.encode("ab", true, true), [1, id(&t, "\u{2581}ab")]);
     assert_eq!(
         t.encode("ab ab", false, true),
