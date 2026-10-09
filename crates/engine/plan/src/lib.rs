@@ -141,10 +141,12 @@ pub fn plan(
     let mut steps = Vec::new();
     let usable = budget.usable();
 
+    let recurrent = KvCache::recurrent_bytes(&spec);
     let total = |slots: u32, ctx: u32, prompt_cache: u64| -> (u64, u64, u64) {
-        let kv = KvCache::bytes(&spec, ctx as usize) * slots as u64;
+        let kv = (KvCache::bytes(&spec, ctx as usize) - recurrent) * slots as u64;
         let scratch = Scratch::bytes(&spec, n_batch as usize) + Scratch::bytes(&spec, 1);
-        let planned = weights + kv + scratch + prompt_cache + req.runtime_fixed;
+        let planned =
+            weights + kv + recurrent * slots as u64 + scratch + prompt_cache + req.runtime_fixed;
         (kv, scratch, planned)
     };
 
@@ -189,7 +191,7 @@ pub fn plan(
         device: budget.device,
         weights_mapped: weights,
         kv_cache: kv,
-        recurrent_state: 0,
+        recurrent_state: recurrent * slots as u64,
         scratch,
         prompt_cache,
         runtime_fixed: req.runtime_fixed,
@@ -228,10 +230,11 @@ pub fn render(p: &Plan) -> String {
     ));
     for d in &p.devices {
         s.push_str(&format!(
-            "  {:<6} weights {:>10}  kv {:>10}  scratch {:>10}  prompt-cache {:>10}  runtime {:>10}\n",
+            "  {:<6} weights {:>10}  kv {:>10}  state {:>10}  scratch {:>10}  prompt-cache {:>10}  runtime {:>10}\n",
             d.device.to_string(),
             fmt(d.weights_mapped),
             fmt(d.kv_cache),
+            fmt(d.recurrent_state),
             fmt(d.scratch),
             fmt(d.prompt_cache),
             fmt(d.runtime_fixed)
