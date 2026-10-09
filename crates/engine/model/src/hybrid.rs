@@ -22,7 +22,7 @@
 //! `attn_output * torch.sigmoid(gate)` before `o_proj`.
 
 use crate::arch::{ArchSpec, BlockKind, GdnSpec};
-use crate::forward::{attend, per_head_norm, project, Scratch};
+use crate::forward::{attend, per_head_norm, project, Attend, Scratch};
 use crate::gdn::{self, GdnDims};
 use crate::kv::KvCache;
 use crate::weights::{mat, vec1, vecn};
@@ -304,10 +304,14 @@ fn attention_mixer(
         n,
         pos0,
         &s.q[..n * q_dim],
-        n_head,
-        n_kv,
-        hd,
-        hdv,
+        Attend {
+            n_head,
+            n_kv,
+            hd,
+            hdv,
+            scale: 1.0 / (hd as f32).sqrt(),
+            window: None,
+        },
         &mut s.attn,
     );
     let attn_dim = n_head * hdv;

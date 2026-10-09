@@ -20,6 +20,62 @@ pub enum Family {
     /// Qwen3.5 / Qwen3-Next hybrid: Gated DeltaNet layers with one gated full-attention layer
     /// every `full_attention_interval` (`qwen35`, `qwen3next`). See `gdn.rs` and `hybrid.rs`.
     Qwen35,
+    /// Gemma 4 (`gemma4`): 5:1 sliding-window / global attention, per-layer head geometry,
+    /// K=V global layers, GeGLU, pre+post norms, logit soft-capping. See `gemma4.rs`.
+    Gemma4,
+}
+
+/// Gemma 4 specifics beyond the dense fields of [`ArchSpec`] (which hold the *global* layers'
+/// geometry and RoPE). Keys are the ones llama.cpp's converter writes (`conversion/gemma.py`,
+/// `Gemma4Model.set_gguf_parameters`).
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct Gemma4Spec {
+    /// Sliding-window width of the local layers (`attention.sliding_window`): a query at
+    /// position `t` sees keys `p` with `t − p < n_swa`.
+    pub n_swa: u32,
+    /// Per layer, `true` = sliding (local) attention (`attention.sliding_window_pattern`).
+    pub swa_layers: Vec<bool>,
+    /// Per layer KV head count (`attention.head_count_kv`, an array for this family).
+    pub n_kv_head_layers: Vec<u32>,
+    /// Head width of the sliding layers (`attention.key_length_swa` / `value_length_swa`); the
+    /// global layers use `ArchSpec::head_dim` (`attention.key_length`).
+    pub head_dim_swa: u32,
+    pub head_dim_v_swa: u32,
+    /// RoPE of the sliding layers (`rope.freq_base_swa`, `rope.dimension_count_swa`); the
+    /// global layers use `ArchSpec::rope` plus the `rope_freqs.weight` frequency factors.
+    pub rope_swa: RopeSpec,
+    /// Embedding multiplier, `sqrt(d_model)` in f32 (llama.cpp `build_inp_embd(tok_embd, sqrtf(n_embd))`).
+    pub embed_scale: f32,
+    /// Score scale of the attention (`f_attention_scale`; 1.0 for Gemma 4, not `1/sqrt(head_dim)`).
+    pub attn_scale: f32,
+    /// `final_logit_softcapping`: `logits = c · tanh(logits / c)`; 0 = none.
+    pub final_logit_softcap: f32,
+}
+
+/// Attention geometry of one layer (differs per layer only for Gemma 4).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AttnGeom {
+    pub n_head: u32,
+    pub n_kv_head: u32,
+    pub head_dim: u32,
+    pub head_dim_v: u32,
+    /// `Some(n_swa)` for a sliding-window layer.
+    pub window: Option<u32>,
+}
+
+impl AttnGeom {
+    pub fn q_dim(&self) -> u32 {
+        self.n_head * self.head_dim
+    }
+    pub fn kv_dim(&self) -> u32 {
+        self.n_kv_head * self.head_dim
+    }
+    pub fn v_dim(&self) -> u32 {
+        self.n_kv_head * self.head_dim_v
+    }
+    pub fn attn_dim(&self) -> u32 {
+        self.n_head * self.head_dim_v
+    }
 }
 
 /// What a layer's token mixer is.
@@ -117,6 +173,8 @@ pub struct ArchSpec {
     /// interleaved per head and the attention output is multiplied by `sigmoid(gate)` before
     /// `attn_output` (Qwen3.5 / Qwen3-Next).
     pub attn_out_gate: bool,
+    /// Gemma 4 sliding-window / per-layer geometry (`Some` only for [`Family::Gemma4`]).
+    pub gemma4: Option<Gemma4Spec>,
 }
 
 impl ArchSpec {
@@ -131,10 +189,12 @@ impl ArchSpec {
             "qwen3" => Family::Qwen3,
             "smollm3" => Family::SmolLm3,
             "qwen35" | "qwen3next" => Family::Qwen35,
+            "gemma4" => Family::Gemma4,
             other => return Err(ModelError::UnsupportedArch(other.into())),
         };
         if f.tensor("blk.0.ffn_gate_inp.weight").is_some() {
-            // Qwen3-Next 80B-A3B and the Qwen3.5-35B-A3B MoE: expert FFNs arrive in M4.
+            // Qwen3-Next 80B-A3B, the Qwen3.5-35B-A3B MoE and Gemma 4 26B-A4B: expert FFNs
+            // arrive in M4.
             return Err(ModelError::UnsupportedArch(format!(
                 "{arch} with mixture-of-experts FFN"
             )));
@@ -150,7 +210,36 @@ impl ArchSpec {
         let n_layer = u("block_count")?.saturating_sub(n_nextn);
         let d_model = u("embedding_length")?;
         let n_head = u("attention.head_count")?;
-        let n_kv_head = f.get_arch_u32("attention.head_count_kv").unwrap_or(n_head);
+        // `attention.head_count_kv` is a scalar for the dense families and a per-layer array for
+        // Gemma 4 (llama.cpp `get_key_or_arr`); the scalar view below is the first global layer's
+        // value (or the first layer's when the model has no global layer).
+        let n_kv_head_layers: Vec<u32> = match f.get_arch_array("attention.head_count_kv") {
+            Some(a) if !a.is_empty() => a
+                .iter()
+                .map(|v| v.as_u64().unwrap_or(n_head as u64) as u32)
+                .collect(),
+            _ => {
+                vec![f.get_arch_u32("attention.head_count_kv").unwrap_or(n_head); n_layer as usize]
+            }
+        };
+        let swa_layers: Vec<bool> = match family {
+            Family::Gemma4 => f
+                .get_arch_array("attention.sliding_window_pattern")
+                .map(|a| {
+                    a.iter()
+                        .map(|v| v.as_bool().unwrap_or(v.as_u64() == Some(1)))
+                        .collect()
+                })
+                .ok_or_else(|| {
+                    ModelError::MissingKey(f.arch_key("attention.sliding_window_pattern"))
+                })?,
+            _ => Vec::new(),
+        };
+        let n_kv_head = (0..n_layer as usize)
+            .find(|&l| !swa_layers.get(l).copied().unwrap_or(false))
+            .or(Some(0))
+            .and_then(|l| n_kv_head_layers.get(l).copied())
+            .unwrap_or(n_head);
         let head_dim = f
             .get_arch_u32("attention.key_length")
             .unwrap_or(d_model / n_head.max(1));
@@ -181,6 +270,8 @@ impl ArchSpec {
             // (`ggml_mrope_cache_init` + `rotate_pairs<T>(n_dims, n_dims/2, …)` in ggml-cpu/ops.cpp).
             // Image/video positions (differing per section) are out of scope for text inference.
             Family::Qwen2 | Family::Qwen3 | Family::Qwen35 => RopeKind::Neox,
+            // llama.cpp `llama_model_rope_type`: LLM_ARCH_GEMMA4 → LLAMA_ROPE_TYPE_NEOX.
+            Family::Gemma4 => RopeKind::Neox,
         };
         let scaling_type = f.get_arch_str("rope.scaling.type").unwrap_or("none");
         let factor = f.get_arch_f32("rope.scaling.factor").unwrap_or(1.0);
@@ -258,6 +349,66 @@ impl ArchSpec {
             }
             _ => (vec![BlockKind::Attention; n_layer as usize], None),
         };
+        let gemma4 = match family {
+            Family::Gemma4 => {
+                if swa_layers.len() < n_layer as usize || n_kv_head_layers.len() < n_layer as usize
+                {
+                    return Err(ModelError::UnsupportedArch(format!(
+                        "{arch}: sliding_window_pattern / head_count_kv shorter than block_count"
+                    )));
+                }
+                // The E-series' per-layer embeddings (`embedding_length_per_layer_input` > 0) and
+                // cross-layer KV sharing (`shared_kv_layers` > 0) are a follow-up; the 12B / 31B
+                // carry neither.
+                let n_pl = f
+                    .get_arch_u32("embedding_length_per_layer_input")
+                    .unwrap_or(0);
+                let n_shared = f.get_arch_u32("attention.shared_kv_layers").unwrap_or(0);
+                if n_pl > 0 || n_shared > 0 {
+                    return Err(ModelError::UnsupportedArch(format!(
+                        "{arch} with per-layer embeddings ({n_pl}) / shared KV layers ({n_shared}) \
+                         (E-series) is not supported yet"
+                    )));
+                }
+                let n_swa = u("attention.sliding_window")?;
+                // llama.cpp defaults (llama-model.cpp "head size and n_rot for SWA layers",
+                // llama-hparams.h): the SWA head size / n_rot default to the full-attention
+                // values, the SWA base to 10000 and the SWA freq scale to 1.
+                let head_dim_swa = f
+                    .get_arch_u32("attention.key_length_swa")
+                    .unwrap_or(head_dim);
+                let head_dim_v_swa = f
+                    .get_arch_u32("attention.value_length_swa")
+                    .unwrap_or(head_dim_v);
+                let rope_dim_swa = f
+                    .get_arch_u32("rope.dimension_count_swa")
+                    .unwrap_or(rope_dim);
+                let theta_swa = f.get_arch_f32("rope.freq_base_swa").unwrap_or(10000.0);
+                if head_dim != head_dim_v || head_dim_swa != head_dim_v_swa {
+                    return Err(ModelError::UnsupportedArch(format!(
+                        "{arch}: K/V head widths differ (llama.cpp requires them equal)"
+                    )));
+                }
+                Some(Gemma4Spec {
+                    n_swa,
+                    swa_layers: swa_layers[..n_layer as usize].to_vec(),
+                    n_kv_head_layers: n_kv_head_layers[..n_layer as usize].to_vec(),
+                    head_dim_swa,
+                    head_dim_v_swa,
+                    rope_swa: RopeSpec {
+                        kind: RopeKind::Neox,
+                        theta: theta_swa,
+                        dim: rope_dim_swa,
+                        freq_scale: 1.0,
+                        attn_factor: 1.0,
+                    },
+                    embed_scale: (d_model as f32).sqrt(),
+                    attn_scale: 1.0,
+                    final_logit_softcap: f.get_arch_f32("final_logit_softcapping").unwrap_or(0.0),
+                })
+            }
+            _ => None,
+        };
         Ok(ArchSpec {
             name: f.get_str("general.name").map(|s| s.to_string()),
             arch,
@@ -279,22 +430,106 @@ impl ArchSpec {
                 freq_scale,
                 attn_factor: 1.0,
             },
-            qk_norm: matches!(family, Family::Qwen3),
+            qk_norm: matches!(family, Family::Qwen3 | Family::Gemma4),
             attn_bias: matches!(family, Family::Qwen2),
             nope_layers,
             tied_embeddings: f.tensor("output.weight").is_none(),
             blocks,
             gdn,
             attn_out_gate: matches!(family, Family::Qwen35),
+            gemma4,
         })
     }
 
-    /// KV bytes per token per sequence at the given element size (f32 = 4, f16 = 2, q8_0 ≈ 1.06);
-    /// only attention layers hold K/V (recurrent layers have a fixed per-sequence state instead,
-    /// see [`crate::KvCache::recurrent_bytes`]).
+    /// KV bytes per token per sequence at the given element size (f32 = 4, f16 = 2, q8_0 ≈ 1.06):
+    /// the *marginal* per-token cost, i.e. the full-attention layers only. Sliding-window layers
+    /// hold a fixed ring of `n_swa + n_batch` positions per sequence ([`Self::window_bytes`]),
+    /// and recurrent layers a fixed state (see [`crate::KvCache::recurrent_bytes`]).
     pub fn kv_bytes_per_token(&self, bytes_per_elem: f64) -> u64 {
-        let per_layer = (self.n_kv_head as u64) * (self.head_dim as u64 + self.head_dim_v as u64);
-        (per_layer as f64 * bytes_per_elem * self.n_attn_layers() as f64) as u64
+        let mut total = 0f64;
+        for l in 0..self.n_layer as usize {
+            let g = self.attn_geom(l);
+            if self.blocks[l] != BlockKind::Attention || g.window.is_some() {
+                continue;
+            }
+            total += (g.kv_dim() + g.v_dim()) as f64 * bytes_per_elem;
+        }
+        total as u64
+    }
+
+    /// Fixed per-sequence K/V bytes of the sliding-window layers: each holds a ring of
+    /// `min(max_ctx, n_swa + n_batch)` positions (Architecture §8.1 "Window" class).
+    pub fn window_bytes(&self, bytes_per_elem: f64, max_ctx: usize, n_batch: usize) -> u64 {
+        let mut total = 0f64;
+        for l in 0..self.n_layer as usize {
+            let g = self.attn_geom(l);
+            let Some(w) = g.window else { continue };
+            if self.blocks[l] != BlockKind::Attention {
+                continue;
+            }
+            let cap = max_ctx.min(w as usize + n_batch);
+            total += (g.kv_dim() + g.v_dim()) as f64 * bytes_per_elem * cap as f64;
+        }
+        total as u64
+    }
+
+    /// Attention geometry of layer `l` (identical for every layer except in Gemma 4, where the
+    /// sliding layers have their own head width and KV head count).
+    pub fn attn_geom(&self, l: usize) -> AttnGeom {
+        match &self.gemma4 {
+            Some(g) if g.swa_layers.get(l).copied().unwrap_or(false) => AttnGeom {
+                n_head: self.n_head,
+                n_kv_head: g.n_kv_head_layers[l],
+                head_dim: g.head_dim_swa,
+                head_dim_v: g.head_dim_v_swa,
+                window: Some(g.n_swa),
+            },
+            Some(g) => AttnGeom {
+                n_head: self.n_head,
+                n_kv_head: g.n_kv_head_layers.get(l).copied().unwrap_or(self.n_kv_head),
+                head_dim: self.head_dim,
+                head_dim_v: self.head_dim_v,
+                window: None,
+            },
+            None => AttnGeom {
+                n_head: self.n_head,
+                n_kv_head: self.n_kv_head,
+                head_dim: self.head_dim,
+                head_dim_v: self.head_dim_v,
+                window: None,
+            },
+        }
+    }
+
+    /// Whether any attention layer uses a sliding window.
+    pub fn has_window_layers(&self) -> bool {
+        (0..self.n_layer as usize).any(|l| self.attn_geom(l).window.is_some())
+    }
+
+    /// Largest Q / K / V / attention-output widths over the layers (scratch sizing).
+    pub fn max_q_dim(&self) -> u32 {
+        (0..self.n_layer as usize)
+            .map(|l| self.attn_geom(l).q_dim())
+            .max()
+            .unwrap_or(self.q_dim())
+    }
+    pub fn max_kv_dim(&self) -> u32 {
+        (0..self.n_layer as usize)
+            .map(|l| self.attn_geom(l).kv_dim())
+            .max()
+            .unwrap_or(self.kv_dim())
+    }
+    pub fn max_v_dim(&self) -> u32 {
+        (0..self.n_layer as usize)
+            .map(|l| self.attn_geom(l).v_dim())
+            .max()
+            .unwrap_or(self.v_dim())
+    }
+    pub fn max_attn_dim(&self) -> u32 {
+        (0..self.n_layer as usize)
+            .map(|l| self.attn_geom(l).attn_dim())
+            .max()
+            .unwrap_or(self.n_head * self.head_dim_v)
     }
 
     /// Layers whose mixer is softmax attention (all of them for the dense families).

@@ -7,6 +7,7 @@
 //! per head in parallel over the pool with fp32 accumulation.
 
 use crate::arch::{ArchSpec, Family};
+use crate::gemma4;
 use crate::hybrid::{self, HybridScratch};
 use crate::kv::KvCache;
 use crate::weights::{LayerWeights, Weights};
@@ -40,14 +41,16 @@ impl Scratch {
     pub fn new(spec: &ArchSpec, n_batch: usize) -> Scratch {
         let d = spec.d_model as usize;
         let n = n_batch.max(1);
+        // Q/K/V/attention widths are the largest over the layers (they differ per layer only in
+        // Gemma 4, whose global layers have wider heads and fewer KV heads than its local ones).
         Scratch {
             n_batch: n,
             x: vec![0.0; n * d],
             h: vec![0.0; n * d],
-            q: vec![0.0; n * spec.q_dim() as usize],
-            k: vec![0.0; n * spec.kv_dim() as usize],
-            v: vec![0.0; n * spec.v_dim() as usize],
-            attn: vec![0.0; n * (spec.n_head * spec.head_dim_v) as usize],
+            q: vec![0.0; n * spec.max_q_dim() as usize],
+            k: vec![0.0; n * spec.max_kv_dim() as usize],
+            v: vec![0.0; n * spec.max_v_dim() as usize],
+            attn: vec![0.0; n * spec.max_attn_dim() as usize],
             gate: vec![0.0; n * spec.n_ff as usize],
             up: vec![0.0; n * spec.n_ff as usize],
             ffn: vec![0.0; n * d],
@@ -61,10 +64,10 @@ impl Scratch {
         let n = n_batch.max(1) as u64;
         let d = spec.d_model as u64;
         let per_tok = 2 * d
-            + spec.q_dim() as u64
-            + spec.kv_dim() as u64
-            + spec.v_dim() as u64
-            + (spec.n_head * spec.head_dim_v) as u64
+            + spec.max_q_dim() as u64
+            + spec.max_kv_dim() as u64
+            + spec.max_v_dim() as u64
+            + spec.max_attn_dim() as u64
             + 2 * spec.n_ff as u64
             + d;
         let hybrid = spec
@@ -97,6 +100,48 @@ impl<'a> Model<'a> {
         assert!(kv.len + n <= kv.max_ctx, "context overflow");
         let spec = &self.spec;
         let d = spec.d_model as usize;
+
+        // A sliding-window ring bounds how many tokens one pass may append (see `kv.rs`), so a
+        // larger batch runs the layer stack in consecutive chunks; `usize::MAX` for the other
+        // families, i.e. one chunk.
+        let chunk = kv.max_batch().max(1);
+        let mut done = 0;
+        let mut last = 0;
+        while done < n {
+            let m = (n - done).min(chunk);
+            self.run_layers(pool, kv, &tokens[done..done + m], scratch);
+            done += m;
+            last = m;
+        }
+
+        // Final norm + output head on the last token only.
+        let x_last = &scratch.x[(last - 1) * d..last * d];
+        let h = &mut scratch.h[..d];
+        rms_norm(x_last, &self.weights.output_norm, spec.rms_eps, h);
+        let head = self
+            .weights
+            .output
+            .as_ref()
+            .unwrap_or(&self.weights.token_embd);
+        matvec(pool, head, h, &mut scratch.logits);
+        if let Some(g) = &spec.gemma4 {
+            gemma4::softcap_inplace(&mut scratch.logits, g.final_logit_softcap);
+        }
+        &scratch.logits
+    }
+
+    /// Embed `tokens` at positions `kv.len..` into `scratch.x` and run every layer over them,
+    /// appending their K/V (`kv.len` advances by `tokens.len()`).
+    fn run_layers(
+        &self,
+        pool: &ThreadPool,
+        kv: &mut KvCache,
+        tokens: &[u32],
+        scratch: &mut Scratch,
+    ) {
+        let n = tokens.len();
+        let spec = &self.spec;
+        let d = spec.d_model as usize;
         let pos0 = kv.len;
 
         // Embeddings.
@@ -108,7 +153,9 @@ impl<'a> Model<'a> {
             );
         }
 
-        if let Some(h) = &self.weights.hybrid {
+        if let Some(g) = &self.weights.gemma4 {
+            gemma4::forward_layers(spec, g, pool, kv, n, pos0, scratch);
+        } else if let Some(h) = &self.weights.hybrid {
             hybrid::forward_layers(spec, h, pool, kv, n, pos0, scratch);
         } else {
             for (l, layer) in self.weights.layers.iter().enumerate() {
@@ -117,18 +164,6 @@ impl<'a> Model<'a> {
             }
         }
         kv.len += n;
-
-        // Final norm + output head on the last token only.
-        let last = &scratch.x[(n - 1) * d..n * d];
-        let h = &mut scratch.h[..d];
-        rms_norm(last, &self.weights.output_norm, spec.rms_eps, h);
-        let head = self
-            .weights
-            .output
-            .as_ref()
-            .unwrap_or(&self.weights.token_embd);
-        matvec(pool, head, h, &mut scratch.logits);
-        &scratch.logits
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -225,10 +260,14 @@ impl<'a> Model<'a> {
             n,
             pos0,
             &s.q[..n * q_dim],
-            n_head,
-            n_kv,
-            hd,
-            hdv,
+            Attend {
+                n_head,
+                n_kv,
+                hd,
+                hdv,
+                scale: 1.0 / (hd as f32).sqrt(),
+                window: None,
+            },
             &mut s.attn,
         );
 
@@ -274,6 +313,8 @@ impl<'a> Model<'a> {
             Family::Llama | Family::Qwen2 | Family::Qwen3 | Family::SmolLm3 | Family::Qwen35 => {
                 swiglu_inplace(&mut s.gate[..n * n_ff], &s.up[..n * n_ff]);
             }
+            // Gemma 4 (GeGLU) never reaches this block: its layers run in `gemma4.rs`.
+            Family::Gemma4 => unreachable!("Gemma 4 FFN runs in gemma4::forward_layers"),
         }
         project(
             pool,
@@ -290,10 +331,26 @@ impl<'a> Model<'a> {
     }
 }
 
+/// Geometry, score scale and window of one [`attend`] call.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Attend {
+    pub n_head: usize,
+    pub n_kv: usize,
+    pub hd: usize,
+    pub hdv: usize,
+    /// Score scale (`1/sqrt(hd)` for the dense families; Gemma 4 passes `f_attention_scale` 1.0).
+    pub scale: f32,
+    /// Sliding window: a query at position `t` sees keys `p` with `t − p < window` (llama.cpp
+    /// `is_masked_swa`, `LLAMA_SWA_TYPE_STANDARD`); `None` = every earlier position.
+    pub window: Option<usize>,
+}
+
 /// Causal softmax attention of `n` query tokens (positions `pos0..pos0 + n`) against the K/V
-/// slab `l` of `kv`, which must already hold positions `0..pos0 + n`: for each token and head,
-/// `softmax(q·K / sqrt(hd)) · V` over positions ≤ t, written to `attn[t][head][hdv]`. Runs per
-/// (token, head) in parallel over the pool with fp32 accumulation.
+/// slab `l` of `kv`, which must already hold positions `0..pos0 + n` (or the window's worth of
+/// them for a ring slab): for each token and head, `softmax(scale · q·K) · V` over the visible
+/// positions ≤ t, written to `attn[t][head][hdv]`. Positions are mapped to slab slots with
+/// [`KvCache::slot`] (identity for full-attention layers). Runs per (token, head) in parallel
+/// over the pool with fp32 accumulation.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn attend(
     pool: &ThreadPool,
@@ -302,39 +359,51 @@ pub(crate) fn attend(
     n: usize,
     pos0: usize,
     q_all: &[f32],
-    n_head: usize,
-    n_kv: usize,
-    hd: usize,
-    hdv: usize,
+    a: Attend,
     attn: &mut [f32],
 ) {
+    let Attend {
+        n_head,
+        n_kv,
+        hd,
+        hdv,
+        scale,
+        window,
+    } = a;
     let q_dim = n_head * hd;
-    let kv_dim = n_kv * hd;
-    let v_dim = n_kv * hdv;
-    let scale = 1.0 / (hd as f32).sqrt();
+    let layer = kv.layers[l];
+    let (kv_dim, v_dim, cap) = (layer.kv_dim, layer.v_dim, layer.cap);
+    debug_assert_eq!(kv_dim, n_kv * hd);
+    debug_assert_eq!(v_dim, n_kv * hdv);
     let group = n_head / n_kv;
     let n_ctx = pos0 + n;
-    let k_all = kv.k_layer(l, n_ctx);
-    let v_all = kv.v_layer(l, n_ctx);
+    let k_all = kv.k_slab(l);
+    let v_all = kv.v_slab(l);
     let attn_dim = n_head * hdv;
+    // Longest score row any query in this batch needs.
+    let span = window.map(|w| w.min(n_ctx)).unwrap_or(n_ctx);
     let out_ptr = SendPtr(attn.as_mut_ptr());
     pool.parallel_for(n * n_head, None, |start, end| {
-        let mut scores = vec![0f32; n_ctx];
+        let mut scores = vec![0f32; span];
         for idx in start..end {
             let t = idx / n_head;
             let h = idx % n_head;
             let kvh = h / group;
             let q = &q_all[t * q_dim + h * hd..t * q_dim + (h + 1) * hd];
-            let n_pos = pos0 + t + 1;
-            for p in 0..n_pos {
-                let k = &k_all[p * kv_dim + kvh * hd..p * kv_dim + (kvh + 1) * hd];
-                scores[p] = dot(q, k) * scale;
+            let t_abs = pos0 + t;
+            let p_lo = window.map(|w| (t_abs + 1).saturating_sub(w)).unwrap_or(0);
+            let n_pos = t_abs + 1 - p_lo;
+            for (i, p) in (p_lo..=t_abs).enumerate() {
+                let s = p % cap;
+                let k = &k_all[s * kv_dim + kvh * hd..s * kv_dim + (kvh + 1) * hd];
+                scores[i] = dot(q, k) * scale;
             }
             softmax(&mut scores[..n_pos]);
             let mut acc = vec![0f32; hdv];
-            for p in 0..n_pos {
-                let v = &v_all[p * v_dim + kvh * hdv..p * v_dim + (kvh + 1) * hdv];
-                let w = scores[p];
+            for (i, p) in (p_lo..=t_abs).enumerate() {
+                let s = p % cap;
+                let v = &v_all[s * v_dim + kvh * hdv..s * v_dim + (kvh + 1) * hdv];
+                let w = scores[i];
                 for i in 0..hdv {
                     acc[i] += w * v[i];
                 }
