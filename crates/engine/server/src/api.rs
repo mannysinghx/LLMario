@@ -254,7 +254,7 @@ async fn chat(State(s): State<Shared>, body: axum::body::Bytes) -> Response {
                 Event::Error(e) => return bad_request(&e),
             }
         }
-        let f = finish.unwrap_or_else(|| crate::engine::Finish {
+        let f = finish.unwrap_or(crate::engine::Finish {
             reason: "stop",
             prompt_tokens: 0,
             cached_tokens: 0,
