@@ -15,6 +15,28 @@ use llmario_engine_plan::{DeviceBudget, Plan, PlanRequest};
 use std::path::PathBuf;
 use std::sync::Arc;
 
+/// Which backend runs the model.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum Device {
+    /// Metal when a usable GPU is present and the build has the `metal` feature, else CPU.
+    #[default]
+    Auto,
+    Cpu,
+    Metal,
+}
+
+impl std::str::FromStr for Device {
+    type Err = String;
+    fn from_str(s: &str) -> std::result::Result<Device, String> {
+        match s.to_ascii_lowercase().as_str() {
+            "auto" => Ok(Device::Auto),
+            "cpu" => Ok(Device::Cpu),
+            "metal" | "gpu" => Ok(Device::Metal),
+            other => Err(format!("unknown device `{other}` (auto|cpu|metal)")),
+        }
+    }
+}
+
 /// Startup options (the native adapter's command line).
 #[derive(Clone, Debug)]
 pub struct ServeOptions {
@@ -27,6 +49,7 @@ pub struct ServeOptions {
     pub threads: usize,
     /// Ceiling for the plan; `None` = physical memory.
     pub memory_limit: Option<u64>,
+    pub device: Device,
 }
 
 /// Build the plan for `opts` against the memory ceiling (no allocation).

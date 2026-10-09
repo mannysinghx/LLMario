@@ -1,0 +1,26 @@
+[package]
+name = "llmario-engine-metal"
+description = "Native engine Metal GPU backend (Apple silicon): zero-copy weights over mmap, f16 KV cache, MSL kernels compiled at runtime"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+llmario-engine-core = { workspace = true }
+llmario-engine-formats = { workspace = true }
+llmario-engine-model = { workspace = true }
+llmario-engine-cpu = { workspace = true }
+half = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = { workspace = true }
+objc2-metal = { workspace = true }
+objc2-foundation = { workspace = true }
+libc = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

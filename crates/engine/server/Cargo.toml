@@ -7,6 +7,11 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
+[features]
+default = ["metal"]
+# The Metal GPU backend (macOS only; the dependency is skipped on other targets).
+metal = ["dep:llmario-engine-metal"]
+
 [dependencies]
 llmario-engine-core = { workspace = true }
 llmario-engine-formats = { workspace = true }
@@ -26,3 +31,6 @@ sysinfo = { workspace = true }
 tokio = { workspace = true }
 tokio-stream = { workspace = true }
 tracing = { workspace = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+llmario-engine-metal = { workspace = true, optional = true }
