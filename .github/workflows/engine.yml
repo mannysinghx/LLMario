@@ -1,0 +1,67 @@
+name: engine
+
+# LLMario's own inference engine (crates/engine/*) on the platforms it supports, Linux and macOS.
+# A real `llmario-engine serve` process with a small model is driven over HTTP by
+# crates/engine/bin/tests/serve_e2e.rs: plan and ledger, chat (plain, streamed, JSON schema, forced
+# tool call), cancellation on disconnect, two concurrent requests, a prompt longer than the
+# context, and shutdown. Unit tests run in ci.yml. The engine does not support Windows; models
+# there run on llama.cpp (windows.yml).
+on:
+  pull_request:
+  push:
+    branches: [main, beta]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: engine-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  serve-e2e:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-14]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    env:
+      # Smallest GGUF in the model library (537 MiB).
+      SMOKE_MODEL: qwen3.5-0.8b-gguf-q4_0
+      LLMARIO_BETA_HOME: ${{ github.workspace }}/.engine-home
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build the CLI and the engine
+        run: cargo build --release --locked -p llmario-beta -p llmario-engine
+
+      - name: Model revision pinned in the catalog
+        id: rev
+        run: |
+          rev=$(awk -v id="\"$SMOKE_MODEL\"" '$1=="id" && $3==id {f=1} f && $1=="revision" {gsub(/"/,"",$3); print $3; exit}' crates/model_registry/catalog.toml)
+          test -n "$rev"
+          echo "rev=$rev" >> "$GITHUB_OUTPUT"
+
+      # The whole beta home is cached (registry and model) so the pull below is skipped on a hit.
+      - name: Restore the test model
+        uses: actions/cache@v4
+        with:
+          path: .engine-home
+          key: engine-model-${{ runner.os }}-${{ env.SMOKE_MODEL }}-${{ steps.rev.outputs.rev }}
+
+      - name: Pull the test model (verified against the Hub's SHA-256)
+        run: |
+          exe=target/release/llmario-beta
+          if ! "$exe" model list --json | jq -e --arg id "$SMOKE_MODEL" '.[] | select(.id == $id)' > /dev/null; then
+            "$exe" model pull "$SMOKE_MODEL"
+          fi
+          gguf=$("$exe" model list --json | jq -r --arg id "$SMOKE_MODEL" '.[] | select(.id == $id) | .path')
+          test -f "$gguf"
+          echo "LLMARIO_TEST_GGUF=$gguf" >> "$GITHUB_ENV"
+
+      - name: End-to-end test of a running engine (CPU)
+        run: cargo test --release --locked -p llmario-engine --test serve_e2e -- --nocapture
