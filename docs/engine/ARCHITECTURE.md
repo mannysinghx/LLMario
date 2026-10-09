@@ -782,7 +782,7 @@ Every layer declares its cache class in `ArchSpec`; the planner and the arena tr
 
 | Class | Used by | Per-sequence cost | Storage |
 |---|---|---|---|
-| FullAttention | global attention layers (all dense GQA models; Gemma 4 global layers with K=V and head_dim 512; gpt-oss full layers; MLA layers store the 576-wide latent, never the expanded heads) | `2 · n_kv_heads · head_dim · bytes` per token per layer (`1 ·` for K=V layers; `(d_latent + d_rope) · bytes` for MLA) | paged blocks |
+| FullAttention | global attention layers (all dense GQA models; Gemma 4 global layers with K=V projection and head_dim 512; gpt-oss full layers; MLA layers store the 576-wide latent, never the expanded heads) | `2 · n_kv_heads · head_dim · bytes` per token per layer (`(d_latent + d_rope) · bytes` for MLA). Correction found in M3: Gemma 4's K=V layers still need separate K and V slots in a post-RoPE cache, because K is normalised with a gain and rotated while V is not | paged blocks |
 | Window | sliding/chunked layers (Gemma 3/4 local 512–1,024; gpt-oss alternating 128; Mistral/Llama 4 chunked 8,192) | ring of `window + n_batch` tokens | fixed ring per sequence, allocated from the arena in whole blocks |
 | Recurrent | Gated DeltaNet (Qwen3.5 stack), KDA, Mamba-2 (Nemotron 3/3.5, Granite 4.0-H, Falcon-H1), gated short-conv (LFM2/2.5) | fixed fp32 state per sequence (≈ 24–160 MB for the 2026 hybrid class), paid per *concurrent sequence*, not per token | separate pool with its own block size (never inflate the attention block size to fit SSM state, the vLLM single-page-size trap) |
 
@@ -1314,7 +1314,7 @@ Beyond RMSNorm, RoPE, GQA flash attention, SwiGLU and a tied-or-untied output he
 | MLA with absorbed compressed cache (kv_lora 512 + rope 64) | GLM-4.7-Flash, Mistral Small 4, Kimi K2, DeepSeek |
 | RoPE families: default/partial (0.25 on Qwen3.5), interleaved mRoPE [11,11,10], YaRN with attention factor (×4 Qwen3, ×32 gpt-oss, ×40 DeepSeek, ×128 Mistral Small 4), Llama-3 piecewise (×8, ×16 Llama 4), LongRoPE (Phi-4-mini), linear with per-layer base (Gemma 3), NoPE + Llama 4 temperature | as listed |
 | Grouped-expert GEMM with softmax-renormalised, sigmoid-with-bias / `noaux_tc` (`routed_scaling_factor` 1.8–2.5), `sqrtsoftplus` and top-1-plus-shared routers; shared experts; MXFP4 expert weights | Qwen MoE, Gemma 4 26B-A4B, gpt-oss, GLM, Nemotron 3.5, LFM2.5-8B-A1B, DeepSeek, MiniMax |
-| GeGLU, relu², `(1 + w)` norm gains, μP multipliers, logit soft-capping, gated attention outputs, QK-norm | Gemma, Nemotron (relu²), MiniMax, Qwen4Exp, Granite 4.2 (μP), Muse Glimmer (gated attention, NoPE global) |
+| GeGLU, relu², `(1 + w)` norm gains, μP multipliers, logit soft-capping, gated attention outputs, QK-norm | Gemma 2/3 (`(1+w)`, folded into the GGUF by the converter), Nemotron (relu²), MiniMax, Qwen4Exp, Granite 4.2 (μP), Muse Glimmer (gated attention, NoPE global). Correction found in M3: Gemma 4 has **no** `(1 + w)` gain (`Gemma4RMSNorm` multiplies by the plain weight and the converter's `norm_shift` is 0) |
 | Hyper-connections, looped layers (`num_loops` 2), n-gram/engram embeddings, sparse-attention indexer | Qwen3.8-Flash-Next, Nanbeige4.2, DeepSeek V4.1 (upper bounds) |
 | MTP / DFlash / DSpark / EAGLE-3 drafter execution | every 2026 flagship ships a drafter |
 | Numeric rules | fp32 attention accumulation on CPU/Metal; fp32 recurrent state; fp32 logits |
