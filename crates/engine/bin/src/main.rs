@@ -347,17 +347,14 @@ fn raw_run(
             .collect::<Vec<_>>()
             .join(",")
     );
-    // Rough text for eyeballing: GPT-2 byte-level pieces with the two common markers mapped.
-    if let Some(toks) = f.get_array("tokenizer.ggml.tokens") {
-        let text: String = out
-            .iter()
-            .filter_map(|&t| toks.get(t as usize).and_then(|v| v.as_str()))
-            .collect::<Vec<_>>()
-            .join("")
-            .replace('Ġ', " ")
-            .replace('Ċ', "\n")
-            .replace('▁', " ");
-        eprintln!("text: {text:?}");
+    if let Ok(tok) = llmario_engine_tokenizer::Tokenizer::from_gguf(&f) {
+        // Stop at the first end-of-generation token, as a chat loop would.
+        let upto = out.iter().position(|&t| tok.is_eog(t)).unwrap_or(out.len());
+        let text = tok.decode(&out[..upto]);
+        eprintln!(
+            "decoded: {}",
+            serde_json::to_string(&text).unwrap_or_default()
+        );
     }
     Ok(())
 }
