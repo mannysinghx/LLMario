@@ -1,5 +1,6 @@
 //! HTTP surface: `/health`, `/v1/models`, `/v1/chat/completions`, `/engine/*`.
 
+use crate::agent;
 use crate::engine::{EngineRuntime, Event, Job};
 use crate::openai::{self, ChatRequest, PromptTokensDetails, Timings, Usage};
 use crate::toolcall;
@@ -30,6 +31,7 @@ pub struct AppState {
     pub started: Instant,
     pub sleeping: AtomicBool,
     pub shutdown: tokio::sync::Notify,
+    pub web: Arc<agent::WebTools>,
 }
 
 type Shared = Arc<AppState>;
@@ -40,6 +42,7 @@ pub async fn serve_http(
     opts: ServeOptions,
     plan: Plan,
     ledger: Arc<Ledger>,
+    web: Arc<agent::WebTools>,
 ) -> anyhow::Result<()> {
     let listen = opts.listen.clone();
     let state: Shared = Arc::new(AppState {
@@ -51,6 +54,7 @@ pub async fn serve_http(
         started: Instant::now(),
         sleeping: AtomicBool::new(false),
         shutdown: tokio::sync::Notify::new(),
+        web,
     });
     let app = Router::new()
         .route("/health", get(health))
@@ -88,7 +92,7 @@ async fn models(State(s): State<Shared>) -> Json<Value> {
             "engine": {"backend": "native", "plan_hash": s.plan.hash, "arch": s.plan.arch,
                        "context": s.plan.ctx_per_slot, "kernels": s.runtime.kernels,
                        "device": s.runtime.backend,
-                       "capabilities": {"tools": true, "json_schema": true, "vision": false}}
+                       "capabilities": {"tools": true, "json_schema": true, "vision": false, "web_tools": s.web.available()}}
         }]
     }))
 }
@@ -168,10 +172,11 @@ async fn chat(State(s): State<Shared>, body: axum::body::Bytes) -> Response {
         Ok(c) => c,
         Err(e) => return bad_request(&e),
     };
-    let tools = req
-        .tools
-        .clone()
-        .filter(|t| t.as_array().is_some_and(|a| !a.is_empty()));
+    let (functions, builtins) = match req.tools.as_ref().map(agent::split_tools).transpose() {
+        Ok(v) => v.unwrap_or_default(),
+        Err(e) => return bad_request(&e),
+    };
+    let tools = (!functions.is_empty()).then(|| Value::Array(functions.clone()));
     if let (toolcall::Choice::Named(n), Some(t)) = (&choice, &tools) {
         let known = t
             .as_array()
@@ -192,6 +197,27 @@ async fn chat(State(s): State<Shared>, body: axum::body::Bytes) -> Response {
         Ok(m) => m,
         Err(e) => return bad_request(&e),
     };
+    if !builtins.is_empty() && choice != toolcall::Choice::None {
+        if let Err(e) = s.web.check(&builtins) {
+            return bad_request(&e);
+        }
+        let areq = agent::AgentRequest {
+            messages,
+            functions,
+            builtins,
+            enable_thinking: req.enable_thinking,
+            extra: req.chat_template_kwargs.clone().unwrap_or_default(),
+            params: sampling_params(&req),
+            max_tokens: req
+                .max_completion_tokens
+                .or(req.max_tokens)
+                .unwrap_or(4096)
+                .max(1),
+            stop: req.stop.clone().into_vec(),
+            max_steps: req.max_steps.unwrap_or(agent::DEFAULT_MAX_STEPS).min(16),
+        };
+        return agent_response(&s, &req, template, areq).await;
+    }
     let mut rr = RenderRequest {
         messages,
         add_generation_prompt: true,
@@ -245,32 +271,7 @@ async fn chat(State(s): State<Shared>, body: axum::body::Bytes) -> Response {
         .or(req.max_tokens)
         .unwrap_or(4096)
         .max(1);
-    let mut params = SamplingParams::default();
-    if let Some(t) = req.temperature {
-        params.temperature = t;
-    }
-    if let Some(v) = req.top_p {
-        params.top_p = v;
-    }
-    if let Some(v) = req.top_k {
-        params.top_k = v;
-    }
-    if let Some(v) = req.min_p {
-        params.min_p = v;
-    }
-    if let Some(v) = req.presence_penalty {
-        params.presence_penalty = v;
-    }
-    if let Some(v) = req.frequency_penalty {
-        params.frequency_penalty = v;
-    }
-    if let Some(v) = req.repeat_penalty {
-        params.repeat_penalty = v;
-    }
-    if let Some(v) = req.repeat_last_n {
-        params.repeat_last_n = v;
-    }
-    params.seed = req.seed;
+    let params = sampling_params(&req);
 
     let (tx, rx) = tokio::sync::mpsc::channel::<Event>(64);
     let job = Job {
@@ -370,6 +371,167 @@ async fn chat(State(s): State<Shared>, body: axum::body::Bytes) -> Response {
             futures::stream::iter(items)
         }))
         .map(|s| Ok::<_, std::convert::Infallible>(axum::body::Bytes::from(s)));
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "text/event-stream")
+        .header(header::CACHE_CONTROL, "no-cache")
+        .body(Body::from_stream(body_stream))
+        .unwrap()
+}
+
+fn sampling_params(req: &ChatRequest) -> SamplingParams {
+    let mut params = SamplingParams::default();
+    if let Some(t) = req.temperature {
+        params.temperature = t;
+    }
+    if let Some(v) = req.top_p {
+        params.top_p = v;
+    }
+    if let Some(v) = req.top_k {
+        params.top_k = v;
+    }
+    if let Some(v) = req.min_p {
+        params.min_p = v;
+    }
+    if let Some(v) = req.presence_penalty {
+        params.presence_penalty = v;
+    }
+    if let Some(v) = req.frequency_penalty {
+        params.frequency_penalty = v;
+    }
+    if let Some(v) = req.repeat_penalty {
+        params.repeat_penalty = v;
+    }
+    if let Some(v) = req.repeat_last_n {
+        params.repeat_last_n = v;
+    }
+    params.seed = req.seed;
+    params
+}
+
+/// Run the built-in-tool agent loop and answer in the request's mode (stream or not).
+async fn agent_response(
+    s: &Shared,
+    req: &ChatRequest,
+    template: Arc<llmario_engine_chat::ChatTemplate>,
+    areq: agent::AgentRequest,
+) -> Response {
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<agent::AgentOut>(64);
+    tokio::spawn(agent::run(
+        s.runtime.clone(),
+        template,
+        s.web.clone(),
+        areq,
+        tx,
+    ));
+    let model = req.model.clone().unwrap_or_else(|| s.opts.model_id.clone());
+    let id = openai::completion_id();
+    let created = openai::now_secs();
+    let include_usage = req.stream_options.as_ref().is_some_and(|o| o.include_usage);
+    let usage_json = |pt: usize, ct: usize, cached: usize| {
+        json!({"prompt_tokens": pt, "completion_tokens": ct, "total_tokens": pt + ct,
+               "prompt_tokens_details": {"cached_tokens": cached}})
+    };
+
+    if !req.stream {
+        let (mut content, mut reasoning) = (String::new(), String::new());
+        let (mut calls, mut events) = (Vec::new(), Vec::new());
+        while let Some(o) = rx.recv().await {
+            match o {
+                agent::AgentOut::Delta(d) => {
+                    if let Some(t) = d.get("content").and_then(Value::as_str) {
+                        content.push_str(t);
+                    }
+                    if let Some(t) = d.get("reasoning_content").and_then(Value::as_str) {
+                        reasoning.push_str(t);
+                    }
+                    if let Some(c) = d.get("tool_calls").and_then(Value::as_array) {
+                        for c in c {
+                            let mut c = c.clone();
+                            if let Some(o) = c.as_object_mut() {
+                                o.remove("index");
+                            }
+                            calls.push(c);
+                        }
+                    }
+                    if let Some(e) = d.get("llmario_tool_event") {
+                        events.push(e.clone());
+                    }
+                }
+                agent::AgentOut::Done {
+                    reason,
+                    prompt_tokens,
+                    cached_tokens,
+                    completion_tokens,
+                    prompt_ms,
+                    decode_ms,
+                    steps,
+                } => {
+                    let mut msg = json!({"role": "assistant",
+                        "content": if content.is_empty() && !calls.is_empty() { Value::Null } else { json!(content) }});
+                    if !reasoning.is_empty() {
+                        msg["reasoning_content"] = json!(reasoning);
+                    }
+                    if !calls.is_empty() {
+                        msg["tool_calls"] = Value::Array(calls);
+                    }
+                    return Json(json!({
+                        "id": id, "object": "chat.completion", "created": created, "model": model,
+                        "choices": [{"index": 0, "message": msg, "finish_reason": reason}],
+                        "usage": usage_json(prompt_tokens, completion_tokens, cached_tokens),
+                        "timings": {"prompt_n": prompt_tokens - cached_tokens, "prompt_ms": prompt_ms,
+                                    "predicted_n": completion_tokens, "predicted_ms": decode_ms},
+                        "llmario": {"steps": steps, "tool_events": events},
+                    }))
+                    .into_response();
+                }
+                agent::AgentOut::Error(e) => return bad_request(&e),
+            }
+        }
+        return bad_request("agent loop ended without a result");
+    }
+
+    let first = openai::chunk(
+        &id,
+        &model,
+        created,
+        json!({"role": "assistant", "content": ""}),
+        None,
+    );
+    let body_stream = futures::stream::once(async move { sse(&first) }).chain(
+        futures::stream::poll_fn(move |cx| rx.poll_recv(cx)).flat_map(move |o| {
+            let items: Vec<String> = match o {
+                agent::AgentOut::Delta(d) => vec![sse(&openai::chunk(&id, &model, created, d, None))],
+                agent::AgentOut::Done {
+                    reason,
+                    prompt_tokens,
+                    cached_tokens,
+                    completion_tokens,
+                    prompt_ms,
+                    decode_ms,
+                    ..
+                } => {
+                    let mut v = vec![sse(&openai::chunk(&id, &model, created, json!({}), Some(&reason)))];
+                    if include_usage {
+                        v.push(sse(&json!({
+                            "id": id, "object": "chat.completion.chunk", "created": created, "model": model,
+                            "choices": [], "usage": usage_json(prompt_tokens, completion_tokens, cached_tokens),
+                            "timings": {"prompt_n": prompt_tokens - cached_tokens, "prompt_ms": prompt_ms,
+                                        "predicted_n": completion_tokens, "predicted_ms": decode_ms}
+                        })));
+                    }
+                    v.push("data: [DONE]\n\n".to_string());
+                    v
+                }
+                agent::AgentOut::Error(e) => vec![
+                    sse(&openai::error_body(500, "server_error", &e)),
+                    "data: [DONE]\n\n".to_string(),
+                ],
+            };
+            futures::stream::iter(items)
+        }),
+    )
+    .map(|s| Ok::<_, std::convert::Infallible>(axum::body::Bytes::from(s)));
     Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, "text/event-stream")
