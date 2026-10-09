@@ -17,7 +17,7 @@ default-members = [
   "crates/engine/core", "crates/engine/formats", "crates/engine/tokenizer", "crates/engine/model",
   "crates/engine/plan", "crates/engine/kv", "crates/engine/cpu", "crates/engine/sched",
   "crates/engine/decode", "crates/engine/chat", "crates/engine/server", "crates/engine/bin",
-  "crates/engine/testkit", "crates/engine/metal",
+  "crates/engine/testkit", "crates/engine/metal", "crates/engine/tools",
 ]
 
 [workspace.package]
@@ -94,6 +94,7 @@ toml = "0.9"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 # Tool crate dependencies (MIT / Apache-2.0 / BSD only); versions verified on crates.io 2026-10-09.
+dom_query = "0.28.0"
 dom_smoothie = "0.18.2"
 htmd = "0.5.5"
 ipnet = "2.12.2"
