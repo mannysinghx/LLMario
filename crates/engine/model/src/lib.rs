@@ -5,16 +5,20 @@
 //!   touching tensor bytes.
 //! - [`weights::Weights`] maps tensor names to zero-copy [`llmario_engine_cpu::QMat`] views.
 //! - [`forward::Model`] runs the dense transformer families (Llama/Mistral, Qwen2, Qwen3,
-//!   SmolLM3-style NoPE layers) on the CPU backend with a per-slot KV cache. Hybrid and MoE
-//!   families arrive in M3/M4 as additional blocks.
+//!   SmolLM3-style NoPE layers) on the CPU backend with a per-slot KV cache, and the Qwen3.5 /
+//!   Qwen3-Next hybrid family ([`hybrid`]: Gated DeltaNet layers from [`gdn`] plus gated
+//!   full-attention layers) with the fp32 recurrent state kept per sequence in the same
+//!   [`kv::KvCache`]. MoE families arrive in M4 as additional blocks.
 
 pub mod arch;
 pub mod backend;
 pub mod forward;
+pub mod gdn;
+pub mod hybrid;
 pub mod kv;
 pub mod weights;
 
-pub use arch::{ArchSpec, Family};
+pub use arch::{ArchSpec, BlockKind, Family, GdnSpec};
 pub use backend::{CpuBackend, ModelBackend};
 pub use forward::Model;
 pub use kv::KvCache;

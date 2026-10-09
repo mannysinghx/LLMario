@@ -1,4 +1,5 @@
-//! Forward pass for the dense GQA families on the CPU backend.
+//! Forward pass for the dense GQA families on the CPU backend (the hybrid family's layers are in
+//! `hybrid.rs`; embeddings, the output head and the scratch set are shared here).
 //!
 //! Explicit, layer-by-layer execution with a scratch set sized once from the model shape and the
 //! batch size (`Scratch::bytes` is what the plan charges). Prefill processes `n` tokens at once
@@ -6,6 +7,7 @@
 //! per head in parallel over the pool with fp32 accumulation.
 
 use crate::arch::{ArchSpec, Family};
+use crate::hybrid::{self, HybridScratch};
 use crate::kv::KvCache;
 use crate::weights::{LayerWeights, Weights};
 use llmario_engine_cpu::ops::{add_inplace, dot, swiglu_inplace, RopeParams};
@@ -19,17 +21,19 @@ pub struct Model<'a> {
 
 /// Working buffers for a batch of up to `n_batch` tokens.
 pub struct Scratch {
-    n_batch: usize,
-    x: Vec<f32>,
-    h: Vec<f32>,
-    q: Vec<f32>,
-    k: Vec<f32>,
-    v: Vec<f32>,
-    attn: Vec<f32>,
-    gate: Vec<f32>,
-    up: Vec<f32>,
-    ffn: Vec<f32>,
-    logits: Vec<f32>,
+    pub(crate) n_batch: usize,
+    pub(crate) x: Vec<f32>,
+    pub(crate) h: Vec<f32>,
+    pub(crate) q: Vec<f32>,
+    pub(crate) k: Vec<f32>,
+    pub(crate) v: Vec<f32>,
+    pub(crate) attn: Vec<f32>,
+    pub(crate) gate: Vec<f32>,
+    pub(crate) up: Vec<f32>,
+    pub(crate) ffn: Vec<f32>,
+    pub(crate) logits: Vec<f32>,
+    /// Extra buffers of the hybrid family (`None` for the dense families).
+    pub(crate) hybrid: Option<HybridScratch>,
 }
 
 impl Scratch {
@@ -48,6 +52,7 @@ impl Scratch {
             up: vec![0.0; n * spec.n_ff as usize],
             ffn: vec![0.0; n * d],
             logits: vec![0.0; spec.n_vocab as usize],
+            hybrid: spec.gdn.as_ref().map(|g| HybridScratch::new(spec, g, n)),
         }
     }
 
@@ -62,7 +67,12 @@ impl Scratch {
             + (spec.n_head * spec.head_dim_v) as u64
             + 2 * spec.n_ff as u64
             + d;
-        (n * per_tok + spec.n_vocab as u64) * 4
+        let hybrid = spec
+            .gdn
+            .as_ref()
+            .map(|g| HybridScratch::bytes(spec, g, n as usize))
+            .unwrap_or(0);
+        (n * per_tok + spec.n_vocab as u64) * 4 + hybrid
     }
 }
 
@@ -98,9 +108,13 @@ impl<'a> Model<'a> {
             );
         }
 
-        for (l, layer) in self.weights.layers.iter().enumerate() {
-            self.attention_block(pool, kv, l, layer, n, pos0, scratch);
-            self.ffn_block(pool, layer, n, scratch);
+        if let Some(h) = &self.weights.hybrid {
+            hybrid::forward_layers(spec, h, pool, kv, n, pos0, scratch);
+        } else {
+            for (l, layer) in self.weights.layers.iter().enumerate() {
+                self.attention_block(pool, kv, l, layer, n, pos0, scratch);
+                self.ffn_block(pool, layer, n, scratch);
+            }
         }
         kv.len += n;
 
@@ -204,48 +218,22 @@ impl<'a> Model<'a> {
                 .copy_from_slice(&s.v[t * v_dim..(t + 1) * v_dim]);
         }
 
-        // Attention: for each token and head, softmax(q·K / sqrt(hd)) · V over positions ≤ t.
-        let scale = 1.0 / (hd as f32).sqrt();
-        let group = n_head / n_kv;
-        let n_ctx = pos0 + n;
-        let k_all = kv.k_layer(l, n_ctx);
-        let v_all = kv.v_layer(l, n_ctx);
-        let attn_dim = n_head * hdv;
-        let q_all = &s.q[..n * q_dim];
-        let out_ptr = SendPtr(s.attn.as_mut_ptr());
-        pool.parallel_for(n * n_head, None, |start, end| {
-            let mut scores = vec![0f32; n_ctx];
-            for idx in start..end {
-                let t = idx / n_head;
-                let h = idx % n_head;
-                let kvh = h / group;
-                let q = &q_all[t * q_dim + h * hd..t * q_dim + (h + 1) * hd];
-                let n_pos = pos0 + t + 1;
-                for p in 0..n_pos {
-                    let k = &k_all[p * kv_dim + kvh * hd..p * kv_dim + (kvh + 1) * hd];
-                    scores[p] = dot(q, k) * scale;
-                }
-                softmax(&mut scores[..n_pos]);
-                let mut acc = vec![0f32; hdv];
-                for p in 0..n_pos {
-                    let v = &v_all[p * v_dim + kvh * hdv..p * v_dim + (kvh + 1) * hdv];
-                    let w = scores[p];
-                    for i in 0..hdv {
-                        acc[i] += w * v[i];
-                    }
-                }
-                // SAFETY: each (t, h) writes a disjoint hdv-wide slice of `attn`.
-                unsafe {
-                    std::ptr::copy_nonoverlapping(
-                        acc.as_ptr(),
-                        out_ptr.get().add(t * attn_dim + h * hdv),
-                        hdv,
-                    );
-                }
-            }
-        });
+        attend(
+            pool,
+            kv,
+            l,
+            n,
+            pos0,
+            &s.q[..n * q_dim],
+            n_head,
+            n_kv,
+            hd,
+            hdv,
+            &mut s.attn,
+        );
 
         // Output projection and residual.
+        let attn_dim = n_head * hdv;
         project(
             pool,
             &layer.wo,
@@ -283,7 +271,7 @@ impl<'a> Model<'a> {
         );
         project(pool, &layer.w_up, &s.h, n, d, &mut s.up[..n * n_ff], None);
         match spec.family {
-            Family::Llama | Family::Qwen2 | Family::Qwen3 | Family::SmolLm3 => {
+            Family::Llama | Family::Qwen2 | Family::Qwen3 | Family::SmolLm3 | Family::Qwen35 => {
                 swiglu_inplace(&mut s.gate[..n * n_ff], &s.up[..n * n_ff]);
             }
         }
@@ -302,8 +290,69 @@ impl<'a> Model<'a> {
     }
 }
 
+/// Causal softmax attention of `n` query tokens (positions `pos0..pos0 + n`) against the K/V
+/// slab `l` of `kv`, which must already hold positions `0..pos0 + n`: for each token and head,
+/// `softmax(q·K / sqrt(hd)) · V` over positions ≤ t, written to `attn[t][head][hdv]`. Runs per
+/// (token, head) in parallel over the pool with fp32 accumulation.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn attend(
+    pool: &ThreadPool,
+    kv: &KvCache,
+    l: usize,
+    n: usize,
+    pos0: usize,
+    q_all: &[f32],
+    n_head: usize,
+    n_kv: usize,
+    hd: usize,
+    hdv: usize,
+    attn: &mut [f32],
+) {
+    let q_dim = n_head * hd;
+    let kv_dim = n_kv * hd;
+    let v_dim = n_kv * hdv;
+    let scale = 1.0 / (hd as f32).sqrt();
+    let group = n_head / n_kv;
+    let n_ctx = pos0 + n;
+    let k_all = kv.k_layer(l, n_ctx);
+    let v_all = kv.v_layer(l, n_ctx);
+    let attn_dim = n_head * hdv;
+    let out_ptr = SendPtr(attn.as_mut_ptr());
+    pool.parallel_for(n * n_head, None, |start, end| {
+        let mut scores = vec![0f32; n_ctx];
+        for idx in start..end {
+            let t = idx / n_head;
+            let h = idx % n_head;
+            let kvh = h / group;
+            let q = &q_all[t * q_dim + h * hd..t * q_dim + (h + 1) * hd];
+            let n_pos = pos0 + t + 1;
+            for p in 0..n_pos {
+                let k = &k_all[p * kv_dim + kvh * hd..p * kv_dim + (kvh + 1) * hd];
+                scores[p] = dot(q, k) * scale;
+            }
+            softmax(&mut scores[..n_pos]);
+            let mut acc = vec![0f32; hdv];
+            for p in 0..n_pos {
+                let v = &v_all[p * v_dim + kvh * hdv..p * v_dim + (kvh + 1) * hdv];
+                let w = scores[p];
+                for i in 0..hdv {
+                    acc[i] += w * v[i];
+                }
+            }
+            // SAFETY: each (t, h) writes a disjoint hdv-wide slice of `attn`.
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    acc.as_ptr(),
+                    out_ptr.get().add(t * attn_dim + h * hdv),
+                    hdv,
+                );
+            }
+        }
+    });
+}
+
 /// `y = W x (+ b)` for `n` tokens of width `cols`.
-fn project(
+pub(crate) fn project(
     pool: &ThreadPool,
     w: &llmario_engine_cpu::QMat,
     x: &[f32],
@@ -325,7 +374,7 @@ fn project(
     }
 }
 
-fn per_head_norm(x: &mut [f32], hd: usize, w: &[f32], eps: f32) {
+pub(crate) fn per_head_norm(x: &mut [f32], hd: usize, w: &[f32], eps: f32) {
     let mut tmp = vec![0f32; hd];
     for head in x.chunks_exact_mut(hd) {
         rms_norm(head, w, eps, &mut tmp);
