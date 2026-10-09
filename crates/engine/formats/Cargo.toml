@@ -1,6 +1,6 @@
 [package]
 name = "llmario-engine-formats"
-description = "Native engine model file readers: GGUF (single and split) with zero-copy tensor views"
+description = "Native engine model file readers: GGUF (single and split) and safetensors/MLX folders with zero-copy tensor views"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -15,4 +15,5 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
+half = { workspace = true }
 tempfile = { workspace = true }
