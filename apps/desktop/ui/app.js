@@ -15,7 +15,7 @@ const DEFAULT_SETTINGS = {
   showThinking: false,
   saveHistory: true,
 };
-const BACKEND = { llamacpp: "llama.cpp", mlx: "MLX", mock: "mock" };
+const BACKEND = { llamacpp: "llama.cpp", mlx: "MLX", native: "LLMario engine", mock: "mock" };
 // "mac" | "windows" | "linux". Drives platform-specific hints (`data-os` in index.html) and
 // hides MLX, which runs only on Apple Silicon Macs.
 const PLATFORM = /Windows/.test(navigator.userAgent) ? "windows" : /Macintosh|Mac OS X/.test(navigator.userAgent) ? "mac" : "linux";

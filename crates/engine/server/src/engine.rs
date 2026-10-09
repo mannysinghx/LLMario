@@ -249,6 +249,9 @@ impl Worker<'_> {
             .count()
             .min(job.prompt.len() - 1);
         self.backend.truncate(common);
+        // Backends with recurrent state may keep less than asked (they reset instead of
+        // trimming); always recompute from what the backend actually kept.
+        let common = self.backend.kv_len().min(common);
         self.cached.truncate(common);
         let t0 = Instant::now();
         let mut logits_owned: Vec<f32> = Vec::new();

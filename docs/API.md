@@ -19,7 +19,7 @@ OpenAI list/model objects for installed models, plus an `llmario` object:
 ## `POST /v1/chat/completions`
 
 `model` may be an exact id or a family name. The response `model` field and the
-`x-llmario-model` / `x-llmario-backend` headers name the concrete model and backend used.
+`x-llmario-model` / `x-llmario-backend` headers name the concrete model and backend used (`llamacpp`, `mlx`, or `native` for LLMario's own engine).
 
 | Field | Behaviour |
 |---|---|
