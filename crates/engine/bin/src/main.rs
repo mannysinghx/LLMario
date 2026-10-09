@@ -49,6 +49,12 @@ enum Cmd {
         /// Backend: `auto` (Metal when a usable GPU is present, else CPU), `cpu` or `metal`.
         #[arg(long, default_value = "auto")]
         device: Device,
+        /// Allow the built-in `web_fetch` tool (SSRF-guarded); off by default.
+        #[arg(long)]
+        web: bool,
+        /// Self-hosted SearXNG instance for the built-in `web_search` tool (needs `--web`).
+        #[arg(long)]
+        searxng_url: Option<String>,
     },
     /// Report what this build can run (`--json` for the supervisor).
     Probe {
@@ -143,6 +149,8 @@ fn main() -> Result<()> {
                 threads: 0,
                 memory_limit,
                 device: Device::Auto,
+                web: false,
+                searxng_url: None,
             };
             let (plan, _) = llmario_engine_server::plan_for(&f, &opts)?;
             if json {
@@ -179,6 +187,8 @@ fn main() -> Result<()> {
             model_id,
             memory_limit,
             device,
+            web,
+            searxng_url,
         } => {
             let threads = threads.unwrap_or_else(|| {
                 std::thread::available_parallelism()
@@ -200,6 +210,8 @@ fn main() -> Result<()> {
                 threads,
                 memory_limit,
                 device,
+                web,
+                searxng_url,
             };
             let rt = tokio::runtime::Builder::new_multi_thread()
                 .worker_threads(2)

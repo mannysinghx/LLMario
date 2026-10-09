@@ -30,6 +30,8 @@ pub struct ChatRequest {
     pub tools: Option<Value>,
     pub tool_choice: Option<Value>,
     pub parallel_tool_calls: Option<bool>,
+    /// Built-in tool rounds before the final answer (agent loop; default 4, at most 16).
+    pub max_steps: Option<usize>,
     pub response_format: Option<Value>,
     pub logprobs: Option<bool>,
     pub top_logprobs: Option<u32>,

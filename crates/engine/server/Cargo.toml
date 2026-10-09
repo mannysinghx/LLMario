@@ -21,6 +21,7 @@ llmario-engine-tokenizer = { workspace = true }
 llmario-engine-chat = { workspace = true }
 llmario-engine-decode = { workspace = true }
 llmario-engine-plan = { workspace = true }
+llmario-engine-tools = { workspace = true }
 anyhow = { workspace = true }
 axum = { workspace = true }
 futures = { workspace = true }
