@@ -71,7 +71,8 @@ impl EngineAdapter for NativeAdapter {
         };
         if cfg!(windows) {
             return unavailable(
-                "LLMario's own engine runs on macOS and Linux; on Windows models use llama.cpp".into(),
+                "LLMario's own engine runs on macOS and Linux; on Windows models use llama.cpp"
+                    .into(),
             );
         }
         if !cfg.backends.native.enabled {

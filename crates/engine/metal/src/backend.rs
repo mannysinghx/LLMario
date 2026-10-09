@@ -270,7 +270,10 @@ impl<'a> MetalBackend<'a> {
         }
         let weights = Weights::load(file, &spec)?;
         if weights.hybrid.is_some() || weights.layers.len() != spec.n_layer as usize {
-            return Err(MetalError::Unsupported("hybrid weight layout".into()));
+            return Err(MetalError::Unsupported(format!(
+                "family {:?} (its layer layout) is CPU-only in this build",
+                spec.family
+            )));
         }
         let n_batch = n_batch.max(1);
         let max_ctx = max_ctx.max(1);
