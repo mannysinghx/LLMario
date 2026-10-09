@@ -221,7 +221,7 @@ fn probe(json: bool) -> Result<()> {
     Ok(())
 }
 
-fn inspect(path: &PathBuf, list_tensors: bool) -> Result<()> {
+fn inspect(path: &std::path::Path, list_tensors: bool) -> Result<()> {
     let f = GgufFile::open(path).with_context(|| format!("open {}", path.display()))?;
     println!("file: {}", path.display());
     println!(
