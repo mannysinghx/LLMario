@@ -17,7 +17,7 @@ default-members = [
   "crates/engine/core", "crates/engine/formats", "crates/engine/tokenizer", "crates/engine/model",
   "crates/engine/plan", "crates/engine/kv", "crates/engine/cpu", "crates/engine/sched",
   "crates/engine/decode", "crates/engine/chat", "crates/engine/server", "crates/engine/bin",
-  "crates/engine/testkit", "crates/engine/metal", "crates/engine/tools",
+  "crates/engine/testkit", "crates/engine/metal",
 ]
 
 [workspace.package]
