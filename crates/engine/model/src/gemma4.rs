@@ -272,8 +272,8 @@ fn attention(
         rope_cache(&mut cs, n_dims, pos, theta, ff);
         rope_apply(q, n_head, hd, &cs);
         rope_apply(k, n_kv, hd, &cs);
-        kv.k_row_mut(l, pos0 + t).copy_from_slice(k);
-        kv.v_row_mut(l, pos0 + t).copy_from_slice(v);
+        kv.store_k(l, pos0 + t, k);
+        kv.store_v(l, pos0 + t, v);
     }
     attend(
         pool,
@@ -789,13 +789,13 @@ mod tests {
         assert_eq!(spec.window_bytes(4.0, 64, 4), 3 * (16 + 16) * 4 * 8);
         assert_eq!(
             KvCache::bytes_with_batch(&spec, 64, 4),
-            (16 + 16) * 4 * 64 + 3 * (16 + 16) * 4 * 8
+            (16 + 16) * 2 * 64 + 3 * (16 + 16) * 2 * 8
         );
         // Default headroom: 4 + 512 > 64, so the rings do not wrap and no batch limit applies.
         let kv = KvCache::new(&spec, 64);
         assert_eq!(kv.layers[0].cap, 64);
         assert_eq!(kv.max_batch(), usize::MAX);
-        assert_eq!(KvCache::bytes(&spec, 64), 4 * (16 + 16) * 4 * 64);
+        assert_eq!(KvCache::bytes(&spec, 64), 4 * (16 + 16) * 2 * 64);
         // Scratch accounting matches the allocation with the per-layer maxima.
         let s = Scratch::new(&spec, 8);
         assert_eq!(
@@ -928,12 +928,12 @@ mod tests {
             // Keys: position p has key e_{p mod 8} scaled so q·k is huge where they match; values
             // are the position number broadcast.
             for p in 0..7 {
-                let k = kv.k_row_mut(0, p);
-                k.iter_mut().for_each(|v| *v = 0.0);
+                let mut k = vec![0f32; kv.layers[0].kv_dim];
                 for kvh in 0..n_kv {
                     k[kvh * hd + (p % hd)] = 50.0;
                 }
-                kv.v_row_mut(0, p).iter_mut().for_each(|v| *v = p as f32);
+                kv.store_k(0, p, &k);
+                kv.store_v(0, p, &vec![p as f32; kv.layers[0].v_dim]);
             }
             kv.len = 7;
             // Query of position 6 pointing at the evicted position 2 and (less strongly) at the
