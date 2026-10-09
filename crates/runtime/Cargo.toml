@@ -11,6 +11,7 @@ futures.workspace = true
 llmario-adapter-llamacpp.workspace = true
 llmario-adapter-mlx.workspace = true
 llmario-adapter-mock.workspace = true
+llmario-adapter-native.workspace = true
 llmario-core.workspace = true
 llmario-hardware.workspace = true
 llmario-registry.workspace = true

@@ -1,0 +1,21 @@
+[package]
+name = "llmario-engine-chat"
+description = "Native engine: chat template rendering (HuggingFace-compatible Jinja) and template family detection"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+llmario-engine-core = { workspace = true }
+chrono = { workspace = true }
+minijinja = { workspace = true, features = ["preserve_order", "loop_controls", "adjacent_loop_items"] }
+minijinja-contrib = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true, features = ["preserve_order"] }
+sha2 = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+llmario-engine-formats = { workspace = true }

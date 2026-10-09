@@ -1,0 +1,18 @@
+[package]
+name = "llmario-engine-tokenizer"
+description = "Native engine: tokenizer built from GGUF metadata (byte-level BPE and SentencePiece), llama.cpp-compatible"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+llmario-engine-core = { workspace = true }
+llmario-engine-formats = { workspace = true }
+fancy-regex = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

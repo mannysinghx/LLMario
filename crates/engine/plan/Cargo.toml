@@ -1,0 +1,18 @@
+[package]
+name = "llmario-engine-plan"
+description = "Native engine memory planner: no-alloc dry run, per-device budgets, degradation ladder"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+llmario-engine-core = { workspace = true }
+llmario-engine-formats = { workspace = true }
+llmario-engine-model = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+thiserror = { workspace = true }
