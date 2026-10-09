@@ -2368,93 +2368,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "llmario-adapter-llamacpp"
-version = "0.3.0-beta.3"
-dependencies = [
- "llmario-core",
- "llmario-hardware",
- "llmario-registry",
- "llmario-supervisor",
-]
-
-[[package]]
-name = "llmario-adapter-mlx"
-version = "0.3.0-beta.3"
-dependencies = [
- "llmario-core",
- "llmario-hardware",
- "llmario-registry",
- "llmario-supervisor",
- "serde_json",
-]
-
-[[package]]
-name = "llmario-adapter-mock"
-version = "0.3.0-beta.3"
-dependencies = [
- "anyhow",
- "axum",
- "bytes",
- "futures",
- "llmario-core",
- "llmario-hardware",
- "llmario-registry",
- "llmario-supervisor",
- "serde_json",
- "tokio",
-]
-
-[[package]]
-name = "llmario-adapter-native"
-version = "0.3.0-beta.3"
-dependencies = [
- "llmario-core",
- "llmario-hardware",
- "llmario-registry",
- "llmario-supervisor",
- "serde",
- "serde_json",
- "tracing",
-]
-
-[[package]]
-name = "llmario-api"
-version = "0.3.0-beta.3"
-dependencies = [
- "anyhow",
- "axum",
- "bytes",
- "futures",
- "llmario-core",
- "llmario-registry",
- "llmario-supervisor",
- "reqwest 0.12.28",
- "serde",
- "serde_json",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "llmario-benchmark"
-version = "0.3.0-beta.3"
-dependencies = [
- "anyhow",
- "chrono",
- "futures",
- "llmario-core",
- "llmario-hardware",
- "reqwest 0.12.28",
- "serde",
- "serde_json",
- "tokio",
- "toml 0.9.12+spec-1.1.0",
- "tracing",
-]
-
-[[package]]
-name = "llmario-beta"
-version = "0.3.0-beta.3"
+name = "llmario"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2481,8 +2396,93 @@ dependencies = [
 ]
 
 [[package]]
+name = "llmario-adapter-llamacpp"
+version = "0.2.1"
+dependencies = [
+ "llmario-core",
+ "llmario-hardware",
+ "llmario-registry",
+ "llmario-supervisor",
+]
+
+[[package]]
+name = "llmario-adapter-mlx"
+version = "0.2.1"
+dependencies = [
+ "llmario-core",
+ "llmario-hardware",
+ "llmario-registry",
+ "llmario-supervisor",
+ "serde_json",
+]
+
+[[package]]
+name = "llmario-adapter-mock"
+version = "0.2.1"
+dependencies = [
+ "anyhow",
+ "axum",
+ "bytes",
+ "futures",
+ "llmario-core",
+ "llmario-hardware",
+ "llmario-registry",
+ "llmario-supervisor",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "llmario-adapter-native"
+version = "0.2.1"
+dependencies = [
+ "llmario-core",
+ "llmario-hardware",
+ "llmario-registry",
+ "llmario-supervisor",
+ "serde",
+ "serde_json",
+ "tracing",
+]
+
+[[package]]
+name = "llmario-api"
+version = "0.2.1"
+dependencies = [
+ "anyhow",
+ "axum",
+ "bytes",
+ "futures",
+ "llmario-core",
+ "llmario-registry",
+ "llmario-supervisor",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "llmario-benchmark"
+version = "0.2.1"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "futures",
+ "llmario-core",
+ "llmario-hardware",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "tokio",
+ "toml 0.9.12+spec-1.1.0",
+ "tracing",
+]
+
+[[package]]
 name = "llmario-core"
-version = "0.3.0-beta.3"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "dirs 6.0.0",
@@ -2497,7 +2497,7 @@ dependencies = [
 
 [[package]]
 name = "llmario-desktop"
-version = "0.3.0-beta.3"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "llmario-api",
@@ -2516,7 +2516,7 @@ dependencies = [
 
 [[package]]
 name = "llmario-engine"
-version = "0.3.0-beta.3"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -2536,7 +2536,7 @@ dependencies = [
 
 [[package]]
 name = "llmario-engine-chat"
-version = "0.3.0-beta.3"
+version = "0.2.1"
 dependencies = [
  "chrono",
  "llmario-engine-core",
@@ -2551,7 +2551,7 @@ dependencies = [
 
 [[package]]
 name = "llmario-engine-core"
-version = "0.3.0-beta.3"
+version = "0.2.1"
 dependencies = [
  "half",
  "serde",
@@ -2561,7 +2561,7 @@ dependencies = [
 
 [[package]]
 name = "llmario-engine-cpu"
-version = "0.3.0-beta.3"
+version = "0.2.1"
 dependencies = [
  "half",
  "llmario-engine-core",
@@ -2570,7 +2570,7 @@ dependencies = [
 
 [[package]]
 name = "llmario-engine-decode"
-version = "0.3.0-beta.3"
+version = "0.2.1"
 dependencies = [
  "llguidance",
  "llmario-engine-formats",
@@ -2582,7 +2582,7 @@ dependencies = [
 
 [[package]]
 name = "llmario-engine-formats"
-version = "0.3.0-beta.3"
+version = "0.2.1"
 dependencies = [
  "half",
  "llmario-engine-core",
@@ -2595,7 +2595,7 @@ dependencies = [
 
 [[package]]
 name = "llmario-engine-kv"
-version = "0.3.0-beta.3"
+version = "0.2.1"
 dependencies = [
  "llmario-engine-core",
  "sha2",
@@ -2603,7 +2603,7 @@ dependencies = [
 
 [[package]]
 name = "llmario-engine-metal"
-version = "0.3.0-beta.3"
+version = "0.2.1"
 dependencies = [
  "half",
  "libc",
@@ -2621,7 +2621,7 @@ dependencies = [
 
 [[package]]
 name = "llmario-engine-model"
-version = "0.3.0-beta.3"
+version = "0.2.1"
 dependencies = [
  "half",
  "llmario-engine-core",
@@ -2634,7 +2634,7 @@ dependencies = [
 
 [[package]]
 name = "llmario-engine-plan"
-version = "0.3.0-beta.3"
+version = "0.2.1"
 dependencies = [
  "hex",
  "llmario-engine-core",
@@ -2648,7 +2648,7 @@ dependencies = [
 
 [[package]]
 name = "llmario-engine-sched"
-version = "0.3.0-beta.3"
+version = "0.2.1"
 dependencies = [
  "llmario-engine-core",
  "llmario-engine-kv",
@@ -2656,7 +2656,7 @@ dependencies = [
 
 [[package]]
 name = "llmario-engine-server"
-version = "0.3.0-beta.3"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "axum",
@@ -2682,14 +2682,14 @@ dependencies = [
 
 [[package]]
 name = "llmario-engine-testkit"
-version = "0.3.0-beta.3"
+version = "0.2.1"
 dependencies = [
  "llmario-engine-core",
 ]
 
 [[package]]
 name = "llmario-engine-tokenizer"
-version = "0.3.0-beta.3"
+version = "0.2.1"
 dependencies = [
  "fancy-regex",
  "llmario-engine-core",
@@ -2701,7 +2701,7 @@ dependencies = [
 
 [[package]]
 name = "llmario-engine-tools"
-version = "0.3.0-beta.3"
+version = "0.2.1"
 dependencies = [
  "chrono",
  "dom_query",
@@ -2727,7 +2727,7 @@ dependencies = [
 
 [[package]]
 name = "llmario-hardware"
-version = "0.3.0-beta.3"
+version = "0.2.1"
 dependencies = [
  "hex",
  "libc",
@@ -2740,7 +2740,7 @@ dependencies = [
 
 [[package]]
 name = "llmario-registry"
-version = "0.3.0-beta.3"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2762,7 +2762,7 @@ dependencies = [
 
 [[package]]
 name = "llmario-runtime"
-version = "0.3.0-beta.3"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "futures",
@@ -2782,7 +2782,7 @@ dependencies = [
 
 [[package]]
 name = "llmario-supervisor"
-version = "0.3.0-beta.3"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "chrono",

@@ -30,14 +30,14 @@ jobs:
     env:
       # Smallest GGUF in the model library (537 MiB).
       SMOKE_MODEL: qwen3.5-0.8b-gguf-q4_0
-      LLMARIO_BETA_HOME: ${{ github.workspace }}/.engine-home
+      LLMARIO_HOME: ${{ github.workspace }}/.engine-home
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
 
       - name: Build the CLI and the engine
-        run: cargo build --release --locked -p llmario-beta -p llmario-engine
+        run: cargo build --release --locked -p llmario -p llmario-engine
 
       - name: Model revision pinned in the catalog
         id: rev
@@ -55,7 +55,7 @@ jobs:
 
       - name: Pull the test model (verified against the Hub's SHA-256)
         run: |
-          exe=target/release/llmario-beta
+          exe=target/release/llmario
           if ! "$exe" model list --json | jq -e --arg id "$SMOKE_MODEL" '.[] | select(.id == $id)' > /dev/null; then
             "$exe" model pull "$SMOKE_MODEL"
           fi
