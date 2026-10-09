@@ -86,6 +86,7 @@ async fn models(State(s): State<Shared>) -> Json<Value> {
             "owned_by": "llmario",
             "engine": {"backend": "native", "plan_hash": s.plan.hash, "arch": s.plan.arch,
                        "context": s.plan.ctx_per_slot, "kernels": s.runtime.kernels,
+                       "device": s.runtime.backend,
                        "capabilities": {"tools": false, "json_schema": false, "vision": false}}
         }]
     }))
@@ -105,6 +106,7 @@ async fn stats_get(State(s): State<Shared>) -> Json<Value> {
     let mut v = s.runtime.stats.snapshot();
     v["threads"] = json!(s.runtime.threads);
     v["kernels"] = json!(s.runtime.kernels);
+    v["device"] = json!(s.runtime.backend);
     v["bytes_per_token"] = json!(s.plan.bytes_per_token);
     v["sleeping"] = json!(s.sleeping.load(Ordering::Relaxed));
     Json(v)

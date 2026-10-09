@@ -92,6 +92,10 @@ fn greedy_matches_llama_cpp() {
                     &N.to_string(),
                     "--threads",
                     "8",
+                    // llama.cpp above runs with -ngl 0; compare the CPU path (`auto` would pick
+                    // Metal on Apple machines).
+                    "--device",
+                    "cpu",
                 ])
                 .output()
                 .expect("run raw-run");
