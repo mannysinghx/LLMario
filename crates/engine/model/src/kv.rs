@@ -18,11 +18,17 @@
 //! `cap == max_ctx` the ring never wraps and no batch limit applies. Full-attention layers have
 //! `cap == max_ctx` and `slot(p) == p`.
 
+use half::f16;
+use half::slice::HalfFloatSliceExt;
+
 use crate::arch::{ArchSpec, BlockKind};
 
 /// Default prefill headroom added to a sliding-window ring (`cap = n_swa + SWA_RING_BATCH`) by
 /// [`KvCache::new`] and [`KvCache::bytes`]; [`KvCache::with_batch`] takes an explicit value.
 pub const SWA_RING_BATCH: usize = 512;
+
+/// Bytes per cached K/V element (f16).
+pub const KV_ELEM_BYTES: f64 = 2.0;
 
 /// The recurrent state of one Gated DeltaNet layer (see `gdn.rs` for the layouts).
 pub struct RecurrentState {
@@ -56,10 +62,11 @@ pub struct KvCache {
     pub v_dim: usize,
     /// Slab geometry per attention layer.
     pub layers: Vec<KvLayer>,
-    /// All K slabs back to back: `[cap][kv_dim]` per layer.
-    k: Vec<f32>,
-    /// All V slabs back to back: `[cap][v_dim]` per layer.
-    v: Vec<f32>,
+    /// All K slabs back to back: `[cap][kv_dim]` per layer, stored as f16 (llama.cpp's default
+    /// cache type; half the memory of f32, rounded once on write).
+    k: Vec<f16>,
+    /// All V slabs back to back: `[cap][v_dim]` per layer, f16.
+    v: Vec<f16>,
     /// Tokens currently cached (positions `0..len` are valid, modulo each ring's eviction).
     pub len: usize,
     /// One entry per Gated DeltaNet layer, in layer order (empty for the dense families).
@@ -112,8 +119,8 @@ impl KvCache {
             kv_dim: spec.kv_dim() as usize,
             v_dim: spec.v_dim() as usize,
             layers,
-            k: vec![0f32; k_off],
-            v: vec![0f32; v_off],
+            k: vec![f16::ZERO; k_off],
+            v: vec![f16::ZERO; v_off],
             len: 0,
             rs,
         }
@@ -126,8 +133,8 @@ impl KvCache {
     }
 
     pub fn bytes_with_batch(spec: &ArchSpec, max_ctx: usize, n_batch: usize) -> u64 {
-        spec.kv_bytes_per_token(4.0) * max_ctx as u64
-            + spec.window_bytes(4.0, max_ctx, n_batch)
+        spec.kv_bytes_per_token(KV_ELEM_BYTES) * max_ctx as u64
+            + spec.window_bytes(KV_ELEM_BYTES, max_ctx, n_batch)
             + Self::recurrent_bytes(spec)
     }
 
@@ -163,44 +170,46 @@ impl KvCache {
     }
 
     #[inline]
-    pub fn k_row(&self, layer: usize, pos: usize) -> &[f32] {
+    pub fn k_row(&self, layer: usize, pos: usize) -> &[f16] {
         let l = &self.layers[layer];
         let o = l.k_off + (pos % l.cap) * l.kv_dim;
         &self.k[o..o + l.kv_dim]
     }
     #[inline]
-    pub fn v_row(&self, layer: usize, pos: usize) -> &[f32] {
+    pub fn v_row(&self, layer: usize, pos: usize) -> &[f16] {
         let l = &self.layers[layer];
         let o = l.v_off + (pos % l.cap) * l.v_dim;
         &self.v[o..o + l.v_dim]
     }
+    /// Store the key row of position `pos` (rounded to f16).
     #[inline]
-    pub fn k_row_mut(&mut self, layer: usize, pos: usize) -> &mut [f32] {
+    pub fn store_k(&mut self, layer: usize, pos: usize, k: &[f32]) {
         let l = self.layers[layer];
         let o = l.k_off + (pos % l.cap) * l.kv_dim;
-        &mut self.k[o..o + l.kv_dim]
+        self.k[o..o + l.kv_dim].convert_from_f32_slice(k);
     }
+    /// Store the value row of position `pos` (rounded to f16).
     #[inline]
-    pub fn v_row_mut(&mut self, layer: usize, pos: usize) -> &mut [f32] {
+    pub fn store_v(&mut self, layer: usize, pos: usize, v: &[f32]) {
         let l = self.layers[layer];
         let o = l.v_off + (pos % l.cap) * l.v_dim;
-        &mut self.v[o..o + l.v_dim]
+        self.v[o..o + l.v_dim].convert_from_f32_slice(v);
     }
     /// The whole K slab of one layer, `[cap][kv_dim]`, indexed by [`KvCache::slot`].
     #[inline]
-    pub fn k_slab(&self, layer: usize) -> &[f32] {
+    pub fn k_slab(&self, layer: usize) -> &[f16] {
         let l = &self.layers[layer];
         &self.k[l.k_off..l.k_off + l.cap * l.kv_dim]
     }
     #[inline]
-    pub fn v_slab(&self, layer: usize) -> &[f32] {
+    pub fn v_slab(&self, layer: usize) -> &[f16] {
         let l = &self.layers[layer];
         &self.v[l.v_off..l.v_off + l.cap * l.v_dim]
     }
     /// All keys of one layer for positions `0..n` as one contiguous `[n][kv_dim]` slice
     /// (full-attention layers, or a ring that has not wrapped: `n ≤ cap`).
     #[inline]
-    pub fn k_layer(&self, layer: usize, n: usize) -> &[f32] {
+    pub fn k_layer(&self, layer: usize, n: usize) -> &[f16] {
         let l = &self.layers[layer];
         assert!(
             n <= l.cap,
@@ -210,7 +219,7 @@ impl KvCache {
         &self.k[l.k_off..l.k_off + n * l.kv_dim]
     }
     #[inline]
-    pub fn v_layer(&self, layer: usize, n: usize) -> &[f32] {
+    pub fn v_layer(&self, layer: usize, n: usize) -> &[f16] {
         let l = &self.layers[layer];
         assert!(
             n <= l.cap,

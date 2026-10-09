@@ -186,7 +186,8 @@ pub fn plan(
             fmt(weights)
         )
     });
-    let bytes_per_token = weights + spec.kv_bytes_per_token(4.0) * ctx as u64;
+    let bytes_per_token =
+        weights + spec.kv_bytes_per_token(llmario_engine_model::kv::KV_ELEM_BYTES) * ctx as u64;
     let devices = vec![DeviceTotals {
         device: budget.device,
         weights_mapped: weights,
@@ -207,7 +208,7 @@ pub fn plan(
         slots,
         ctx_per_slot: ctx,
         n_batch,
-        kv_dtype: "f32".into(),
+        kv_dtype: "f16".into(),
         devices,
         planned_peak: planned,
         degradations: steps,

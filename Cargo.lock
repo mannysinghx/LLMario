@@ -2623,6 +2623,7 @@ dependencies = [
 name = "llmario-engine-model"
 version = "0.3.0-beta.3"
 dependencies = [
+ "half",
  "llmario-engine-core",
  "llmario-engine-cpu",
  "llmario-engine-formats",
