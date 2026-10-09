@@ -18,7 +18,8 @@ pub enum TemplateFamily {
     Glm,
     /// `<|tool_call>call:name{k:<|"|>v<|"|>}<tool_call|>` inside `<|turn>` turns (Gemma 4).
     Gemma4,
-    /// `<|python_tag|>`/JSON calls between `<|start_header_id|>`/`<|eot_id|>` (Llama 3.x / 4).
+    /// `<|python_tag|>`/JSON calls between `<|start_header_id|>`/`<|eot_id|>` (Llama 3.x), or
+    /// pythonic `[f(a=1)]` lists between `<|header_start|>`/`<|eot|>` (Llama 4).
     Llama3,
     /// `[TOOL_CALLS]`/`[AVAILABLE_TOOLS]` control tokens (Mistral Small / Ministral / Devstral).
     Mistral,
@@ -26,6 +27,9 @@ pub enum TemplateFamily {
     Harmony,
     /// `<|tool_call_start|>[f(a='b')]<|tool_call_end|>` pythonic calls (LFM2).
     Lfm2,
+    /// `<function_calls>f(k=json)\ng(k=json)</function_calls>` pythonic calls with JSON values
+    /// inside ChatML turns, tools declared in `<functions>` (OLMo 3).
+    Olmo3,
     /// ChatML turn markers (`<|im_start|>`/`<|im_end|>`) without a recognised tool protocol.
     ChatMl,
     /// Nothing matched.
@@ -43,6 +47,7 @@ impl TemplateFamily {
             TemplateFamily::Mistral => "mistral",
             TemplateFamily::Harmony => "harmony",
             TemplateFamily::Lfm2 => "lfm2",
+            TemplateFamily::Olmo3 => "olmo3",
             TemplateFamily::ChatMl => "chatml",
             TemplateFamily::Unknown => "unknown",
         }
@@ -80,8 +85,8 @@ const KNOWN_HASHES: &[(&str, TemplateFamily, &str)] = &[
     ),
     (
         "f5186d42d99c8a0445d37fd8a6c7ccf07fe3e24a29ce622d8bd245da9507b12b",
-        TemplateFamily::ChatMl,
-        "OLMo-3-7B-Instruct (olmo-3-7b-instruct-q4_k_m.gguf): ChatML turns, own <function_calls> syntax",
+        TemplateFamily::Olmo3,
+        "OLMo-3-7B-Instruct (olmo-3-7b-instruct-q4_k_m.gguf): ChatML turns, <function_calls> pythonic syntax",
     ),
 ];
 
@@ -105,8 +110,9 @@ pub fn detect(source: &str, hash_hex: &str) -> TemplateFamily {
 /// | Glm     | `<arg_key>` and `<arg_value>` tags (plus `<\|observation\|>` result role) |
 /// | Lfm2    | `<\|tool_call_start\|>` and `<\|tool_call_end\|>` wrappers                |
 /// | Mistral | `[TOOL_CALLS]` and `[AVAILABLE_TOOLS]` (or `[INST]`) control tokens       |
-/// | Llama3  | `<\|start_header_id\|>` and `<\|eot_id\|>` plus `<\|python_tag\|>`/`ipython` |
+/// | Llama3  | `<\|start_header_id\|>` and `<\|eot_id\|>` plus `<\|python_tag\|>`/`ipython`, or `<\|header_start\|>` and `<\|eot\|>` (Llama 4) |
 /// | Hermes  | `<tool_call>`/`</tool_call>` call wrappers and `<tools>`/`</tools>` list wrappers, without the QwenXml tags |
+/// | Olmo3   | `<function_calls>`/`</function_calls>` call wrappers and `<functions>` declarations inside ChatML turns |
 /// | ChatMl  | `<\|im_start\|>` and `<\|im_end\|>` with no tool family above            |
 fn detect_structural(src: &str) -> TemplateFamily {
     let has = |m: &str| src.contains(m);
@@ -132,8 +138,18 @@ fn detect_structural(src: &str) -> TemplateFamily {
     {
         return TemplateFamily::Llama3;
     }
+    if has("<|header_start|>") && has("<|header_end|>") && has("<|eot|>") {
+        return TemplateFamily::Llama3;
+    }
     if has("<tool_call>") && has("</tool_call>") && has("<tools>") && has("</tools>") {
         return TemplateFamily::Hermes;
+    }
+    if has("<function_calls>")
+        && has("</function_calls>")
+        && has("<functions>")
+        && has("<|im_start|>")
+    {
+        return TemplateFamily::Olmo3;
     }
     if has("<|im_start|>") && has("<|im_end|>") {
         return TemplateFamily::ChatMl;
@@ -185,6 +201,16 @@ mod tests {
         assert_eq!(
             detect_structural("<|start_header_id|>ipython<|end_header_id|><|eot_id|>"),
             TemplateFamily::Llama3
+        );
+        assert_eq!(
+            detect_structural("<|header_start|>assistant<|header_end|>\n\n<|eot|>"),
+            TemplateFamily::Llama3
+        );
+        assert_eq!(
+            detect_structural(
+                "<|im_start|>system\n<functions>{{ tools | tojson }}</functions><function_calls></function_calls>"
+            ),
+            TemplateFamily::Olmo3
         );
         assert_eq!(
             detect_structural("<tools>{{ tool | tojson }}</tools><tool_call>{}</tool_call>"),
