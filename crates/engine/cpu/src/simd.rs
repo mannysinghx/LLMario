@@ -26,6 +26,8 @@ use std::sync::OnceLock;
 #[cfg(target_arch = "x86_64")]
 pub mod avx2;
 pub mod common;
+#[cfg(test)]
+mod gguf_test;
 pub mod int8;
 #[cfg(target_arch = "aarch64")]
 pub mod neon;
