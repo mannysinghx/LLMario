@@ -164,6 +164,10 @@ async fn chat(State(s): State<Shared>, body: axum::body::Bytes) -> Response {
     if req.n.is_some_and(|n| n > 1) {
         return bad_request("n > 1 is not supported");
     }
+    // Refused rather than ignored, as the gateway does, so a client never silently gets none.
+    if req.logprobs == Some(true) || req.top_logprobs.is_some_and(|k| k > 0) {
+        return bad_request("logprobs are not supported yet");
+    }
     let Some(template) = s.runtime.template.clone() else {
         return bad_request("this model has no chat template");
     };
