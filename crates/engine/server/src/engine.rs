@@ -4,7 +4,10 @@
 use crate::{Device, ServeOptions};
 use llmario_engine_chat::ChatTemplate;
 use llmario_engine_core::ledger::{DeviceId, Ledger};
-use llmario_engine_decode::{Sampler, SamplingParams, StopMatcher, StopResult};
+use llmario_engine_decode::{
+    GrammarCache, GrammarProcessor, GrammarSpec, GrammarTokenizer, LazyTrigger, Sampler,
+    SamplingParams, StopMatcher, StopResult,
+};
 use llmario_engine_formats::GgufFile;
 use llmario_engine_model::{ArchSpec, CpuBackend, ModelBackend};
 use llmario_engine_plan::Plan;
@@ -19,6 +22,10 @@ pub struct Job {
     pub params: SamplingParams,
     pub max_tokens: usize,
     pub stop: Vec<String>,
+    /// Constrained decoding (`response_format`, tool grammars); `None` = free text.
+    pub grammar: Option<GrammarSpec>,
+    /// Text that must be generated before the grammar applies (e.g. `</think>`).
+    pub lazy_trigger: Option<String>,
     /// Receives events; a closed receiver cancels the job.
     pub events: tokio::sync::mpsc::Sender<Event>,
 }
@@ -204,12 +211,18 @@ fn load_worker<'a>(
             d.scratch_reserved = backend.reserved_bytes() - d.kv_arena_reserved;
         }),
     }
+    let grammar_env = Arc::new(
+        GrammarTokenizer::from_tokenizer(&tokenizer)
+            .map_err(|e| anyhow::anyhow!("grammar tokenizer: {e}"))?,
+    );
     let mut worker = Worker {
         backend,
         cached: Vec::new(),
         tokenizer,
         stats,
         ledger: ledger_handle,
+        grammar_env,
+        grammar_cache: GrammarCache::new(64),
     };
     // Warm-up: one token through every kernel so the first request pays nothing.
     let bos = worker.tokenizer.bos().unwrap_or(0);
@@ -308,6 +321,8 @@ struct Worker<'a> {
     tokenizer: Arc<Tokenizer>,
     stats: Arc<Stats>,
     ledger: Arc<Ledger>,
+    grammar_env: Arc<GrammarTokenizer>,
+    grammar_cache: GrammarCache,
 }
 
 impl Worker<'_> {
@@ -364,7 +379,21 @@ impl Worker<'_> {
 
         let mut sampler = Sampler::new(job.params.clone(), self.backend.spec().n_vocab as usize);
         for &t in &job.prompt {
-            sampler.accept(t);
+            sampler.accept_prompt(t);
+        }
+        if let Some(spec) = &job.grammar {
+            match self.grammar_cache.get_or_compile(spec, &self.grammar_env) {
+                Ok(compiled) => {
+                    let lazy = job.lazy_trigger.as_deref().map(LazyTrigger::new);
+                    sampler.set_processor(Some(Box::new(GrammarProcessor::new(compiled, lazy))));
+                }
+                Err(e) => {
+                    let _ = job
+                        .events
+                        .blocking_send(Event::Error(format!("grammar: {e}")));
+                    return;
+                }
+            }
         }
         let mut detok = Detokenizer::new(&self.tokenizer);
         let mut stop = StopMatcher::new(job.stop.clone());
