@@ -11,5 +11,5 @@ MLX-LM adapters are unchanged.
 | [reports/Local LLM engine architecture research.md](reports/Local%20LLM%20engine%20architecture%20research.md) | The research synthesis the design is built on (372 sources; every number labelled measured / vendor-claimed / unverified) |
 | [research_notes/Local LLM engine architecture research/](research_notes/Local%20LLM%20engine%20architecture%20research/) | The nine underlying research notes with the source links: engine landscape, quantization and formats, KV cache and attention, CPU execution, GPU/NPU backends, sharding and parallelism, OS memory governance, internet tools and agents, target models |
 
-Status: draft v0.1 for review. When accepted, the architecture becomes ADR 0002 and milestone plans go under
+Status: draft v0.2 for review (2026-10-09: open-source-only constraint applied; no CUDA, no closed NPU runtimes, no proprietary search APIs; Vulkan is the path for every non-Apple GPU). When accepted, the architecture becomes ADR 0002 and milestone plans go under
 `docs/engine/plans/` with a running `docs/engine/STATUS.md`.
