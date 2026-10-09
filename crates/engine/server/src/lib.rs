@@ -7,6 +7,7 @@ pub mod api;
 pub mod engine;
 pub mod footprint;
 pub mod openai;
+pub mod toolcall;
 
 use anyhow::{Context, Result};
 use llmario_engine_core::ledger::{DeviceId, Ledger};

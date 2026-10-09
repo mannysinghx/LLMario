@@ -395,7 +395,9 @@ impl Worker<'_> {
                 }
             }
         }
-        let mut detok = Detokenizer::new(&self.tokenizer);
+        // Special tokens are rendered: tool-call and channel markers are control tokens in several
+        // families, and the output parser downstream needs to see them.
+        let mut detok = Detokenizer::with_special(&self.tokenizer);
         let mut stop = StopMatcher::new(job.stop.clone());
         let mut text_all = String::new();
         let mut emitted = 0usize;

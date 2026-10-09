@@ -1,6 +1,5 @@
 //! OpenAI-compatible request and response types (the subset LLMario's gateway forwards).
 
-use llmario_engine_chat::Message;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -8,7 +7,8 @@ use serde_json::Value;
 #[serde(deny_unknown_fields)]
 pub struct ChatRequest {
     pub model: Option<String>,
-    pub messages: Vec<Message>,
+    /// OpenAI-format messages; converted by `toolcall::to_chat_messages`.
+    pub messages: Vec<Value>,
     #[serde(default)]
     pub stream: bool,
     #[serde(default)]
@@ -29,6 +29,7 @@ pub struct ChatRequest {
     pub n: Option<u32>,
     pub tools: Option<Value>,
     pub tool_choice: Option<Value>,
+    pub parallel_tool_calls: Option<bool>,
     pub response_format: Option<Value>,
     pub logprobs: Option<bool>,
     pub top_logprobs: Option<u32>,
