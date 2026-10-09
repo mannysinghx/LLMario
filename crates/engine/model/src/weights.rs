@@ -1,7 +1,9 @@
 //! Zero-copy weight views resolved from a GGUF file for the dense families (the hybrid family's
-//! layer views are in `hybrid.rs` and hang off [`Weights::hybrid`]).
+//! layer views are in `hybrid.rs` and hang off [`Weights::hybrid`]; Gemma 4's are in `gemma4.rs`
+//! and hang off [`Weights::gemma4`]).
 
 use crate::arch::{ArchSpec, Family};
+use crate::gemma4::Gemma4Weights;
 use crate::hybrid::HybridWeights;
 use crate::{ModelError, Result};
 use llmario_engine_core::dequant::dequantize_row;
@@ -36,6 +38,8 @@ pub struct Weights<'a> {
     pub layers: Vec<LayerWeights<'a>>,
     /// Hybrid-family layers (`Some` only for [`Family::Qwen35`]).
     pub hybrid: Option<HybridWeights<'a>>,
+    /// Gemma 4 layers (`Some` only for [`Family::Gemma4`]).
+    pub gemma4: Option<Gemma4Weights<'a>>,
 }
 
 pub(crate) fn mat<'a>(f: &'a GgufFile, name: &str, cols: u32, rows: u32) -> Result<QMat<'a>> {
@@ -104,6 +108,17 @@ impl<'a> Weights<'a> {
                 output,
                 layers: Vec::new(),
                 hybrid: Some(HybridWeights::load(f, spec)?),
+                gemma4: None,
+            });
+        }
+        if spec.family == Family::Gemma4 {
+            return Ok(Weights {
+                token_embd,
+                output_norm,
+                output,
+                layers: Vec::new(),
+                hybrid: None,
+                gemma4: Some(Gemma4Weights::load(f, spec)?),
             });
         }
         let mut layers = Vec::with_capacity(spec.n_layer as usize);
@@ -137,6 +152,7 @@ impl<'a> Weights<'a> {
             output,
             layers,
             hybrid: None,
+            gemma4: None,
         })
     }
 
@@ -153,6 +169,9 @@ impl<'a> Weights<'a> {
         }
         if let Some(h) = &self.hybrid {
             h.push_dtypes(&mut v);
+        }
+        if let Some(g) = &self.gemma4 {
+            g.push_dtypes(&mut v);
         }
         v.sort();
         v.dedup();

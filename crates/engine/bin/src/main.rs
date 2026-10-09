@@ -106,6 +106,7 @@ const ARCHITECTURES: &[&str] = &[
     "smollm3",
     "qwen35",
     "qwen3next",
+    "gemma4",
 ];
 
 fn main() -> Result<()> {
