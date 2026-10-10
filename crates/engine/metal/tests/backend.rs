@@ -1245,3 +1245,324 @@ fn moe_model_matches_cpu() {
         assert!(diff < tol, "sequence {i}: {diff}");
     }
 }
+
+/// A tiny random Gemma 4 model (four layers: sliding, sliding, global K=V, sliding) with
+/// `hd_swa` / `hd_full` head widths and an `n_swa`-position window (CPU forward tests' generator).
+fn tiny_gemma4(dir: &std::path::Path, hd_swa: u64, hd_full: u64, n_swa: u32) -> std::path::PathBuf {
+    let (d, n_head, n_ff, vocab, n_layer) = (64u64, 4u64, 48u64, 64u64, 4u64);
+    let swa = [true, true, false, true];
+    let (n_kv_swa, n_kv_full) = (2u64, 1u64);
+    let f32s = |n: u64, seed: u64| -> Vec<u8> {
+        (0..n)
+            .flat_map(|i| {
+                let v = (((i * 2654435761 + seed * 97) % 1000) as f32 / 1000.0 - 0.5) * 0.3;
+                v.to_le_bytes()
+            })
+            .collect()
+    };
+    let consts = |n: u64, c: f32| -> Vec<u8> { (0..n).flat_map(|_| c.to_le_bytes()).collect() };
+    let a = "gemma4";
+    let u = |v: u64| MetaValue::U32(v as u32);
+    let mut w = GgufWriter::new();
+    w.meta("general.architecture", MetaValue::Str(a.into()))
+        .meta(&format!("{a}.block_count"), u(n_layer))
+        .meta(&format!("{a}.embedding_length"), u(d))
+        .meta(&format!("{a}.attention.head_count"), u(n_head))
+        .meta(
+            &format!("{a}.attention.head_count_kv"),
+            MetaValue::Array(
+                swa.iter()
+                    .map(|&s| u(if s { n_kv_swa } else { n_kv_full }))
+                    .collect(),
+            ),
+        )
+        .meta(
+            &format!("{a}.attention.sliding_window_pattern"),
+            MetaValue::Array(swa.iter().map(|&s| MetaValue::Bool(s)).collect()),
+        )
+        .meta(
+            &format!("{a}.attention.sliding_window"),
+            MetaValue::U32(n_swa),
+        )
+        .meta(&format!("{a}.attention.key_length"), u(hd_full))
+        .meta(&format!("{a}.attention.value_length"), u(hd_full))
+        .meta(&format!("{a}.attention.key_length_swa"), u(hd_swa))
+        .meta(&format!("{a}.attention.value_length_swa"), u(hd_swa))
+        .meta(&format!("{a}.attention.shared_kv_layers"), u(0))
+        .meta(&format!("{a}.embedding_length_per_layer_input"), u(0))
+        .meta(&format!("{a}.feed_forward_length"), u(n_ff))
+        .meta(&format!("{a}.vocab_size"), u(vocab))
+        .meta(&format!("{a}.context_length"), u(256))
+        .meta(&format!("{a}.rope.freq_base"), MetaValue::F32(1_000_000.0))
+        .meta(&format!("{a}.rope.freq_base_swa"), MetaValue::F32(10_000.0))
+        .meta(&format!("{a}.rope.dimension_count"), u(hd_full))
+        .meta(&format!("{a}.rope.dimension_count_swa"), u(hd_swa))
+        .meta(
+            &format!("{a}.final_logit_softcapping"),
+            MetaValue::F32(30.0),
+        )
+        .meta(
+            &format!("{a}.attention.layer_norm_rms_epsilon"),
+            MetaValue::F32(1e-6),
+        );
+    w.tensor(
+        "token_embd.weight",
+        &[d, vocab],
+        GgmlType::F32,
+        f32s(d * vocab, 1),
+    );
+    w.tensor("output_norm.weight", &[d], GgmlType::F32, consts(d, 1.0));
+    // Proportional RoPE on the global layers: the first quarter of the pairs rotate.
+    let ff: Vec<u8> = (0..hd_full / 2)
+        .flat_map(|i| (if i < hd_full / 8 { 1.0f32 } else { 1e30 }).to_le_bytes())
+        .collect();
+    w.tensor("rope_freqs.weight", &[hd_full / 2], GgmlType::F32, ff);
+    for l in 0..n_layer {
+        let p = |s: &str| format!("blk.{l}.{s}");
+        let (hd, n_kv) = if swa[l as usize] {
+            (hd_swa, n_kv_swa)
+        } else {
+            (hd_full, n_kv_full)
+        };
+        w.tensor(&p("attn_norm.weight"), &[d], GgmlType::F32, consts(d, 1.0));
+        w.tensor(
+            &p("attn_q.weight"),
+            &[d, n_head * hd],
+            GgmlType::F32,
+            f32s(d * n_head * hd, 10 + l),
+        );
+        w.tensor(
+            &p("attn_k.weight"),
+            &[d, n_kv * hd],
+            GgmlType::F32,
+            f32s(d * n_kv * hd, 20 + l),
+        );
+        if swa[l as usize] {
+            w.tensor(
+                &p("attn_v.weight"),
+                &[d, n_kv * hd],
+                GgmlType::F32,
+                f32s(d * n_kv * hd, 30 + l),
+            );
+        }
+        w.tensor(
+            &p("attn_q_norm.weight"),
+            &[hd],
+            GgmlType::F32,
+            f32s(hd, 80 + l),
+        );
+        w.tensor(
+            &p("attn_k_norm.weight"),
+            &[hd],
+            GgmlType::F32,
+            f32s(hd, 90 + l),
+        );
+        w.tensor(
+            &p("attn_output.weight"),
+            &[n_head * hd, d],
+            GgmlType::F32,
+            f32s(n_head * hd * d, 40 + l),
+        );
+        w.tensor(
+            &p("post_attention_norm.weight"),
+            &[d],
+            GgmlType::F32,
+            consts(d, 1.0),
+        );
+        w.tensor(&p("ffn_norm.weight"), &[d], GgmlType::F32, consts(d, 1.0));
+        w.tensor(
+            &p("ffn_gate.weight"),
+            &[d, n_ff],
+            GgmlType::F32,
+            f32s(d * n_ff, 50 + l),
+        );
+        w.tensor(
+            &p("ffn_up.weight"),
+            &[d, n_ff],
+            GgmlType::F32,
+            f32s(d * n_ff, 60 + l),
+        );
+        w.tensor(
+            &p("ffn_down.weight"),
+            &[n_ff, d],
+            GgmlType::F32,
+            f32s(n_ff * d, 70 + l),
+        );
+        w.tensor(
+            &p("post_ffw_norm.weight"),
+            &[d],
+            GgmlType::F32,
+            consts(d, 1.0),
+        );
+        w.tensor(
+            &p("layer_output_scale.weight"),
+            &[1],
+            GgmlType::F32,
+            consts(1, 0.9),
+        );
+    }
+    let p = dir.join(format!("tiny_gemma4_{hd_swa}_{hd_full}_{n_swa}.gguf"));
+    std::fs::write(&p, w.to_bytes()).unwrap();
+    p
+}
+
+/// Gemma 4 on Metal gives the CPU's logits (f16 and q8_0 caches).
+///
+/// - Token by token for 80 positions past a 9-position window (window blocks are released as the
+///   window slides): the GPU's single-token path (f32 activations) against the CPU, tightly.
+/// - A 40-token prompt at once: the batched GEMM path rounds activations to f16 inside its tiles
+///   (as llama.cpp's Metal kernels do), so the tolerance is wider and the top token must agree.
+/// - Three sequences in one call against the CPU running each alone.
+#[test]
+fn gemma4_matches_cpu() {
+    use llmario_engine_metal::MetalOptions;
+    use llmario_engine_model::{CpuOptions, KvType, SeqTokens};
+    if !metal() {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let path = tiny_gemma4(dir.path(), 32, 64, 9);
+    let f = GgufFile::open(&path).unwrap();
+    let toks: Vec<u32> = (0..40).map(|i| (i * 7 + 3) % 64).collect();
+    for kv_type in [KvType::F16, KvType::Q8_0] {
+        let cpu_opts = CpuOptions {
+            kv_type,
+            ..CpuOptions::new(2, 256, 64)
+        };
+        let gpu_opts = MetalOptions {
+            kv_type,
+            ..MetalOptions::new(256, 64)
+        };
+        let q8 = kv_type == KvType::Q8_0;
+        // Single-token path.
+        let mut cpu = CpuBackend::with_options(&f, cpu_opts).unwrap();
+        let mut gpu = MetalBackend::with_options(&f, gpu_opts).unwrap();
+        let tol = if q8 { 2e-2 } else { 1e-3 };
+        let mut next = 3u32;
+        let mut spread = 0f32;
+        for step in 0..80 {
+            let lc = cpu.forward(&[next]).to_vec();
+            let lg = gpu.forward(&[next]).to_vec();
+            spread = spread.max(
+                lc.iter().fold(f32::MIN, |a, &b| a.max(b))
+                    - lc.iter().fold(f32::MAX, |a, &b| a.min(b)),
+            );
+            let diff = max_abs_diff(&lc, &lg);
+            assert!(diff < tol, "{kv_type:?} step {step}: {diff}");
+            next = argmax(&lc) as u32;
+        }
+        assert!(spread > 100.0 * tol, "logit spread {spread}");
+        assert_eq!(gpu.kv_len(), 80);
+        // Prompt at once.
+        let mut cpu = CpuBackend::with_options(&f, cpu_opts).unwrap();
+        let mut gpu = MetalBackend::with_options(&f, gpu_opts).unwrap();
+        let lc = cpu.forward(&toks).to_vec();
+        let lg = gpu.forward(&toks).to_vec();
+        let ptol = if q8 { 2e-2 } else { 6e-3 };
+        let diff = max_abs_diff(&lc, &lg);
+        eprintln!("{kv_type:?}: prompt at once differs by {diff}");
+        assert!(diff < ptol, "{kv_type:?} prompt: {diff}");
+        assert_eq!(argmax(&lc), argmax(&lg));
+    }
+
+    // Three sequences in one call equal the CPU running each alone.
+    let prompts: [&[u32]; 3] = [&toks, &[9], &[4, 8, 15, 16, 23]];
+    let mut gpu = MetalBackend::with_options(
+        &f,
+        MetalOptions {
+            n_seqs: 3,
+            ..MetalOptions::new(256, 64)
+        },
+    )
+    .unwrap();
+    let batch: Vec<SeqTokens> = prompts
+        .iter()
+        .enumerate()
+        .map(|(i, p)| SeqTokens { seq: i, tokens: p })
+        .collect();
+    let got = gpu.forward_batch(&batch).unwrap().to_vec();
+    for (i, p) in prompts.iter().enumerate() {
+        let mut cpu = CpuBackend::new(&f, 2, 256, 64).unwrap();
+        let want = cpu.forward(p).to_vec();
+        let diff = max_abs_diff(&want, &got[i * 64..(i + 1) * 64]);
+        assert!(diff < 6e-3, "sequence {i}: {diff}");
+        assert_eq!(argmax(&want), argmax(&got[i * 64..(i + 1) * 64]));
+    }
+}
+
+/// Window blocks: memory stops growing once the window slides past whole blocks; cutting back
+/// within the live window keeps the prefix, cutting behind it resets the sequence.
+#[test]
+fn gemma4_window_blocks_follow_the_window() {
+    if !metal() {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let path = tiny_gemma4(dir.path(), 32, 64, 9);
+    let f = GgufFile::open(&path).unwrap();
+    let mut gpu = MetalBackend::new(&f, 256, 64).unwrap();
+    let base = gpu.kv_in_use_bytes();
+    gpu.forward(&(0..32).collect::<Vec<u32>>());
+    let one = gpu.kv_in_use_bytes() - base; // one global block + one window block
+    for t in 0..96u32 {
+        gpu.forward(&[t % 64]);
+    }
+    // 128 positions: 4 global blocks, but the window still holds at most 2 window blocks.
+    let used = gpu.kv_in_use_bytes() - base;
+    assert!(
+        used < 4 * one,
+        "window blocks must be released: {used} bytes vs {one} per block pair"
+    );
+    // Cut back by 3 positions: the window behind the new end is still there.
+    gpu.truncate(125);
+    assert_eq!(gpu.kv_len(), 125);
+    // Cut back by 100 positions: the window blocks for position 28 were released.
+    gpu.truncate(28);
+    assert_eq!(gpu.kv_len(), 0, "a released window block forces a reset");
+    assert_eq!(gpu.kv_in_use_bytes(), base);
+}
+
+/// A Gemma 4 sequence whose early window blocks were already released snapshots (paged blocks
+/// plus the visible window blocks) and continues identically in another backend's second slot.
+#[test]
+fn gemma4_snapshot_round_trip() {
+    use llmario_engine_metal::MetalOptions;
+    use llmario_engine_model::SeqTokens;
+    if !metal() {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let path = tiny_gemma4(dir.path(), 32, 64, 9);
+    let f = GgufFile::open(&path).unwrap();
+    let mut a = MetalBackend::new(&f, 256, 64).unwrap();
+    for t in 0..80u32 {
+        a.forward(&[(t * 5 + 1) % 64]);
+    }
+    let snap = a.export_seq(0).unwrap();
+    assert_eq!(snap.len, 80);
+    assert!(!a.snapshot_trimmable());
+    let want = a.forward(&[7]).to_vec();
+    let mut b = MetalBackend::with_options(
+        &f,
+        MetalOptions {
+            n_seqs: 2,
+            ..MetalOptions::new(256, 64)
+        },
+    )
+    .unwrap();
+    assert_eq!(a.kv_fingerprint(), b.kv_fingerprint());
+    b.forward(&[1, 2, 3]);
+    assert!(b.import_seq(1, &snap));
+    let got = b
+        .forward_batch(&[SeqTokens {
+            seq: 1,
+            tokens: &[7],
+        }])
+        .unwrap()
+        .to_vec();
+    assert!(
+        max_abs_diff(&want, &got) < 1e-5,
+        "{}",
+        max_abs_diff(&want, &got)
+    );
+}

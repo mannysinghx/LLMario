@@ -10,6 +10,7 @@ use crate::{DeviceInfo, MetalError, MetalOptions, Result};
 use llmario_engine_core::GgmlType;
 use llmario_engine_cpu::{QMat, RopeKind};
 use llmario_engine_formats::GgufFile;
+use llmario_engine_model::arch::{AttnGeom, RopeSpec};
 use llmario_engine_model::weights::Weights;
 use llmario_engine_model::{ArchSpec, KvFull, KvType, ModelBackend, SeqTokens};
 use std::sync::Arc;
@@ -34,15 +35,33 @@ struct LayerConsts {
     bq: Option<usize>,
     bk: Option<usize>,
     bv: Option<usize>,
+    /// Gemma 4: norms applied to each block's output before the residual add.
+    post_attn_norm: Option<usize>,
+    post_ffn_norm: Option<usize>,
+    /// RoPE angle divisors (Gemma 4 global layers).
+    rope_ff: Option<usize>,
 }
 
 struct LayerRefs {
     wq: WRef,
     wk: WRef,
-    wv: WRef,
+    /// `None` on Gemma 4's K=V layers: V is the raw K projection.
+    wv: Option<WRef>,
     wo: WRef,
     ffn: Ffn,
     c: LayerConsts,
+    geom: AttnGeom,
+    rope: RopeSpec,
+    /// RoPE off (NoPE layers).
+    nope: bool,
+    /// Weightless per-head RMS norm on V (Gemma 4).
+    v_norm: bool,
+    /// GeGLU instead of SwiGLU (Gemma 4).
+    gelu: bool,
+    /// Multiplies the residual after the layer (Gemma 4 `layer_output_scale`).
+    out_scale: Option<f32>,
+    /// Decode attention kernel for this layer's head widths and cache type.
+    attn_vec: &'static str,
 }
 
 enum Ffn {
@@ -107,7 +126,7 @@ const GEMV_ROWS_PER_TG: usize = GEMV_NSG * GEMV_NR;
 const GEMM_BM: usize = 64;
 const GEMM_BN: usize = 32;
 const ATTN_TG: usize = 128;
-const ATTN_MAX_HD: usize = 256;
+const ATTN_MAX_HD: usize = 512;
 /// Query rows per threadgroup of the prefill (flash) attention kernel; q/attn buffers and the KV
 /// cache are padded to this so the kernel's whole-tile loads and stores stay in bounds.
 const FA_BQ: usize = 32;
@@ -184,7 +203,15 @@ struct QkRopeParams {
     theta: f32,
     freq_scale: f32,
     attn_factor: f32,
+    v_norm: u32,
+    has_ff: u32,
     kv: KvPage,
+}
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct ScaleParams {
+    n: u32,
+    s: f32,
 }
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -198,7 +225,7 @@ struct AttnParams {
     n_split: u32,
     split_len: u32,
     scale: f32,
-    pad0: u32,
+    window: u32,
     pad1: u32,
     pad2: u32,
     kv: KvPage,
@@ -264,6 +291,7 @@ enum Kind {
     Gemv,
     GemvAcc,
     GemvGlu,
+    GemvGeglu,
     Gemm,
     GemvId,
     GemvGluId,
@@ -301,6 +329,13 @@ fn kernel_name(kind: Kind, dtype: GgmlType) -> Result<&'static str> {
         (Kind::GemvGlu, T::Q4_K) => "gemv_glu_q4_k",
         (Kind::GemvGlu, T::Q5_K) => "gemv_glu_q5_k",
         (Kind::GemvGlu, T::Q6_K) => "gemv_glu_q6_k",
+        (Kind::GemvGeglu, T::F32) => "gemv_geglu_f32",
+        (Kind::GemvGeglu, T::F16) => "gemv_geglu_f16",
+        (Kind::GemvGeglu, T::Q4_0) => "gemv_geglu_q4_0",
+        (Kind::GemvGeglu, T::Q8_0) => "gemv_geglu_q8_0",
+        (Kind::GemvGeglu, T::Q4_K) => "gemv_geglu_q4_k",
+        (Kind::GemvGeglu, T::Q5_K) => "gemv_geglu_q5_k",
+        (Kind::GemvGeglu, T::Q6_K) => "gemv_geglu_q6_k",
         (Kind::Gemm, T::F32) => "gemm_f32",
         (Kind::Gemm, T::F16) => "gemm_f16",
         (Kind::Gemm, T::Q4_0) => "gemm_q4_0",
@@ -364,9 +399,7 @@ pub struct MetalBackend<'a> {
     n_batch: usize,
     /// Sequences one call may carry (the scratch's logits rows).
     max_seqs: usize,
-    /// Decode attention kernel for this head geometry and cache type.
-    attn_vec: &'static str,
-    /// Prefill attention kernel (`None`: use `attn_vec` for every batch).
+    /// Prefill attention kernel (`None`: every row takes its layer's decode kernel).
     attn_prefill: Option<&'static str>,
     qk_rope_kv: &'static str,
     reserved: u64,
@@ -409,7 +442,11 @@ impl<'a> MetalBackend<'a> {
             )));
         }
         let weights = Weights::load(file, &spec)?;
-        if weights.hybrid.is_some() || weights.layers.len() != spec.n_layer as usize {
+        let n_layer_w = match &weights.gemma4 {
+            Some(g) => g.layers.len(),
+            None => weights.layers.len(),
+        };
+        if weights.hybrid.is_some() || n_layer_w != spec.n_layer as usize {
             return Err(MetalError::Unsupported(format!(
                 "family {:?} (its layer layout) is CPU-only in this build",
                 spec.family
@@ -418,49 +455,58 @@ impl<'a> MetalBackend<'a> {
         let n_batch = n_batch.max(1);
         let max_ctx = max_ctx.max(1);
         let d = spec.d_model as usize;
-        let hd = spec.head_dim as usize;
-        let hdv = spec.head_dim_v as usize;
-        if hd > ATTN_MAX_HD || hdv > ATTN_MAX_HD {
-            return Err(MetalError::Unsupported(format!(
-                "head_dim {hd}/{hdv} > {ATTN_MAX_HD}"
-            )));
-        }
-        if spec.rope.dim % 2 != 0 || spec.rope.dim as usize > hd {
-            return Err(MetalError::Unsupported(format!(
-                "rope dim {} for head_dim {hd}",
-                spec.rope.dim
-            )));
-        }
         if d % 16 != 0 {
             return Err(MetalError::Unsupported(format!(
                 "d_model {d} is not a multiple of 16"
             )));
         }
-        if !kv_type.supports_head_dim(hd) || !kv_type.supports_head_dim(hdv) {
-            return Err(MetalError::Unsupported(format!(
-                "KV cache type {} with head width {hd}/{hdv} (needs multiples of 32)",
-                kv_type.name()
-            )));
-        }
         let q8 = kv_type == KvType::Q8_0;
-        let attn_vec = match ((hd, hdv), q8) {
+        let attn_vec_for = |hd: usize, hdv: usize| match ((hd, hdv), q8) {
             ((32, 32), false) => "attn_vec_hd32_f16",
             ((64, 64), false) => "attn_vec_hd64_f16",
             ((128, 128), false) => "attn_vec_hd128_f16",
             ((256, 256), false) => "attn_vec_hd256_f16",
+            ((512, 512), false) => "attn_vec_hd512_f16",
             (_, false) => "attn_vec_generic_f16",
             ((32, 32), true) => "attn_vec_hd32_q8_0",
             ((64, 64), true) => "attn_vec_hd64_q8_0",
             ((128, 128), true) => "attn_vec_hd128_q8_0",
             ((256, 256), true) => "attn_vec_hd256_q8_0",
+            ((512, 512), true) => "attn_vec_hd512_q8_0",
             (_, true) => "attn_vec_generic_q8_0",
         };
-        let attn_prefill = match ((hd, hdv), q8) {
+        let prefill_for = |hd: usize, hdv: usize| match ((hd, hdv), q8) {
             ((64, 64), false) => Some("attn_prefill_hd64_f16"),
             ((128, 128), false) => Some("attn_prefill_hd128_f16"),
             ((64, 64), true) => Some("attn_prefill_hd64_q8_0"),
             ((128, 128), true) => Some("attn_prefill_hd128_q8_0"),
             _ => None,
+        };
+        // Per-layer geometry: every head width the kernels and the cache type must cover.
+        let geoms: Vec<AttnGeom> = (0..spec.n_layer as usize)
+            .map(|l| spec.attn_geom(l))
+            .collect();
+        for (l, g) in geoms.iter().enumerate() {
+            let (hd, hdv) = (g.head_dim as usize, g.head_dim_v as usize);
+            if hd > ATTN_MAX_HD || hdv > ATTN_MAX_HD {
+                return Err(MetalError::Unsupported(format!(
+                    "layer {l}: head_dim {hd}/{hdv} > {ATTN_MAX_HD}"
+                )));
+            }
+            if !kv_type.supports_head_dim(hd) || !kv_type.supports_head_dim(hdv) {
+                return Err(MetalError::Unsupported(format!(
+                    "KV cache type {} with head width {hd}/{hdv} (needs multiples of 32)",
+                    kv_type.name()
+                )));
+            }
+        }
+        // The flash prefill kernel has no window mask; models with window layers (or mixed head
+        // widths) run every prompt row through the decode kernel.
+        let g0 = geoms[0];
+        let attn_prefill = if geoms.iter().all(|g| *g == g0 && g.window.is_none()) {
+            prefill_for(g0.head_dim as usize, g0.head_dim_v as usize)
+        } else {
+            None
         };
         let qk_rope_kv = if q8 {
             "qk_rope_kv_q8_0"
@@ -524,8 +570,65 @@ impl<'a> MetalBackend<'a> {
             off
         };
         let output_norm_off = push(&weights.output_norm);
-        let mut layers = Vec::with_capacity(weights.layers.len());
-        for l in &weights.layers {
+        let rope_ff = weights
+            .gemma4
+            .as_ref()
+            .and_then(|g| g.rope_freqs.as_deref())
+            .map(&mut push);
+        let check_rope = |l: usize, r: &RopeSpec, hd: u32| -> Result<()> {
+            if r.dim % 2 != 0 || r.dim > hd {
+                return Err(MetalError::Unsupported(format!(
+                    "layer {l}: rope dim {} for head_dim {hd}",
+                    r.dim
+                )));
+            }
+            Ok(())
+        };
+        let mut layers = Vec::with_capacity(spec.n_layer as usize);
+        if let Some(gw) = &weights.gemma4 {
+            let g = spec.gemma4.as_ref().expect("Gemma 4 spec");
+            for (l, lw) in gw.layers.iter().enumerate() {
+                let geom = geoms[l];
+                let (rope, ff) = match geom.window {
+                    Some(_) => (g.rope_swa.clone(), None),
+                    None => (spec.rope.clone(), rope_ff),
+                };
+                check_rope(l, &rope, geom.head_dim)?;
+                let c = LayerConsts {
+                    attn_norm: push(&lw.attn_norm),
+                    ffn_norm: push(&lw.ffn_norm),
+                    q_norm: Some(push(&lw.q_norm)),
+                    k_norm: Some(push(&lw.k_norm)),
+                    bq: None,
+                    bk: None,
+                    bv: None,
+                    post_attn_norm: Some(push(&lw.post_attn_norm)),
+                    post_ffn_norm: Some(push(&lw.post_ffn_norm)),
+                    rope_ff: ff,
+                };
+                layers.push(LayerRefs {
+                    wq: locate(&lw.wq)?,
+                    wk: locate(&lw.wk)?,
+                    wv: lw.wv.as_ref().map(&locate).transpose()?,
+                    wo: locate(&lw.wo)?,
+                    ffn: Ffn::Dense {
+                        gate: locate(&lw.w_gate)?,
+                        up: locate(&lw.w_up)?,
+                        down: locate(&lw.w_down)?,
+                    },
+                    c,
+                    geom,
+                    rope,
+                    nope: false,
+                    v_norm: true,
+                    gelu: true,
+                    out_scale: lw.out_scale,
+                    attn_vec: attn_vec_for(geom.head_dim as usize, geom.head_dim_v as usize),
+                });
+            }
+        }
+        for (li, l) in weights.layers.iter().enumerate() {
+            check_rope(li, &spec.rope, geoms[li].head_dim)?;
             let c = LayerConsts {
                 attn_norm: push(&l.attn_norm),
                 ffn_norm: push(&l.ffn_norm),
@@ -534,6 +637,9 @@ impl<'a> MetalBackend<'a> {
                 bq: l.bq.as_deref().map(&mut push),
                 bk: l.bk.as_deref().map(&mut push),
                 bv: l.bv.as_deref().map(&mut push),
+                post_attn_norm: None,
+                post_ffn_norm: None,
+                rope_ff: None,
             };
             let ffn = match &l.moe {
                 Some(mw) => {
@@ -558,13 +664,21 @@ impl<'a> MetalBackend<'a> {
                     down: locate(&l.w_down)?,
                 },
             };
+            let geom = geoms[li];
             layers.push(LayerRefs {
                 wq: locate(&l.wq)?,
                 wk: locate(&l.wk)?,
-                wv: locate(&l.wv)?,
+                wv: Some(locate(&l.wv)?),
                 wo: locate(&l.wo)?,
                 ffn,
                 c,
+                geom,
+                rope: spec.rope.clone(),
+                nope: spec.nope_layers.contains(&(li as u32)),
+                v_norm: false,
+                gelu: false,
+                out_scale: None,
+                attn_vec: attn_vec_for(geom.head_dim as usize, geom.head_dim_v as usize),
             });
         }
         let token_embd = locate(&weights.token_embd)?;
@@ -576,17 +690,22 @@ impl<'a> MetalBackend<'a> {
         consts_buf.write_f32(0, &consts);
 
         // --- Paged KV cache (blocks created on demand) and scratch, allocated once.
-        let kv_dim = spec.kv_dim() as usize;
-        let v_dim = spec.v_dim() as usize;
-        let kv = MetalKv::new(&gpu, &spec, max_ctx, max_seqs, kv_type)?;
+        let kv_dim = spec.max_kv_dim() as usize;
+        let v_dim = spec.max_v_dim() as usize;
+        let hdv = geoms
+            .iter()
+            .map(|g| g.head_dim_v as usize)
+            .max()
+            .unwrap_or(0);
+        let kv = MetalKv::new(&gpu, &spec, max_ctx, max_seqs, n_batch, kv_type)?;
         let nb = n_batch_alloc;
         let s = Scratch {
             x: gpu.alloc(nb * d * 4)?,
             h: gpu.alloc(nb * d * 4)?,
-            q: gpu.alloc(nb * spec.q_dim() as usize * 4)?,
+            q: gpu.alloc(nb * spec.max_q_dim() as usize * 4)?,
             k: gpu.alloc(nb * kv_dim * 4)?,
             v: gpu.alloc(nb * v_dim * 4)?,
-            attn: gpu.alloc(nb * spec.n_head as usize * hdv * 4)?,
+            attn: gpu.alloc(nb * spec.max_attn_dim() as usize * 4)?,
             gate: gpu.alloc(nb * spec.n_ff as usize * 4)?,
             up: gpu.alloc(nb * spec.n_ff as usize * 4)?,
             ffn: gpu.alloc(nb * d * 4)?,
@@ -669,6 +788,9 @@ impl<'a> MetalBackend<'a> {
             &consts_buf,
         ];
         kv_refs.extend(moe_bufs.iter().copied());
+        if let Some(w) = &kv.win {
+            kv_refs.push(&w.table);
+        }
         gpu.make_resident(residency_owner, "llmario-scratch", &kv_refs);
         tracing::info!(
             device = %gpu.info.name,
@@ -698,7 +820,6 @@ impl<'a> MetalBackend<'a> {
             max_ctx,
             n_batch,
             max_seqs,
-            attn_vec,
             attn_prefill,
             qk_rope_kv,
             reserved,
@@ -840,15 +961,23 @@ impl<'a> MetalBackend<'a> {
         }
     }
 
-    /// `y = silu(W1 x) * (W2 x)` for one token (gate and up fused).
-    fn project_glu(&self, cmd: &Cmd, w1: &WRef, w2: &WRef, x: &Buf, y: &Buf) -> Result<()> {
+    /// `y = act(W1 x) * (W2 x)` for one token (gate and up fused; `kind` picks SiLU or GELU).
+    fn project_glu(
+        &self,
+        cmd: &Cmd,
+        kind: Kind,
+        w1: &WRef,
+        w2: &WRef,
+        x: &Buf,
+        y: &Buf,
+    ) -> Result<()> {
         debug_assert_eq!(w1.dtype, w2.dtype);
         let p = GemvParams {
             rows: w1.rows as u32,
             cols: w1.cols as u32,
         };
         cmd.dispatch(
-            kernel_name(Kind::GemvGlu, w1.dtype)?,
+            kernel_name(kind, w1.dtype)?,
             &[
                 (0, &self.views[w1.view], w1.off),
                 (1, x, 0),
@@ -935,16 +1064,17 @@ impl<'a> MetalBackend<'a> {
 
     /// One attention layer over the stacked rows: QKV, per-head norm + RoPE + paged KV write,
     /// decode attention for the rows of `segs[..n_vec]` (one dispatch), prefill attention per
-    /// remaining segment, output projection with the residual.
+    /// remaining segment, output projection with the residual (through the post-norm on Gemma 4).
     fn attention_block(&self, cmd: &Cmd, l: usize, rows: &Rows) -> Result<()> {
         let n = rows.n;
         let spec = &self.spec;
         let layer = &self.layers[l];
         let d = spec.d_model as usize;
-        let n_head = spec.n_head as usize;
-        let n_kv = spec.n_kv_head as usize;
-        let hd = spec.head_dim as usize;
-        let hdv = spec.head_dim_v as usize;
+        let g = layer.geom;
+        let n_head = g.n_head as usize;
+        let n_kv = g.n_kv_head as usize;
+        let hd = g.head_dim as usize;
+        let hdv = g.head_dim_v as usize;
         let kv_dim = n_kv * hd;
         let v_dim = n_kv * hdv;
         let s = &self.s;
@@ -953,7 +1083,9 @@ impl<'a> MetalBackend<'a> {
         cmd.barrier();
         self.project(cmd, &layer.wq, &s.h, 0, n, &s.q, false)?;
         self.project(cmd, &layer.wk, &s.h, 0, n, &s.k, false)?;
-        self.project(cmd, &layer.wv, &s.h, 0, n, &s.v, false)?;
+        if let Some(wv) = &layer.wv {
+            self.project(cmd, wv, &s.h, 0, n, &s.v, false)?;
+        }
         cmd.barrier();
         if layer.c.bq.is_some() || layer.c.bk.is_some() || layer.c.bv.is_some() {
             if let Some(b) = layer.c.bq {
@@ -967,9 +1099,9 @@ impl<'a> MetalBackend<'a> {
             }
             cmd.barrier();
         }
-        let page = self.kv_page(l);
+        let (page, table) = self.kv_page(l);
         {
-            let r = &spec.rope;
+            let r = &layer.rope;
             let p = QkRopeParams {
                 n_tokens: n as u32,
                 n_head: n_head as u32,
@@ -983,23 +1115,28 @@ impl<'a> MetalBackend<'a> {
                 },
                 q_norm: layer.c.q_norm.is_some() as u32,
                 k_norm: layer.c.k_norm.is_some() as u32,
-                rope: (!spec.nope_layers.contains(&(l as u32))) as u32,
+                rope: (!layer.nope) as u32,
                 eps: spec.rms_eps,
                 theta: r.theta,
                 freq_scale: r.freq_scale,
                 attn_factor: r.attn_factor,
+                v_norm: layer.v_norm as u32,
+                has_ff: layer.c.rope_ff.is_some() as u32,
                 kv: page,
             };
+            // K=V layers: V is the raw K projection (the kernel never writes K back).
+            let v_src = if layer.wv.is_some() { &s.v } else { &s.k };
             cmd.dispatch(
                 self.qk_rope_kv,
                 &[
                     (0, &s.q, 0),
                     (1, &s.k, 0),
-                    (2, &s.v, 0),
+                    (2, v_src, 0),
                     (3, &self.consts, layer.c.q_norm.unwrap_or(0)),
                     (4, &self.consts, layer.c.k_norm.unwrap_or(0)),
-                    (5, &self.kv.table, 0),
+                    (5, table, 0),
                     (6, &s.tokpos, 0),
+                    (8, &self.consts, layer.c.rope_ff.unwrap_or(0)),
                 ],
                 7,
                 &p,
@@ -1008,6 +1145,11 @@ impl<'a> MetalBackend<'a> {
             )?;
             cmd.barrier();
         }
+        let window = g.window.unwrap_or(0) as usize;
+        let scale = match &spec.gemma4 {
+            Some(gs) => gs.attn_scale,
+            None => 1.0 / (hd as f32).sqrt(),
+        };
         let base = AttnParams {
             n_q: 0,
             n_head: n_head as u32,
@@ -1017,8 +1159,8 @@ impl<'a> MetalBackend<'a> {
             pos0: 0,
             n_split: 1,
             split_len: 1,
-            scale: 1.0 / (hd as f32).sqrt(),
-            pad0: 0,
+            scale,
+            window: window as u32,
             pad1: 0,
             pad2: 0,
             kv: page,
@@ -1028,22 +1170,28 @@ impl<'a> MetalBackend<'a> {
         if rows.n_vec > 0 {
             let n_vec = rows.n_vec;
             let n_pos_max = rows.max_vec_pos + 1;
+            // Keys one query sees: its whole sequence, or the window.
+            let span = if window > 0 {
+                n_pos_max.min(window)
+            } else {
+                n_pos_max
+            };
             let n_split = if n_vec * n_head >= ATTN_SPLIT_PAIRS {
                 1
             } else {
-                n_pos_max.div_ceil(ATTN_SPLIT_KEYS).clamp(1, ATTN_MAX_SPLIT)
+                span.div_ceil(ATTN_SPLIT_KEYS).clamp(1, ATTN_MAX_SPLIT)
             };
             let p = AttnParams {
                 n_q: n_vec as u32,
                 n_split: n_split as u32,
-                split_len: n_pos_max.div_ceil(n_split).max(1) as u32,
+                split_len: span.div_ceil(n_split).max(1) as u32,
                 ..base
             };
             cmd.dispatch(
-                self.attn_vec,
+                layer.attn_vec,
                 &[
                     (0, &s.q, 0),
-                    (1, &self.kv.table, 0),
+                    (1, table, 0),
                     (2, &s.tokpos, 0),
                     (3, &s.attn, 0),
                     (4, &s.part, 0),
@@ -1092,15 +1240,24 @@ impl<'a> MetalBackend<'a> {
             )?;
         }
         cmd.barrier();
-        // x += Wo attn (residual fused into the projection).
-        self.project(cmd, &layer.wo, &s.attn, 0, n, &s.x, true)?;
+        match layer.c.post_attn_norm {
+            // x += post_norm(Wo attn)
+            Some(w) => {
+                self.project(cmd, &layer.wo, &s.attn, 0, n, &s.ffn, false)?;
+                cmd.barrier();
+                self.rms_norm_add(cmd, &s.ffn, w, &s.x, n, d)?;
+            }
+            // x += Wo attn (residual fused into the projection).
+            None => self.project(cmd, &layer.wo, &s.attn, 0, n, &s.x, true)?,
+        }
         cmd.barrier();
         Ok(())
     }
 
-    fn kv_page(&self, l: usize) -> KvPage {
+    /// Cache addressing of layer `l` and the table it reads (window layers have their own pool).
+    fn kv_page(&self, l: usize) -> (KvPage, &Buf) {
         let lay = &self.kv.layout.layers[l];
-        KvPage {
+        let common = KvPage {
             shift: BLOCK_TOKENS.trailing_zeros(),
             mask: (BLOCK_TOKENS - 1) as u32,
             k_base: lay.k_base() as u32,
@@ -1109,7 +1266,55 @@ impl<'a> MetalBackend<'a> {
             v_row: lay.v_row as u32,
             bps: self.kv.layout.blocks_per_seq as u32,
             pad: 0,
+        };
+        match (self.kv.window_bases(l), &self.kv.win) {
+            (Some((kb, vb)), Some(w)) => (
+                KvPage {
+                    k_base: kb as u32,
+                    v_base: vb as u32,
+                    bps: w.bps as u32,
+                    ..common
+                },
+                &w.table,
+            ),
+            _ => (common, &self.kv.table),
         }
+    }
+
+    /// `x += rms_norm(y) · w` for `rows` rows.
+    fn rms_norm_add(
+        &self,
+        cmd: &Cmd,
+        y: &Buf,
+        w_off: usize,
+        x: &Buf,
+        rows: usize,
+        cols: usize,
+    ) -> Result<()> {
+        let p = NormParams {
+            cols: cols as u32,
+            eps: self.spec.rms_eps,
+        };
+        cmd.dispatch(
+            "rms_norm_add",
+            &[(0, y, 0), (1, &self.consts, w_off), (2, x, 0)],
+            3,
+            &p,
+            (rows, 1, 1),
+            (NORM_TG, 1, 1),
+        )
+    }
+
+    /// `x[..n] *= s` (or the soft-cap `x = s · tanh(x / s)` with `name = "softcap"`).
+    fn scale(&self, cmd: &Cmd, name: &'static str, x: &Buf, n: usize, s: f32) -> Result<()> {
+        cmd.dispatch(
+            name,
+            &[(0, x, 0)],
+            1,
+            &ScaleParams { n: n as u32, s },
+            (groups(n, ELEM_TG), 1, 1),
+            (ELEM_TG, 1, 1),
+        )
     }
 
     fn ffn_block(&self, cmd: &Cmd, l: usize, n: usize) -> Result<()> {
@@ -1125,18 +1330,36 @@ impl<'a> MetalBackend<'a> {
             Ffn::Moe { .. } => return self.moe_block(cmd, &layer.ffn, n),
         };
         if n == 1 && gate.dtype == up.dtype {
-            self.project_glu(cmd, gate, up, &s.h, &s.gate)?;
+            let kind = if layer.gelu {
+                Kind::GemvGeglu
+            } else {
+                Kind::GemvGlu
+            };
+            self.project_glu(cmd, kind, gate, up, &s.h, &s.gate)?;
             cmd.barrier();
         } else {
             self.project(cmd, gate, &s.h, 0, n, &s.gate, false)?;
             self.project(cmd, up, &s.h, 0, n, &s.up, false)?;
             cmd.barrier();
-            self.elem(cmd, "swiglu", &s.gate, &s.up, n * n_ff)?;
+            let act = if layer.gelu { "geglu" } else { "swiglu" };
+            self.elem(cmd, act, &s.gate, &s.up, n * n_ff)?;
             cmd.barrier();
         }
-        // x += Wd gate
-        self.project(cmd, down, &s.gate, 0, n, &s.x, true)?;
+        match layer.c.post_ffn_norm {
+            // x += post_norm(Wd gate)
+            Some(w) => {
+                self.project(cmd, down, &s.gate, 0, n, &s.ffn, false)?;
+                cmd.barrier();
+                self.rms_norm_add(cmd, &s.ffn, w, &s.x, n, d)?;
+            }
+            // x += Wd gate
+            None => self.project(cmd, down, &s.gate, 0, n, &s.x, true)?,
+        }
         cmd.barrier();
+        if let Some(sc) = layer.out_scale {
+            self.scale(cmd, "scale_inplace", &s.x, n * d, sc)?;
+            cmd.barrier();
+        }
         Ok(())
     }
 
@@ -1328,6 +1551,10 @@ impl<'a> MetalBackend<'a> {
         let n = rows.n;
         self.embed(cmd, n)?;
         cmd.barrier();
+        if let Some(g) = &self.spec.gemma4 {
+            self.scale(cmd, "scale_inplace", &self.s.x, n * d, g.embed_scale)?;
+            cmd.barrier();
+        }
         for l in 0..self.layers.len() {
             self.attention_block(cmd, l, rows)?;
             self.ffn_block(cmd, l, n)?;
@@ -1355,7 +1582,18 @@ impl<'a> MetalBackend<'a> {
             rows.outs.len(),
             &self.s.logits,
             false,
-        )
+        )?;
+        let cap = self
+            .spec
+            .gemma4
+            .as_ref()
+            .map_or(0.0, |g| g.final_logit_softcap);
+        if cap > 0.0 {
+            cmd.barrier();
+            let m = rows.outs.len() * self.spec.n_vocab as usize;
+            self.scale(cmd, "softcap", &self.s.logits, m, cap)?;
+        }
+        Ok(())
     }
 
     /// Lay out a batch: decode-style segments first (so their rows are one contiguous range for
@@ -1584,7 +1822,7 @@ impl ModelBackend for MetalBackend<'_> {
         self.kv.snapshot_bytes(len)
     }
     fn snapshot_trimmable(&self) -> bool {
-        true
+        self.kv.win.is_none()
     }
     fn write_seq(&self, s: usize, w: &mut dyn std::io::Write) -> std::io::Result<()> {
         self.kv.write_seq(s, w)

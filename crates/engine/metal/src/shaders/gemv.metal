@@ -219,7 +219,18 @@ static inline void gemv_rows(TagQ6_K, device const uchar* W, device const float*
     }
 }
 
-// Variants: 0 = store, 1 = accumulate into y, 2 = GLU (silu(W x) * (W2 x)).
+// GELU of ggml-cpu (fp16 table semantics; misc.metal `gelu_fp16`, repeated here because the GEMV
+// source comes first).
+static inline float gemv_gelu(float x) {
+    if (x <= -10.0f) return 0.0f;
+    if (x >= 10.0f) return x;
+    const float h = float(half(x));
+    const float g = 0.5f * h * (1.0f + precise::tanh(0.7978845608f * h * (1.0f + 0.044715f * h * h)));
+    return float(half(g));
+}
+
+// Variants: 0 = store, 1 = accumulate into y, 2 = SwiGLU (silu(W x) * (W2 x)), 3 = GeGLU
+// (gelu(W x) * (W2 x)).
 template <typename Tag, int VARIANT>
 kernel void gemv_t(device const uchar* W [[buffer(0)]],
                    device const float* x [[buffer(1)]],
@@ -232,13 +243,15 @@ kernel void gemv_t(device const uchar* W [[buffer(0)]],
     const uint row0 = (tgpig * GEMV_NSG + sgitg) * GEMV_NR;
     float acc[GEMV_NR] = {0.0f, 0.0f};
     gemv_rows(Tag(), W, x, row0, p.rows, p.cols, tiisg, acc);
-    if (VARIANT == 2) {
+    if (VARIANT == 2 || VARIANT == 3) {
         float acc2[GEMV_NR] = {0.0f, 0.0f};
         gemv_rows(Tag(), W2, x, row0, p.rows, p.cols, tiisg, acc2);
         for (int r = 0; r < GEMV_NR; r++) {
             const float g = simd_sum(acc[r]);
             const float u = simd_sum(acc2[r]);
-            if (tiisg == 0 && row0 + r < p.rows) y[row0 + r] = g / (1.0f + precise::exp(-g)) * u;
+            if (tiisg == 0 && row0 + r < p.rows) {
+                y[row0 + r] = (VARIANT == 2 ? g / (1.0f + precise::exp(-g)) : gemv_gelu(g)) * u;
+            }
         }
     } else {
         for (int r = 0; r < GEMV_NR; r++) {
@@ -274,3 +287,10 @@ GEMV_INSTANCE("gemv_glu_q8_0", TagQ8_0, 2)
 GEMV_INSTANCE("gemv_glu_q4_k", TagQ4_K, 2)
 GEMV_INSTANCE("gemv_glu_q5_k", TagQ5_K, 2)
 GEMV_INSTANCE("gemv_glu_q6_k", TagQ6_K, 2)
+GEMV_INSTANCE("gemv_geglu_f32", TagF32, 3)
+GEMV_INSTANCE("gemv_geglu_f16", TagF16, 3)
+GEMV_INSTANCE("gemv_geglu_q4_0", TagQ4_0, 3)
+GEMV_INSTANCE("gemv_geglu_q8_0", TagQ8_0, 3)
+GEMV_INSTANCE("gemv_geglu_q4_k", TagQ4_K, 3)
+GEMV_INSTANCE("gemv_geglu_q5_k", TagQ5_K, 3)
+GEMV_INSTANCE("gemv_geglu_q6_k", TagQ6_K, 3)

@@ -40,6 +40,36 @@ kernel void rms_norm(device const float* x [[buffer(0)]],
     }
 }
 
+// x += rms_norm(y) · w (the post-norm + residual of Gemma 4's blocks); one threadgroup per row.
+kernel void rms_norm_add(device const float* y [[buffer(0)]],
+                         device const float* w [[buffer(1)]],
+                         device float* x [[buffer(2)]],
+                         constant NormParams& p [[buffer(3)]],
+                         uint tg [[threadgroup_position_in_grid]],
+                         ushort tiitg [[thread_index_in_threadgroup]],
+                         ushort tiisg [[thread_index_in_simdgroup]],
+                         ushort sgitg [[simdgroup_index_in_threadgroup]]) {
+    threadgroup float part[NORM_TG / 32];
+    y += (ulong)tg * p.cols;
+    x += (ulong)tg * p.cols;
+    float ss = 0.0f;
+    for (uint i = tiitg * 4; i < p.cols; i += NORM_TG * 4) {
+        const float4 v = *(device const float4*)(y + i);
+        ss += dot(v, v);
+    }
+    ss = simd_sum(ss);
+    if (tiisg == 0) part[sgitg] = ss;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    float tot = 0.0f;
+    for (int g = 0; g < NORM_TG / 32; g++) tot += part[g];
+    const float scale = 1.0f / precise::sqrt(tot / float(p.cols) + p.eps);
+    for (uint i = tiitg * 4; i < p.cols; i += NORM_TG * 4) {
+        const float4 v = *(device const float4*)(y + i);
+        const float4 wv = *(device const float4*)(w + i);
+        *(device float4*)(x + i) += v * scale * wv;
+    }
+}
+
 // ---- Paged KV cache (Architecture §8.2). Each sequence has a table of GPU block addresses
 // (`bps` entries); a block holds `1 << shift` positions for every attention layer: layer l's K
 // rows start at byte `k_base` of the block and its V rows at `v_base`, `k_row` / `v_row` bytes
@@ -153,21 +183,26 @@ struct QkRopeParams {
     float theta;
     float freq_scale;
     float attn_factor;
+    uint v_norm;    // 1: V gets a weightless per-head RMS norm (Gemma 4)
+    uint has_ff;    // 1: `ff` holds per-pair angle divisors (Gemma 4 global layers)
     KvPage kv;
 };
 
+#define QK_MAX_HD 512
+
 template <int KVT>
 kernel void qk_rope_kv_t(device float* q [[buffer(0)]],
-                         device float* k [[buffer(1)]],
+                         device const float* k [[buffer(1)]],
                          device const float* v [[buffer(2)]],
                          device const float* qn [[buffer(3)]],
                          device const float* kn [[buffer(4)]],
                          device const ulong* tab [[buffer(5)]],
                          device const uint2* tokpos [[buffer(6)]],
                          constant QkRopeParams& p [[buffer(7)]],
+                         device const float* ff [[buffer(8)]],
                          uint tg [[threadgroup_position_in_grid]],
                          ushort tiisg [[thread_index_in_simdgroup]]) {
-    threadgroup float hb[256];
+    threadgroup float hb[QK_MAX_HD];
     const uint per_tok = p.n_head + 2 * p.n_kv_head;
     const uint t = tg / per_tok;
     const uint hh = tg % per_tok;
@@ -177,10 +212,18 @@ kernel void qk_rope_kv_t(device float* q [[buffer(0)]],
     device const ulong* stab = tab + (ulong)seq * p.kv.bps;
 
     if (hh >= p.n_head + p.n_kv_head) {
-        // V: copied into the cache.
+        // V: copied into the cache (after a weightless RMS norm when `v_norm`). `v` may be the K
+        // projection itself (Gemma 4's K=V layers): the K heads below never write back to `k`.
         const uint h = hh - p.n_head - p.n_kv_head;
         device const float* src = v + ((ulong)t * p.n_kv_head + h) * p.hdv;
-        for (uint i = tiisg; i < p.hdv; i += 32) hb[i] = src[i];
+        float vs = 1.0f;
+        if (p.v_norm != 0) {
+            float ss = 0.0f;
+            for (uint i = tiisg; i < p.hdv; i += 32) ss += src[i] * src[i];
+            ss = simd_sum(ss);
+            vs = 1.0f / precise::sqrt(ss / float(p.hdv) + p.eps);
+        }
+        for (uint i = tiisg; i < p.hdv; i += 32) hb[i] = src[i] * vs;
         simdgroup_barrier(mem_flags::mem_threadgroup);
         kv_store_head<KVT>(kv_row_ptr(stab, pos, p.kv.v_base, p.kv.v_row, p.kv), h * p.hdv, hb,
                            p.hdv, tiisg);
@@ -188,7 +231,7 @@ kernel void qk_rope_kv_t(device float* q [[buffer(0)]],
     }
     const bool is_q = hh < p.n_head;
     const uint h = is_q ? hh : hh - p.n_head;
-    device float* src = is_q ? q + ((ulong)t * p.n_head + h) * p.hd : k + ((ulong)t * p.n_kv_head + h) * p.hd;
+    device const float* src = is_q ? q + ((ulong)t * p.n_head + h) * p.hd : k + ((ulong)t * p.n_kv_head + h) * p.hd;
     device const float* nw = is_q ? qn : kn;
     const bool norm = is_q ? (p.q_norm != 0) : (p.k_norm != 0);
 
@@ -205,7 +248,8 @@ kernel void qk_rope_kv_t(device float* q [[buffer(0)]],
     const uint half_rot = p.rope != 0 ? p.rot_dim / 2 : 0;
     for (uint i = tiisg; i < half_rot; i += 32) {
         const float freq = precise::pow(p.theta, -(2.0f * float(i)) / float(p.rot_dim));
-        const float angle = float(pos) * p.freq_scale * freq;
+        const float div = p.has_ff != 0 ? ff[i] : 1.0f;
+        const float angle = float(pos) * p.freq_scale * freq / div;
         const float s = precise::sin(angle) * p.attn_factor;
         const float c = precise::cos(angle) * p.attn_factor;
         const uint a = (p.mode == 0) ? 2 * i : i;
@@ -216,15 +260,17 @@ kernel void qk_rope_kv_t(device float* q [[buffer(0)]],
         hb[b] = x0 * s + x1 * c;
     }
     simdgroup_barrier(mem_flags::mem_threadgroup);
-    for (uint i = tiisg; i < p.hd; i += 32) src[i] = hb[i];
-    if (!is_q) {
+    if (is_q) {
+        device float* qd = q + ((ulong)t * p.n_head + h) * p.hd;
+        for (uint i = tiisg; i < p.hd; i += 32) qd[i] = hb[i];
+    } else {
         kv_store_head<KVT>(kv_row_ptr(stab, pos, p.kv.k_base, p.kv.k_row, p.kv), h * p.hd, hb,
                            p.hd, tiisg);
     }
 }
 
-template [[host_name("qk_rope_kv_f16")]] kernel void qk_rope_kv_t<KVT_F16>(device float*, device float*, device const float*, device const float*, device const float*, device const ulong*, device const uint2*, constant QkRopeParams&, uint, ushort);
-template [[host_name("qk_rope_kv_q8_0")]] kernel void qk_rope_kv_t<KVT_Q8_0>(device float*, device float*, device const float*, device const float*, device const float*, device const ulong*, device const uint2*, constant QkRopeParams&, uint, ushort);
+template [[host_name("qk_rope_kv_f16")]] kernel void qk_rope_kv_t<KVT_F16>(device float*, device const float*, device const float*, device const float*, device const float*, device const ulong*, device const uint2*, constant QkRopeParams&, device const float*, uint, ushort);
+template [[host_name("qk_rope_kv_q8_0")]] kernel void qk_rope_kv_t<KVT_Q8_0>(device float*, device const float*, device const float*, device const float*, device const float*, device const ulong*, device const uint2*, constant QkRopeParams&, device const float*, uint, ushort);
 
 // ---- Decode attention over the paged cache: one threadgroup (4 simdgroups) per (query, head,
 // split). Query t belongs to sequence tokpos[t].x at position tokpos[t].y and sees positions
@@ -232,7 +278,7 @@ template [[host_name("qk_rope_kv_q8_0")]] kernel void qk_rope_kv_t<KVT_Q8_0>(dev
 // per simdgroup; each simdgroup scores ATTN_KB keys at a time and keeps an fp32 online softmax.
 // Lane `l` owns head dimensions [l·ND, l·ND + ND). Simdgroups are merged through threadgroup
 // memory; with `n_split > 1` the (o, m, l) partials go to `part` and `attn_reduce` merges them.
-#define ATTN_MAX_HD 256
+#define ATTN_MAX_HD 512
 #define ATTN_NSG 4
 #define ATTN_KB 8
 
@@ -246,16 +292,23 @@ struct AttnParams {
     uint n_split;
     uint split_len;
     float scale;
-    uint pad0;
+    uint window;    // sliding-window width (a query at t sees keys p with t − p < window); 0 = all
     uint pad1;
     uint pad2;
     KvPage kv;
 };
 
-// Merge the four simdgroups' (m, l, o) and write the result (or the split partial).
+// First key position a query at `n_pos − 1` sees.
+static inline uint attn_lo(uint n_pos, constant AttnParams& p) {
+    return (p.window != 0 && n_pos > p.window) ? n_pos - p.window : 0;
+}
+
+// Merge the four simdgroups' (m, l, o) and write the result (or the split partial). `so` holds
+// each simdgroup's output `stride` floats apart.
 static inline void attn_finish(threadgroup float* sm, threadgroup float* sl, threadgroup float* so,
-                               device float* out, device float* part, constant AttnParams& p,
-                               uint t, uint h, uint sp, ushort tiisg, ushort sgitg) {
+                               uint stride, device float* out, device float* part,
+                               constant AttnParams& p, uint t, uint h, uint sp, ushort tiisg,
+                               ushort sgitg) {
     threadgroup_barrier(mem_flags::mem_threadgroup);
     if (sgitg != 0) return;
     float M = sm[0];
@@ -275,7 +328,7 @@ static inline void attn_finish(threadgroup float* sm, threadgroup float* sl, thr
             const uint d = tiisg + i * 32;
             if (d < p.hdv) {
                 float v = 0.0f;
-                for (uint g = 0; g < ATTN_NSG; g++) v += w[g] * so[g * ATTN_MAX_HD + d];
+                for (uint g = 0; g < ATTN_NSG; g++) v += w[g] * so[g * stride + d];
                 dst[d] = v * inv;
             }
         }
@@ -285,7 +338,7 @@ static inline void attn_finish(threadgroup float* sm, threadgroup float* sl, thr
             const uint d = tiisg + i * 32;
             if (d < p.hdv) {
                 float v = 0.0f;
-                for (uint g = 0; g < ATTN_NSG; g++) v += w[g] * so[g * ATTN_MAX_HD + d];
+                for (uint g = 0; g < ATTN_NSG; g++) v += w[g] * so[g * stride + d];
                 dst[d] = v;
             }
         }
@@ -308,7 +361,7 @@ kernel void attn_vec_t(device const float* q [[buffer(0)]],
                        ushort sgitg [[simdgroup_index_in_threadgroup]]) {
     threadgroup float sm[ATTN_NSG];
     threadgroup float sl[ATTN_NSG];
-    threadgroup float so[ATTN_NSG * ATTN_MAX_HD];
+    threadgroup float so[ATTN_NSG * ND * 32];
 
     const uint t = tgpig.x;
     const uint h = tgpig.y;
@@ -317,7 +370,7 @@ kernel void attn_vec_t(device const float* q [[buffer(0)]],
     const uint kvh = h / (p.n_head / p.n_kv_head);
     device const ulong* stab = tab + (ulong)tokpos[t].x * p.kv.bps;
     const uint n_pos = tokpos[t].y + 1;
-    const uint p_begin = sp * p.split_len;
+    const uint p_begin = attn_lo(n_pos, p) + sp * p.split_len;
     const uint p_end = min(n_pos, p_begin + p.split_len);
     // Contiguous sub-range per simdgroup.
     const uint span = (p_end > p_begin) ? (p_end - p_begin + ATTN_NSG - 1) / ATTN_NSG : 0;
@@ -389,8 +442,8 @@ kernel void attn_vec_t(device const float* q [[buffer(0)]],
         sm[sgitg] = m;
         sl[sgitg] = l;
     }
-    for (int i = 0; i < ND; i++) so[sgitg * ATTN_MAX_HD + tiisg * ND + i] = o[i];
-    attn_finish(sm, sl, so, out, part, p, t, h, sp, tiisg, sgitg);
+    for (int i = 0; i < ND; i++) so[sgitg * hd + tiisg * ND + i] = o[i];
+    attn_finish(sm, sl, so, hd, out, part, p, t, h, sp, tiisg, sgitg);
 }
 
 #define ATTN_VEC_INSTANCE(name, ND, KVT) \
@@ -400,12 +453,14 @@ ATTN_VEC_INSTANCE("attn_vec_hd32_f16", 1, KVT_F16)
 ATTN_VEC_INSTANCE("attn_vec_hd64_f16", 2, KVT_F16)
 ATTN_VEC_INSTANCE("attn_vec_hd128_f16", 4, KVT_F16)
 ATTN_VEC_INSTANCE("attn_vec_hd256_f16", 8, KVT_F16)
+ATTN_VEC_INSTANCE("attn_vec_hd512_f16", 16, KVT_F16)
 ATTN_VEC_INSTANCE("attn_vec_hd32_q8_0", 1, KVT_Q8_0)
 ATTN_VEC_INSTANCE("attn_vec_hd64_q8_0", 2, KVT_Q8_0)
 ATTN_VEC_INSTANCE("attn_vec_hd128_q8_0", 4, KVT_Q8_0)
 ATTN_VEC_INSTANCE("attn_vec_hd256_q8_0", 8, KVT_Q8_0)
+ATTN_VEC_INSTANCE("attn_vec_hd512_q8_0", 16, KVT_Q8_0)
 
-// Generic fallback for any hd/hdv ≤ 256 (lane `l` owns dimensions l, l + 32, ...; one key at a time).
+// Generic fallback for any hd/hdv ≤ 512 (lane `l` owns dimensions l, l + 32, ...; one key at a time).
 template <int KVT>
 kernel void attn_vec_generic_t(device const float* q [[buffer(0)]],
                                device const ulong* tab [[buffer(1)]],
@@ -426,7 +481,7 @@ kernel void attn_vec_generic_t(device const float* q [[buffer(0)]],
     const uint kvh = h / (p.n_head / p.n_kv_head);
     device const ulong* stab = tab + (ulong)tokpos[t].x * p.kv.bps;
     const uint n_pos = tokpos[t].y + 1;
-    const uint p_begin = sp * p.split_len;
+    const uint p_begin = attn_lo(n_pos, p) + sp * p.split_len;
     const uint p_end = min(n_pos, p_begin + p.split_len);
     const uint nd = (p.hd + 31) / 32;
     const uint ndv = (p.hdv + 31) / 32;
@@ -469,7 +524,7 @@ kernel void attn_vec_generic_t(device const float* q [[buffer(0)]],
         const uint d = tiisg + i * 32;
         if (d < p.hdv) so[sgitg * ATTN_MAX_HD + d] = o[i];
     }
-    attn_finish(sm, sl, so, out, part, p, t, h, sp, tiisg, sgitg);
+    attn_finish(sm, sl, so, ATTN_MAX_HD, out, part, p, t, h, sp, tiisg, sgitg);
 }
 
 template [[host_name("attn_vec_generic_f16")]] kernel void attn_vec_generic_t<KVT_F16>(device const float*, device const ulong*, device const uint2*, device float*, device float*, constant AttnParams&, uint3, ushort, ushort);
@@ -513,6 +568,45 @@ kernel void swiglu(device float* gate [[buffer(0)]],
     if (gid >= p.n) return;
     const float g = gate[gid];
     gate[gid] = g / (1.0f + precise::exp(-g)) * up[gid];
+}
+
+// gate[i] = gelu(gate[i]) * up[i] with ggml-cpu's GELU (fp16 table semantics, as the CPU path:
+// 0 at or below −10, x at or above 10, else fp16(gelu_tanh(fp16(x)))).
+static inline float gelu_fp16(float x) {
+    if (x <= -10.0f) return 0.0f;
+    if (x >= 10.0f) return x;
+    const float h = float(half(x));
+    const float g = 0.5f * h * (1.0f + precise::tanh(0.7978845608f * h * (1.0f + 0.044715f * h * h)));
+    return float(half(g));
+}
+
+kernel void geglu(device float* gate [[buffer(0)]],
+                  device const float* up [[buffer(1)]],
+                  constant ElemParams& p [[buffer(2)]],
+                  uint gid [[thread_position_in_grid]]) {
+    if (gid >= p.n) return;
+    gate[gid] = gelu_fp16(gate[gid]) * up[gid];
+}
+
+struct ScaleParams {
+    uint n;
+    float s;
+};
+
+// x[i] *= s
+kernel void scale_inplace(device float* x [[buffer(0)]],
+                          constant ScaleParams& p [[buffer(1)]],
+                          uint gid [[thread_position_in_grid]]) {
+    if (gid >= p.n) return;
+    x[gid] *= p.s;
+}
+
+// x[i] = s · tanh(x[i] / s) (final logit soft-capping)
+kernel void softcap(device float* x [[buffer(0)]],
+                    constant ScaleParams& p [[buffer(1)]],
+                    uint gid [[thread_position_in_grid]]) {
+    if (gid >= p.n) return;
+    x[gid] = precise::tanh(x[gid] * (1.0f / p.s)) * p.s;
 }
 
 // x[i] += y[i]
