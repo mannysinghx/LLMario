@@ -124,6 +124,30 @@ with commit 832094c, same metric): 167–183 MiB after load, 403–641 MiB after
   active experts if more) and leaves the rest to the page cache. Qwen3-Coder-30B-A3B (17.3 GiB) at
   a 16 GiB ceiling plans 5.75 GiB at an 8K context with 12.26 GiB of experts streamed
   (`llmario-engine plan <gguf> --memory-limit 17179869184 --ctx 8192`).
+- **Expert reads start right after routing** when the plan streams experts: every selected expert
+  that is not resident is requested from the file at once (`F_RDADVISE` on macOS, `madvise` on
+  Linux), instead of arriving as page faults inside the products. A one-page residency probe and a
+  skip of experts used in the last three steps keep the cost near zero when the experts are
+  resident. Which experts stay in memory is left to the page cache: on recorded Qwen3-Coder
+  routing (two 400-token answers) its least-recently-used order read 373 MB per token at a 25 %
+  budget, keeping the most-used experts 415 MB, pinning experts profiled on the other prompt
+  486 MB, and perfect hindsight 175 MB. Measured with a simulated smaller page cache
+  (`LLMARIO_SIM_EXPERT_RESIDENT`, macOS; decode excludes the simulation's own eviction time),
+  Qwen3-Coder-30B-A3B Q4_K_M read from the internal SSD, CPU, 12 threads, 64-token greedy
+  decode of a 20-token prompt, 4–5 runs per cell, identical output in every run:
+
+| Experts the cache holds | Read per token | Page faults only | Reads after routing |
+|---|---|---|---|
+| all | 0 | 55–67 tok/s | 58–64 tok/s |
+| 60 % | 60.3 MB | 18–19 tok/s | 31–36 tok/s |
+| 40 % | 110 MB | 11–12 tok/s | 17–23 tok/s |
+| 25 % | 287 MB | 5.4–5.8 tok/s | 12–13 tok/s (one run 8.2) |
+
+  A 12-layer cut of the model gave the same picture (60 %: 58 → 113 tok/s; 25 %: 28 → 67). The
+  same pattern read directly (one missing expert per layer) reaches 3.8–4.4 GB/s with the advice
+  and 1.3–1.4 GB/s by faulting on that SSD. On an external USB drive, which is limited by its
+  link (~410 MB/s), the advice is 4–6 % slower than faulting: at 60 % the full model decodes at
+  5.0 tok/s against 5.2–5.3.
 - **SSD tier.** A conversation pushed out of memory is written to a file and read back when it
   continues (`--kv-cache-dir`; on by default from the LLMario app under `$LLMARIO_HOME/cache/kv`,
   8 GiB, `[backends.native] kv_cache_gb`, 0 = off). Files are written straight from the cache
@@ -191,8 +215,9 @@ waiting. With the paged cache Metal prefill is unchanged and decode is about 2 %
 
 - MoE models run on Metal only when every weight fits in memory; a plan that streams experts from
   disk runs on the CPU until the GPU has an expert cache. MoE prefill on Metal is 0.74 × llama.cpp.
-- Expert streaming is planned and the plan is tested; decode speed under real memory pressure on a
-  16 GB machine has not been measured yet.
+- Expert streaming is measured under a simulated smaller page cache on a 64 GB machine; a real
+  16 GB machine has not been measured. The simulation needs macOS (Linux keeps clean pages on
+  `MS_INVALIDATE`). Models on a USB drive stream 4–6 % slower with the early reads than without.
 - The paged cache costs about 2 % of Metal decode speed.
 - Recurrent (Qwen3.5) and window (Gemma 4) caches cannot be rewound, so the SSD tier and in-memory
   prefix reuse help them only when the whole saved state is a prefix of the next prompt; turn-end

@@ -436,7 +436,11 @@ Algorithm:
    As built (2026-10-09): KV precision (step 4) runs before context halving (step 3), because q8_0 is
    near-lossless while a shorter context removes capability. On unified memory step 5 leaves routed experts to
    the page cache (streamed from the model file) and keeps a resident share; when the weights alone exceed the
-   budget it runs before context halving, since a shorter context cannot make the weights fit.
+   budget it runs before context halving, since a shorter context cannot make the weights fit. Streamed experts
+   are requested from the file as soon as the router has chosen them (`F_RDADVISE` on macOS, where
+   `MADV_WILLNEED` blocks until the read completes; `MADV_WILLNEED` on Linux), skipping experts whose probe page
+   is resident or that ran in the last three steps; residency itself stays with the page cache, whose LRU order
+   matched or beat an explicit most-used cache on recorded routing traces (STATUS.md, Memory).
 7. **Emit** the plan (JSON and a rendered table), store it under `$LLMARIO_HOME/run/plans/<hash>.json`, and print
    the per-device speed-of-light next to it.
 8. **Verify after load**: record the measured peak (Section 5.2 enforcement column), compare with the plan, log the
