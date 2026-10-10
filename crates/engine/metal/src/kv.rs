@@ -54,6 +54,10 @@ pub(crate) struct MetalKv {
     /// `[n_seqs][blocks_per_seq]` u64 GPU addresses of each sequence's blocks.
     pub table: Buf,
     pub win: Option<WindowPool>,
+    /// Recurrent state (Gated DeltaNet layers), one buffer per sequence created on its first
+    /// token and freed when it is cleared; `rs_table[seq]` is its GPU address.
+    rs: Vec<Option<Buf>>,
+    pub rs_table: Buf,
     resid: Option<DynResidency>,
 }
 
@@ -77,7 +81,10 @@ impl MetalKv {
         let n_blocks = layout.pool_blocks;
         let table = gpu.alloc(layout.n_seqs * layout.blocks_per_seq.max(1) * 8)?;
         let win = Self::window_pool(gpu, &layout, n_batch)?;
+        let rs_table = gpu.alloc(layout.n_seqs * 8)?;
         Ok(MetalKv {
+            rs: (0..layout.n_seqs).map(|_| None).collect(),
+            rs_table,
             pool: BlockPool::new(n_blocks, BLOCK_TOKENS, layout.block_bytes as u64),
             backing: (0..n_blocks).map(|_| None).collect(),
             seqs: (0..layout.n_seqs)
@@ -157,10 +164,14 @@ impl MetalKv {
         self.backing.iter().filter(|b| b.is_some()).count()
     }
     pub fn in_use_bytes(&self) -> u64 {
-        let win = self.win.as_ref().map_or(0, |w| {
-            (w.backing.iter().filter(|b| b.is_some()).count() * w.block_bytes + w.table.len())
-                as u64
-        });
+        let rs = (self.rs.iter().filter(|b| b.is_some()).count() * self.layout.recurrent_bytes)
+            as u64
+            + self.rs_table.len() as u64;
+        let win = rs
+            + self.win.as_ref().map_or(0, |w| {
+                (w.backing.iter().filter(|b| b.is_some()).count() * w.block_bytes + w.table.len())
+                    as u64
+            });
         (self.resident_blocks() * self.layout.block_bytes) as u64 + self.table.len() as u64 + win
     }
     pub fn reserved_bytes(&self) -> u64 {
@@ -169,7 +180,35 @@ impl MetalKv {
         let win = self.win.as_ref().map_or(0, |w| {
             (w.backing.len() * w.block_bytes + w.table.len()) as u64
         });
-        self.layout.reserved_bytes() - rings + self.table.len() as u64 + win
+        self.layout.reserved_bytes() - rings
+            + self.table.len() as u64
+            + win
+            + self.rs_table.len() as u64
+    }
+
+    /// Create sequence `s`'s recurrent buffer (zeroed) if the model has recurrent layers.
+    fn ensure_recurrent(&mut self, gpu: &Gpu, s: usize) -> Result<()> {
+        let bytes = self.layout.recurrent_bytes;
+        if bytes == 0 || self.rs[s].is_some() {
+            return Ok(());
+        }
+        let buf = gpu.alloc(bytes)?;
+        buf.write_bytes(0, &vec![0u8; bytes]);
+        self.rs_table
+            .write_bytes(s * 8, &buf.gpu_address().to_le_bytes());
+        if let Some(r) = &mut self.resid {
+            r.add(&buf);
+        }
+        self.rs[s] = Some(buf);
+        Ok(())
+    }
+
+    fn drop_recurrent(&mut self, s: usize) {
+        if let Some(buf) = self.rs[s].take() {
+            if let Some(r) = &mut self.resid {
+                r.remove(&buf);
+            }
+        }
     }
 
     fn write_entry(&self, s: usize, i: usize, b: BlockId) {
@@ -240,6 +279,11 @@ impl MetalKv {
         }
         if let Err(e) = self.reserve_window(gpu, s, len, new_len) {
             return Ok(Err(e));
+        }
+        if new_len > 0 {
+            if let Err(e) = self.ensure_recurrent(gpu, s) {
+                return Ok(Err(e));
+            }
         }
         Ok(self.reserve_checked(gpu, s, len, new_len, missing, wanted > missing))
     }
@@ -355,6 +399,10 @@ impl MetalKv {
     /// need was already released, the whole sequence is cleared instead (read `len` afterwards).
     pub fn truncate(&mut self, s: usize, mut n: usize) {
         n = n.min(self.seqs[s].len);
+        // A recurrent state cannot be rewound: any cut resets the sequence.
+        if self.layout.recurrent_bytes > 0 && n < self.seqs[s].len {
+            n = 0;
+        }
         if let Some(w) = &self.win {
             let first_needed = (n + 1).saturating_sub(w.window) / BLOCK_TOKENS;
             let last = n.div_ceil(BLOCK_TOKENS);
@@ -372,6 +420,9 @@ impl MetalKv {
             self.release_block(b);
         }
         self.release_window_from(s, keep);
+        if n == 0 {
+            self.drop_recurrent(s);
+        }
     }
 
     pub fn clear(&mut self, s: usize) {
@@ -395,6 +446,7 @@ impl MetalKv {
         if let Some(w) = &self.win {
             (w.window, w.block_bytes, &w.bases).hash(&mut h);
         }
+        self.layout.recurrent_bytes.hash(&mut h);
         h.finish()
     }
 
@@ -403,7 +455,12 @@ impl MetalKv {
     pub fn snapshot_bytes(&self, len: usize) -> usize {
         let (first, end) = self.window_span(len);
         let wb = self.win.as_ref().map_or(0, |w| w.block_bytes);
-        len.div_ceil(BLOCK_TOKENS) * self.layout.block_bytes + (end - first) * wb
+        if len == 0 {
+            return 0;
+        }
+        len.div_ceil(BLOCK_TOKENS) * self.layout.block_bytes
+            + (end - first) * wb
+            + self.layout.recurrent_bytes
     }
 
     /// Write sequence `s`'s blocks straight from the shared buffers (no GPU work may be in
@@ -426,6 +483,11 @@ impl MetalKv {
             for i in first..end {
                 let b = self.seqs[s].wblocks[i].expect("a visible window block is live");
                 w.write_all(win.backing[b as usize].as_ref().expect("backed").as_slice())?;
+            }
+        }
+        if len > 0 {
+            if let Some(rs) = &self.rs[s] {
+                w.write_all(rs.as_slice())?;
             }
         }
         Ok(())
@@ -485,6 +547,11 @@ impl MetalKv {
                 seq.wblocks.push(Some(b));
             }
         }
+        if len > 0 && self.layout.recurrent_bytes > 0 {
+            self.ensure_recurrent(gpu, s)?;
+            let at = bytes.len() - self.layout.recurrent_bytes;
+            self.rs[s].as_ref().unwrap().write_bytes(0, &bytes[at..]);
+        }
         self.seqs[s].len = len;
         Ok(true)
     }
@@ -499,7 +566,8 @@ impl MetalKv {
             }
             None => {
                 let win = self.win.iter().flat_map(|w| w.backing.iter().flatten());
-                self.backing.iter().flatten().chain(win).collect()
+                let rs = self.rs.iter().flatten();
+                self.backing.iter().flatten().chain(win).chain(rs).collect()
             }
         }
     }

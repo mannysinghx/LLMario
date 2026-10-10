@@ -42,12 +42,40 @@ struct LayerConsts {
     rope_ff: Option<usize>,
 }
 
-struct LayerRefs {
+/// An attention mixer's projections.
+struct AttnRefs {
+    /// `[d → n_head · hd]`, or `[d → n_head · 2 · hd]` with `(q, gate)` per head when `q_gate`.
     wq: WRef,
     wk: WRef,
     /// `None` on Gemma 4's K=V layers: V is the raw K projection.
     wv: Option<WRef>,
     wo: WRef,
+    /// Qwen3.5 gated attention: the output is multiplied by `sigmoid(gate)` before `wo`.
+    q_gate: bool,
+}
+
+/// A Gated DeltaNet mixer (Qwen3.5): projections, and the offsets of its small vectors in the
+/// constants buffer and of its state in a sequence's recurrent buffer (floats).
+struct GdnRefs {
+    wqkv: WRef,
+    wz: WRef,
+    w_alpha: WRef,
+    w_beta: WRef,
+    wout: WRef,
+    conv_w: usize,
+    a: usize,
+    dt_bias: usize,
+    norm: usize,
+    conv_off: usize,
+    state_off: usize,
+}
+
+struct LayerRefs {
+    /// `None` on a DeltaNet layer.
+    attn: Option<AttnRefs>,
+    gdn: Option<GdnRefs>,
+    /// Attention-layer index into the KV layout (attention layers only).
+    kv_layer: usize,
     ffn: Ffn,
     c: LayerConsts,
     geom: AttnGeom,
@@ -117,6 +145,24 @@ struct Scratch {
     tokpos: Buf,
     part: Buf,
     moe: Option<MoeScratch>,
+    gdn: Option<GdnScratch>,
+    /// `[max_seqs]` × (sequence, first row, rows, 0) u32 of the current call.
+    segs: Buf,
+}
+
+/// Buffers of the hybrid family (Qwen3.5), sized for `n_batch` rows.
+struct GdnScratch {
+    /// Fused QKV projection and its conv output, `[n][conv_dim]`.
+    qkv: Buf,
+    conv: Buf,
+    /// Output gate `z` and the scan output, `[n][value_dim]`.
+    z: Buf,
+    out: Buf,
+    /// `[n][n_v_heads]` decay and β inputs.
+    alpha: Buf,
+    beta: Buf,
+    /// Gated attention's fused `(q, gate)` projection, `[n][2 · q_dim]`.
+    qfull: Buf,
 }
 
 /// Threadgroup geometry shared with the shaders.
@@ -205,6 +251,8 @@ struct QkRopeParams {
     attn_factor: f32,
     v_norm: u32,
     has_ff: u32,
+    q_stride: u32,
+    pad_q: u32,
     kv: KvPage,
 }
 #[repr(C)]
@@ -212,6 +260,30 @@ struct QkRopeParams {
 struct ScaleParams {
     n: u32,
     s: f32,
+}
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct AttnGateParams {
+    n: u32,
+    hd: u32,
+}
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct GdnConvParams {
+    conv_dim: u32,
+    off: u32,
+}
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct GdnScanParams {
+    n_k_heads: u32,
+    n_v_heads: u32,
+    conv_dim: u32,
+    key_dim: u32,
+    value_dim: u32,
+    off: u32,
+    eps: f32,
+    scale: f32,
 }
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -435,18 +507,13 @@ impl<'a> MetalBackend<'a> {
                 )));
             }
         }
-        if spec.gdn.is_some() || spec.n_attn_layers() != spec.n_layer {
-            return Err(MetalError::Unsupported(format!(
-                "family {:?} (recurrent layers) is CPU-only in this build",
-                spec.family
-            )));
-        }
         let weights = Weights::load(file, &spec)?;
-        let n_layer_w = match &weights.gemma4 {
-            Some(g) => g.layers.len(),
-            None => weights.layers.len(),
+        let n_layer_w = match (&weights.gemma4, &weights.hybrid) {
+            (Some(g), _) => g.layers.len(),
+            (_, Some(h)) => h.layers.len(),
+            _ => weights.layers.len(),
         };
-        if weights.hybrid.is_some() || n_layer_w != spec.n_layer as usize {
+        if n_layer_w != spec.n_layer as usize {
             return Err(MetalError::Unsupported(format!(
                 "family {:?} (its layer layout) is CPU-only in this build",
                 spec.family
@@ -607,10 +674,15 @@ impl<'a> MetalBackend<'a> {
                     rope_ff: ff,
                 };
                 layers.push(LayerRefs {
-                    wq: locate(&lw.wq)?,
-                    wk: locate(&lw.wk)?,
-                    wv: lw.wv.as_ref().map(locate).transpose()?,
-                    wo: locate(&lw.wo)?,
+                    attn: Some(AttnRefs {
+                        wq: locate(&lw.wq)?,
+                        wk: locate(&lw.wk)?,
+                        wv: lw.wv.as_ref().map(locate).transpose()?,
+                        wo: locate(&lw.wo)?,
+                        q_gate: false,
+                    }),
+                    gdn: None,
+                    kv_layer: l,
                     ffn: Ffn::Dense {
                         gate: locate(&lw.w_gate)?,
                         up: locate(&lw.w_up)?,
@@ -625,6 +697,87 @@ impl<'a> MetalBackend<'a> {
                     out_scale: lw.out_scale,
                     attn_vec: attn_vec_for(geom.head_dim as usize, geom.head_dim_v as usize),
                 });
+            }
+        }
+        if let Some(hw) = &weights.hybrid {
+            use llmario_engine_model::hybrid::Mixer;
+            let g = spec.gdn.as_ref().expect("hybrid spec");
+            if g.d_conv != 4 || g.head_k != 128 || g.head_v() != 128 {
+                return Err(MetalError::Unsupported(format!(
+                    "DeltaNet geometry d_conv {} head {}/{} (the Metal kernels cover 4 and 128/128)",
+                    g.d_conv,
+                    g.head_k,
+                    g.head_v()
+                )));
+            }
+            let per_layer = (g.conv_state_len() + g.state_len()) as usize;
+            let (mut al, mut ri) = (0usize, 0usize);
+            for (l, lw) in hw.layers.iter().enumerate() {
+                let c = LayerConsts {
+                    attn_norm: push(&lw.attn_norm),
+                    ffn_norm: push(&lw.post_norm),
+                    q_norm: None,
+                    k_norm: None,
+                    bq: None,
+                    bk: None,
+                    bv: None,
+                    post_attn_norm: None,
+                    post_ffn_norm: None,
+                    rope_ff: None,
+                };
+                let ffn = Ffn::Dense {
+                    gate: locate(&lw.w_gate)?,
+                    up: locate(&lw.w_up)?,
+                    down: locate(&lw.w_down)?,
+                };
+                let geom = geoms[l];
+                let mut layer = LayerRefs {
+                    attn: None,
+                    gdn: None,
+                    kv_layer: al,
+                    ffn,
+                    c,
+                    geom,
+                    rope: spec.rope.clone(),
+                    nope: false,
+                    v_norm: false,
+                    gelu: false,
+                    out_scale: None,
+                    attn_vec: attn_vec_for(geom.head_dim as usize, geom.head_dim_v as usize),
+                };
+                match &lw.mixer {
+                    Mixer::Attention(a) => {
+                        check_rope(l, &spec.rope, geom.head_dim)?;
+                        layer.c.q_norm = Some(push(&a.q_norm));
+                        layer.c.k_norm = Some(push(&a.k_norm));
+                        layer.attn = Some(AttnRefs {
+                            wq: locate(&a.wq)?,
+                            wk: locate(&a.wk)?,
+                            wv: Some(locate(&a.wv)?),
+                            wo: locate(&a.wo)?,
+                            q_gate: true,
+                        });
+                        al += 1;
+                    }
+                    Mixer::DeltaNet(m) => {
+                        let base = ri * per_layer;
+                        layer.gdn = Some(GdnRefs {
+                            wqkv: locate(&m.wqkv)?,
+                            wz: locate(&m.wz)?,
+                            w_alpha: locate(&m.w_alpha)?,
+                            w_beta: locate(&m.w_beta)?,
+                            wout: locate(&m.wout)?,
+                            conv_w: push(&m.conv),
+                            a: push(&m.a),
+                            dt_bias: push(&m.dt_bias),
+                            norm: push(&m.norm),
+                            conv_off: base,
+                            state_off: base + g.conv_state_len() as usize,
+                        });
+                        ri += 1;
+                    }
+                }
+                layers.push(layer);
             }
         }
         for (li, l) in weights.layers.iter().enumerate() {
@@ -666,10 +819,15 @@ impl<'a> MetalBackend<'a> {
             };
             let geom = geoms[li];
             layers.push(LayerRefs {
-                wq: locate(&l.wq)?,
-                wk: locate(&l.wk)?,
-                wv: Some(locate(&l.wv)?),
-                wo: locate(&l.wo)?,
+                attn: Some(AttnRefs {
+                    wq: locate(&l.wq)?,
+                    wk: locate(&l.wk)?,
+                    wv: Some(locate(&l.wv)?),
+                    wo: locate(&l.wo)?,
+                    q_gate: false,
+                }),
+                gdn: None,
+                kv_layer: li,
                 ffn,
                 c,
                 geom,
@@ -734,6 +892,19 @@ impl<'a> MetalBackend<'a> {
                 }
                 None => None,
             },
+            gdn: match &spec.gdn {
+                Some(g) => Some(GdnScratch {
+                    qkv: gpu.alloc(nb * g.conv_dim() as usize * 4)?,
+                    conv: gpu.alloc(nb * g.conv_dim() as usize * 4)?,
+                    z: gpu.alloc(nb * g.value_dim() as usize * 4)?,
+                    out: gpu.alloc(nb * g.value_dim() as usize * 4)?,
+                    alpha: gpu.alloc(nb * g.n_v_heads as usize * 4)?,
+                    beta: gpu.alloc(nb * g.n_v_heads as usize * 4)?,
+                    qfull: gpu.alloc(nb * 2 * spec.max_q_dim() as usize * 4)?,
+                }),
+                None => None,
+            },
+            segs: gpu.alloc(max_seqs * 16)?,
         };
         let moe_bufs: Vec<&Buf> = s
             .moe
@@ -743,6 +914,12 @@ impl<'a> MetalBackend<'a> {
                     &m.router, &m.sel, &m.w, &m.gate, &m.up, &m.out, &m.counts, &m.ids,
                 ]
             })
+            .chain(
+                s.gdn
+                    .iter()
+                    .flat_map(|g| [&g.qkv, &g.conv, &g.z, &g.out, &g.alpha, &g.beta, &g.qfull]),
+            )
+            .chain(std::iter::once(&s.segs))
             .collect();
         let scratch_bytes: u64 = moe_bufs.iter().map(|b| b.len() as u64).sum::<u64>()
             + [
@@ -791,6 +968,7 @@ impl<'a> MetalBackend<'a> {
         if let Some(w) = &kv.win {
             kv_refs.push(&w.table);
         }
+        kv_refs.push(&kv.rs_table);
         gpu.make_resident(residency_owner, "llmario-scratch", &kv_refs);
         tracing::info!(
             device = %gpu.info.name,
@@ -1079,11 +1257,18 @@ impl<'a> MetalBackend<'a> {
         let v_dim = n_kv * hdv;
         let s = &self.s;
 
+        let a = layer.attn.as_ref().expect("attention layer");
+        // Qwen3.5: Q comes interleaved with its gate, `(q, gate)` per head.
+        let (q_in, q_stride) = match (&s.gdn, a.q_gate) {
+            (Some(g), true) => (&g.qfull, 2 * hd),
+            _ => (&s.q, hd),
+        };
+
         self.rms_norm(cmd, &s.x, 0, layer.c.attn_norm, &s.h, n, d)?;
         cmd.barrier();
-        self.project(cmd, &layer.wq, &s.h, 0, n, &s.q, false)?;
-        self.project(cmd, &layer.wk, &s.h, 0, n, &s.k, false)?;
-        if let Some(wv) = &layer.wv {
+        self.project(cmd, &a.wq, &s.h, 0, n, q_in, false)?;
+        self.project(cmd, &a.wk, &s.h, 0, n, &s.k, false)?;
+        if let Some(wv) = &a.wv {
             self.project(cmd, wv, &s.h, 0, n, &s.v, false)?;
         }
         cmd.barrier();
@@ -1099,7 +1284,7 @@ impl<'a> MetalBackend<'a> {
             }
             cmd.barrier();
         }
-        let (page, table) = self.kv_page(l);
+        let (page, table) = self.kv_page(layer.kv_layer);
         {
             let r = &layer.rope;
             let p = QkRopeParams {
@@ -1122,14 +1307,16 @@ impl<'a> MetalBackend<'a> {
                 attn_factor: r.attn_factor,
                 v_norm: layer.v_norm as u32,
                 has_ff: layer.c.rope_ff.is_some() as u32,
+                q_stride: q_stride as u32,
+                pad_q: 0,
                 kv: page,
             };
             // K=V layers: V is the raw K projection (the kernel never writes K back).
-            let v_src = if layer.wv.is_some() { &s.v } else { &s.k };
+            let v_src = if a.wv.is_some() { &s.v } else { &s.k };
             cmd.dispatch(
                 self.qk_rope_kv,
                 &[
-                    (0, &s.q, 0),
+                    (0, q_in, 0),
                     (1, &s.k, 0),
                     (2, v_src, 0),
                     (3, &self.consts, layer.c.q_norm.unwrap_or(0)),
@@ -1137,6 +1324,7 @@ impl<'a> MetalBackend<'a> {
                     (5, table, 0),
                     (6, &s.tokpos, 0),
                     (8, &self.consts, layer.c.rope_ff.unwrap_or(0)),
+                    (9, &s.q, 0),
                 ],
                 7,
                 &p,
@@ -1240,15 +1428,30 @@ impl<'a> MetalBackend<'a> {
             )?;
         }
         cmd.barrier();
+        if let (Some(g), true) = (&s.gdn, a.q_gate) {
+            let total = n * n_head * hdv;
+            cmd.dispatch(
+                "attn_gate",
+                &[(0, &s.attn, 0), (1, &g.qfull, 0)],
+                2,
+                &AttnGateParams {
+                    n: total as u32,
+                    hd: hdv as u32,
+                },
+                (groups(total, ELEM_TG), 1, 1),
+                (ELEM_TG, 1, 1),
+            )?;
+            cmd.barrier();
+        }
         match layer.c.post_attn_norm {
             // x += post_norm(Wo attn)
             Some(w) => {
-                self.project(cmd, &layer.wo, &s.attn, 0, n, &s.ffn, false)?;
+                self.project(cmd, &a.wo, &s.attn, 0, n, &s.ffn, false)?;
                 cmd.barrier();
                 self.rms_norm_add(cmd, &s.ffn, w, &s.x, n, d)?;
             }
             // x += Wo attn (residual fused into the projection).
-            None => self.project(cmd, &layer.wo, &s.attn, 0, n, &s.x, true)?,
+            None => self.project(cmd, &a.wo, &s.attn, 0, n, &s.x, true)?,
         }
         cmd.barrier();
         Ok(())
@@ -1315,6 +1518,81 @@ impl<'a> MetalBackend<'a> {
             (groups(n, ELEM_TG), 1, 1),
             (ELEM_TG, 1, 1),
         )
+    }
+
+    /// One Gated DeltaNet layer (Qwen3.5) over the stacked rows: projections, causal conv with each
+    /// sequence's history, the fused delta-rule scan with each sequence's state, and
+    /// `x += W_out y`.
+    fn gdn_block(&self, cmd: &Cmd, l: usize, rows: &Rows) -> Result<()> {
+        let n = rows.n;
+        let layer = &self.layers[l];
+        let g = layer.gdn.as_ref().expect("DeltaNet layer");
+        let spec = self.spec.gdn.as_ref().expect("hybrid spec");
+        let gs = self.s.gdn.as_ref().expect("hybrid scratch");
+        let s = &self.s;
+        let d = self.spec.d_model as usize;
+        let conv_dim = spec.conv_dim() as usize;
+        let n_segs = rows.segs.len();
+
+        self.rms_norm(cmd, &s.x, 0, layer.c.attn_norm, &s.h, n, d)?;
+        cmd.barrier();
+        self.project(cmd, &g.wqkv, &s.h, 0, n, &gs.qkv, false)?;
+        self.project(cmd, &g.wz, &s.h, 0, n, &gs.z, false)?;
+        self.project(cmd, &g.w_alpha, &s.h, 0, n, &gs.alpha, false)?;
+        self.project(cmd, &g.w_beta, &s.h, 0, n, &gs.beta, false)?;
+        cmd.barrier();
+        cmd.dispatch(
+            "gdn_conv_silu_k4",
+            &[
+                (0, &gs.qkv, 0),
+                (1, &self.consts, g.conv_w),
+                (2, &self.kv.rs_table, 0),
+                (3, &gs.conv, 0),
+                (5, &s.segs, 0),
+            ],
+            4,
+            &GdnConvParams {
+                conv_dim: conv_dim as u32,
+                off: g.conv_off as u32,
+            },
+            (groups(conv_dim, 64), n_segs, 1),
+            (64, 1, 1),
+        )?;
+        cmd.barrier();
+        let p = GdnScanParams {
+            n_k_heads: spec.n_k_heads,
+            n_v_heads: spec.n_v_heads,
+            conv_dim: conv_dim as u32,
+            key_dim: spec.key_dim(),
+            value_dim: spec.value_dim(),
+            off: g.state_off as u32,
+            eps: self.spec.rms_eps,
+            scale: 1.0 / (spec.head_k as f32).sqrt(),
+        };
+        cmd.dispatch(
+            "gdn_scan_128",
+            &[
+                (0, &gs.conv, 0),
+                (1, &gs.alpha, 0),
+                (2, &gs.beta, 0),
+                (3, &gs.z, 0),
+                (4, &self.consts, g.a),
+                (5, &self.consts, g.dt_bias),
+                (6, &self.consts, g.norm),
+                (7, &self.kv.rs_table, 0),
+                (8, &gs.out, 0),
+                (10, &s.segs, 0),
+            ],
+            9,
+            &p,
+            (spec.n_v_heads as usize, n_segs, 1),
+            (512, 1, 1),
+        )?;
+        cmd.barrier();
+        // x += W_out y
+        self.project(cmd, &g.wout, &gs.out, 0, n, &s.x, true)?;
+        cmd.barrier();
+        Ok(())
     }
 
     fn ffn_block(&self, cmd: &Cmd, l: usize, n: usize) -> Result<()> {
@@ -1556,7 +1834,11 @@ impl<'a> MetalBackend<'a> {
             cmd.barrier();
         }
         for l in 0..self.layers.len() {
-            self.attention_block(cmd, l, rows)?;
+            if self.layers[l].gdn.is_some() {
+                self.gdn_block(cmd, l, rows)?;
+            } else {
+                self.attention_block(cmd, l, rows)?;
+            }
             self.ffn_block(cmd, l, n)?;
         }
         // Final norm + head on each sequence's last row.
@@ -1632,6 +1914,13 @@ impl<'a> MetalBackend<'a> {
         }
         self.s.tokens.write_bytes(0, &toks);
         self.s.tokpos.write_bytes(0, &tokpos);
+        let segs: Vec<u8> = rows
+            .segs
+            .iter()
+            .flat_map(|sg| [sg.seq as u32, sg.start as u32, sg.n as u32, 0])
+            .flat_map(|v| v.to_le_bytes())
+            .collect();
+        self.s.segs.write_bytes(0, &segs);
         rows
     }
 
@@ -1822,7 +2111,7 @@ impl ModelBackend for MetalBackend<'_> {
         self.kv.snapshot_bytes(len)
     }
     fn snapshot_trimmable(&self) -> bool {
-        self.kv.win.is_none()
+        self.kv.win.is_none() && self.kv.layout.recurrent_bytes == 0
     }
     fn write_seq(&self, s: usize, w: &mut dyn std::io::Write) -> std::io::Result<()> {
         self.kv.write_seq(s, w)

@@ -2,10 +2,11 @@
 
 Metal GPU backend of the native engine (Architecture §7.4, milestone M2). It implements
 `llmario_engine_model::ModelBackend` for the dense GQA families (`llama`, `mistral3`, `qwen2`,
-`qwen3`, `smollm3`), the routed mixture-of-experts family (`qwen3moe`) and Gemma 4 (`gemma4`:
+`qwen3`, `smollm3`), the routed mixture-of-experts family (`qwen3moe`), Gemma 4 (`gemma4`:
 per-layer head geometry, sliding-window and K=V global layers, GeGLU, post-norms, logit
-soft-capping), and is selected by `--device auto|metal` in `llmario-engine serve` and `raw-run`.
-Hybrid families (Gated DeltaNet) are refused with `MetalError::Unsupported`; with `--device auto`
+soft-capping) and the Qwen3.5 hybrid (`qwen35`: Gated DeltaNet layers with 128-wide heads and a
+4-tap conv, gated attention), and is selected by `--device auto|metal` in `llmario-engine serve`
+and `raw-run`. Other geometries are refused with `MetalError::Unsupported`; with `--device auto`
 the server logs the reason and loads the CPU backend instead. The server also keeps a plan that
 streams MoE experts from disk on the CPU, because this backend keeps every weight resident.
 
@@ -21,11 +22,12 @@ binary and compiled at runtime with `newLibraryWithSource:options:error:` (Metal
 |---|---|
 | Weights | Zero-copy. Each GGUF part's mapping is wrapped with `newBufferWithBytesNoCopy` in `MTLResourceStorageModeShared` (page-aligned base, length rounded up to the page, capped at `maxBufferLength`; a larger mapping gets overlapping page-aligned views sized so every tensor lies inside one view, as ggml-metal does). Tensors are addressed as (view, byte offset) found by pointer arithmetic from the `QMat` slices the model crate already resolved. Nothing is copied. |
 | Norm weights and biases | One small shared buffer, uploaded once at load. |
+| Recurrent state | Qwen3.5: one buffer per sequence holding every DeltaNet layer's conv history and fp32 state, created (zeroed) on the sequence's first token and freed when it is cleared; kernels find it through a table of GPU addresses. It cannot be rewound, so any cut resets the sequence. Snapshots carry it after the KV blocks. |
 | Window layers | Gemma 4's sliding-window layers keep their rows in a second pool of 32-position blocks with its own address table (absolute block numbers). A block is released once no future query can see it, so the window layers hold at most `window + batch` positions and a short conversation only what it wrote (a ring buffer would be charged in full at creation). Snapshots carry the paged blocks plus the window blocks the next query can see. |
 | KV cache | Paged (`src/kv.rs`): blocks of 32 positions holding every layer's K and V rows (f16 or q8_0), each a shared `MTLBuffer` created when a sequence first reaches it and released when no sequence uses it, so GPU memory follows the cached tokens (Metal charges a buffer's whole size at creation; the old up-front cache held 3.9 GiB for Qwen3-1.7B at 32K). Kernels find blocks through a table of 64-bit GPU addresses, one row per sequence (Metal 3). Block ids, reference counts, the LRU and copy-on-write follow the CPU cache. Blocks are kept resident by a dynamic residency set on macOS 15+, otherwise declared on each encoder. A sequence's blocks can be written to and read from a file (the server's disk tier). |
 | Activations | A fixed set of shared buffers sized from the model shape and `n_batch` (x, h, q, k, v, attn, gate, up, logits, token ids, attention partials). No per-token allocation. Logits are read back as f32 after the command buffer completes. |
 | Execution | One command buffer per `forward`, one compute encoder with `MTLDispatchTypeConcurrent`; the backend places `memoryBarrierWithScope(Buffers)` between dependent stages so independent kernels (Q/K/V projections) overlap. The inference thread is the only thread that touches Metal objects; the device, queue and pipelines are process-wide and compiled once. |
-| Residency | On macOS 15+ the weight views and the scratch buffers go into two `MTLResidencySet`s (KV blocks into a third, changed as blocks come and go) (`commit`, `requestResidency`, attached to the queue) so the wired collector does not unwire them after idle; released on drop. The keep-alive heartbeat thread from ggml is not implemented yet. |
+| Residency | Metal allows 32 residency sets per command queue and aborts past that, so the device counts them and stops at 28: a backend created past the limit binds weights and scratch directly (resident anyway) and declares its KV buffers on each encoder. On macOS 15+ the weight views and the scratch buffers go into two `MTLResidencySet`s (KV blocks into a third, changed as blocks come and go) (`commit`, `requestResidency`, attached to the queue) so the wired collector does not unwire them after idle; released on drop. The keep-alive heartbeat thread from ggml is not implemented yet. |
 | Budget | `recommendedMaxWorkingSetSize`, `hasUnifiedMemory`, the GPU family and residency support are exposed through `MetalBackend::device_info()` (printed by `probe`). No system setting is changed. |
 
 The ledger rows for the Metal device: `DeviceId::Gpu(0)` carries `kv_arena_reserved` and
@@ -45,6 +47,7 @@ The ledger rows for the Metal device: `DeviceId::Gpu(0)` carries `kv_arena_reser
 | `swiglu`, `add`, `add_bias` | Element-wise (the GEMM path still uses `swiglu`; biases for Qwen2). |
 | `attn_vec_hd512_*`, window mask | Gemma 4's 512-wide global heads; every decode attention kernel takes a window (`t − p < window`) and the K=V layers store the raw K projection (normalised without a gain) as V. |
 | `rms_norm_add`, `geglu`, `gemv_geglu_<type>`, `scale_inplace`, `softcap` | Gemma 4: post-norm + residual in one pass, GeGLU with ggml-cpu's fp16 GELU, embedding and layer-output scales, final logit soft-capping. |
+| `gdn_conv_silu_k4`, `gdn_scan_128`, `attn_gate` | Qwen3.5: causal depthwise conv + SiLU with each sequence's history (one thread per channel and sequence); the delta rule with L2-normalised q/k, gates and the gated RMSNorm fused, one threadgroup of 512 threads per (V head, sequence) keeping the 128×128 state in registers; `sigmoid(gate)` on the gated attention output (Q and its gate interleaved per head in one projection). |
 | `moe_route` | Routed MoE (`qwen3moe`): one simdgroup per row computes the router softmax and picks the top-k experts in descending order (ties to the lower id), weights renormalised like the CPU path. |
 | `gemv_id_<type>`, `gemv_glu_id_<type>` | Expert matvecs for up to 4 rows: one grid row per (row, expert) pair, the expert's matrix found at `expert · expert_bytes` in the 3-D tensor; gate and up fused with SwiGLU. |
 | `moe_group`, `gemm_id_<type>` | Prompts: `moe_group` lists each expert's pairs (threadgroup atomics), then one GEMM grid per expert multiplies its matrix once over the gathered rows and scatters the outputs. |

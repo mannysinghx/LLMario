@@ -185,13 +185,15 @@ struct QkRopeParams {
     float attn_factor;
     uint v_norm;    // 1: V gets a weightless per-head RMS norm (Gemma 4)
     uint has_ff;    // 1: `ff` holds per-pair angle divisors (Gemma 4 global layers)
+    uint q_stride;  // floats between consecutive Q heads in `q` (hd; 2·hd for Qwen3.5's (q, gate))
+    uint pad_q;
     KvPage kv;
 };
 
 #define QK_MAX_HD 512
 
 template <int KVT>
-kernel void qk_rope_kv_t(device float* q [[buffer(0)]],
+kernel void qk_rope_kv_t(device const float* q [[buffer(0)]],
                          device const float* k [[buffer(1)]],
                          device const float* v [[buffer(2)]],
                          device const float* qn [[buffer(3)]],
@@ -200,6 +202,7 @@ kernel void qk_rope_kv_t(device float* q [[buffer(0)]],
                          device const uint2* tokpos [[buffer(6)]],
                          constant QkRopeParams& p [[buffer(7)]],
                          device const float* ff [[buffer(8)]],
+                         device float* q_out [[buffer(9)]],
                          uint tg [[threadgroup_position_in_grid]],
                          ushort tiisg [[thread_index_in_simdgroup]]) {
     threadgroup float hb[QK_MAX_HD];
@@ -231,7 +234,7 @@ kernel void qk_rope_kv_t(device float* q [[buffer(0)]],
     }
     const bool is_q = hh < p.n_head;
     const uint h = is_q ? hh : hh - p.n_head;
-    device const float* src = is_q ? q + ((ulong)t * p.n_head + h) * p.hd : k + ((ulong)t * p.n_kv_head + h) * p.hd;
+    device const float* src = is_q ? q + ((ulong)t * p.n_head + h) * p.q_stride : k + ((ulong)t * p.n_kv_head + h) * p.hd;
     device const float* nw = is_q ? qn : kn;
     const bool norm = is_q ? (p.q_norm != 0) : (p.k_norm != 0);
 
@@ -261,7 +264,7 @@ kernel void qk_rope_kv_t(device float* q [[buffer(0)]],
     }
     simdgroup_barrier(mem_flags::mem_threadgroup);
     if (is_q) {
-        device float* qd = q + ((ulong)t * p.n_head + h) * p.hd;
+        device float* qd = q_out + ((ulong)t * p.n_head + h) * p.hd;
         for (uint i = tiisg; i < p.hd; i += 32) qd[i] = hb[i];
     } else {
         kv_store_head<KVT>(kv_row_ptr(stab, pos, p.kv.k_base, p.kv.k_row, p.kv), h * p.hd, hb,
@@ -269,8 +272,8 @@ kernel void qk_rope_kv_t(device float* q [[buffer(0)]],
     }
 }
 
-template [[host_name("qk_rope_kv_f16")]] kernel void qk_rope_kv_t<KVT_F16>(device float*, device const float*, device const float*, device const float*, device const float*, device const ulong*, device const uint2*, constant QkRopeParams&, device const float*, uint, ushort);
-template [[host_name("qk_rope_kv_q8_0")]] kernel void qk_rope_kv_t<KVT_Q8_0>(device float*, device const float*, device const float*, device const float*, device const float*, device const ulong*, device const uint2*, constant QkRopeParams&, device const float*, uint, ushort);
+template [[host_name("qk_rope_kv_f16")]] kernel void qk_rope_kv_t<KVT_F16>(device const float*, device const float*, device const float*, device const float*, device const float*, device const ulong*, device const uint2*, constant QkRopeParams&, device const float*, device float*, uint, ushort);
+template [[host_name("qk_rope_kv_q8_0")]] kernel void qk_rope_kv_t<KVT_Q8_0>(device const float*, device const float*, device const float*, device const float*, device const float*, device const ulong*, device const uint2*, constant QkRopeParams&, device const float*, device float*, uint, ushort);
 
 // ---- Decode attention over the paged cache: one threadgroup (4 simdgroups) per (query, head,
 // split). Query t belongs to sequence tokpos[t].x at position tokpos[t].y and sees positions
@@ -607,6 +610,24 @@ kernel void softcap(device float* x [[buffer(0)]],
                     uint gid [[thread_position_in_grid]]) {
     if (gid >= p.n) return;
     x[gid] = precise::tanh(x[gid] * (1.0f / p.s)) * p.s;
+}
+
+// Qwen3.5 gated attention: attn[t][h][i] *= sigmoid(gate), the gate being the second half of
+// head h's (q, gate) pair in the fused Q projection `qfull[t][h][2][hd]`.
+struct AttnGateParams {
+    uint n;   // tokens · heads · hd
+    uint hd;
+};
+
+kernel void attn_gate(device float* attn [[buffer(0)]],
+                      device const float* qfull [[buffer(1)]],
+                      constant AttnGateParams& p [[buffer(2)]],
+                      uint gid [[thread_position_in_grid]]) {
+    if (gid >= p.n) return;
+    const uint th = gid / p.hd;
+    const uint i = gid % p.hd;
+    const float g = qfull[(ulong)th * 2 * p.hd + p.hd + i];
+    attn[gid] *= 1.0f / (1.0f + precise::exp(-g));
 }
 
 // x[i] += y[i]

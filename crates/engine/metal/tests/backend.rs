@@ -1566,3 +1566,308 @@ fn gemma4_snapshot_round_trip() {
         max_abs_diff(&want, &got)
     );
 }
+
+/// A tiny random Qwen3.5 hybrid (three Gated DeltaNet layers, then a gated attention layer) with
+/// the DeltaNet geometry the Metal kernels cover: 128-wide heads, a 4-tap conv; one QK head
+/// tiled over two V heads.
+fn tiny_qwen35(dir: &std::path::Path) -> std::path::PathBuf {
+    let (d, n_head, n_kv, hd, n_ff, vocab, n_layer) =
+        (64u64, 2u64, 1u64, 64u64, 48u64, 64u64, 4u64);
+    let (head, n_k, n_v, d_conv) = (128u64, 1u64, 2u64, 4u64);
+    let (key_dim, value_dim) = (n_k * head, n_v * head);
+    let conv_dim = 2 * key_dim + value_dim;
+    let f32s = |n: u64, seed: u64| -> Vec<u8> {
+        (0..n)
+            .flat_map(|i| {
+                let v = (((i * 2654435761 + seed * 97) % 1000) as f32 / 1000.0 - 0.5) * 0.3;
+                v.to_le_bytes()
+            })
+            .collect()
+    };
+    let consts = |n: u64, c: f32| -> Vec<u8> { (0..n).flat_map(|_| c.to_le_bytes()).collect() };
+    let a = "qwen35";
+    let u = |v: u64| MetaValue::U32(v as u32);
+    let mut w = GgufWriter::new();
+    w.meta("general.architecture", MetaValue::Str(a.into()))
+        .meta(&format!("{a}.block_count"), u(n_layer))
+        .meta(&format!("{a}.embedding_length"), u(d))
+        .meta(&format!("{a}.attention.head_count"), u(n_head))
+        .meta(&format!("{a}.attention.head_count_kv"), u(n_kv))
+        .meta(&format!("{a}.attention.key_length"), u(hd))
+        .meta(&format!("{a}.attention.value_length"), u(hd))
+        .meta(&format!("{a}.feed_forward_length"), u(n_ff))
+        .meta(&format!("{a}.vocab_size"), u(vocab))
+        .meta(&format!("{a}.context_length"), u(256))
+        .meta(&format!("{a}.rope.freq_base"), MetaValue::F32(10000.0))
+        .meta(&format!("{a}.rope.dimension_count"), u(16))
+        .meta(&format!("{a}.full_attention_interval"), u(4))
+        .meta(&format!("{a}.ssm.conv_kernel"), u(d_conv))
+        .meta(&format!("{a}.ssm.state_size"), u(head))
+        .meta(&format!("{a}.ssm.group_count"), u(n_k))
+        .meta(&format!("{a}.ssm.time_step_rank"), u(n_v))
+        .meta(&format!("{a}.ssm.inner_size"), u(value_dim))
+        .meta(
+            &format!("{a}.attention.layer_norm_rms_epsilon"),
+            MetaValue::F32(1e-6),
+        );
+    w.tensor(
+        "token_embd.weight",
+        &[d, vocab],
+        GgmlType::F32,
+        f32s(d * vocab, 1),
+    );
+    w.tensor("output_norm.weight", &[d], GgmlType::F32, consts(d, 1.0));
+    for l in 0..n_layer {
+        let p = |s: &str| format!("blk.{l}.{s}");
+        w.tensor(&p("attn_norm.weight"), &[d], GgmlType::F32, consts(d, 1.0));
+        w.tensor(
+            &p("post_attention_norm.weight"),
+            &[d],
+            GgmlType::F32,
+            consts(d, 1.0),
+        );
+        if (l + 1) % 4 == 0 {
+            w.tensor(
+                &p("attn_q.weight"),
+                &[d, 2 * n_head * hd],
+                GgmlType::F32,
+                f32s(d * 2 * n_head * hd, 10 + l),
+            );
+            w.tensor(
+                &p("attn_k.weight"),
+                &[d, n_kv * hd],
+                GgmlType::F32,
+                f32s(d * n_kv * hd, 20 + l),
+            );
+            w.tensor(
+                &p("attn_v.weight"),
+                &[d, n_kv * hd],
+                GgmlType::F32,
+                f32s(d * n_kv * hd, 30 + l),
+            );
+            w.tensor(
+                &p("attn_q_norm.weight"),
+                &[hd],
+                GgmlType::F32,
+                f32s(hd, 80 + l),
+            );
+            w.tensor(
+                &p("attn_k_norm.weight"),
+                &[hd],
+                GgmlType::F32,
+                f32s(hd, 90 + l),
+            );
+            w.tensor(
+                &p("attn_output.weight"),
+                &[n_head * hd, d],
+                GgmlType::F32,
+                f32s(n_head * hd * d, 40 + l),
+            );
+        } else {
+            w.tensor(
+                &p("attn_qkv.weight"),
+                &[d, conv_dim],
+                GgmlType::F32,
+                f32s(d * conv_dim, 110 + l),
+            );
+            w.tensor(
+                &p("attn_gate.weight"),
+                &[d, value_dim],
+                GgmlType::F32,
+                f32s(d * value_dim, 120 + l),
+            );
+            w.tensor(
+                &p("ssm_conv1d.weight"),
+                &[d_conv, conv_dim],
+                GgmlType::F32,
+                f32s(d_conv * conv_dim, 130 + l),
+            );
+            w.tensor(&p("ssm_a"), &[n_v], GgmlType::F32, consts(n_v, -0.7));
+            w.tensor(
+                &p("ssm_alpha.weight"),
+                &[d, n_v],
+                GgmlType::F32,
+                f32s(d * n_v, 140 + l),
+            );
+            w.tensor(
+                &p("ssm_beta.weight"),
+                &[d, n_v],
+                GgmlType::F32,
+                f32s(d * n_v, 150 + l),
+            );
+            w.tensor(&p("ssm_dt.bias"), &[n_v], GgmlType::F32, consts(n_v, 0.5));
+            // Non-uniform gains so the gated norm's weight is exercised.
+            let norm: Vec<u8> = (0..head)
+                .flat_map(|i| (0.5 + (i % 7) as f32 * 0.1).to_le_bytes())
+                .collect();
+            w.tensor(&p("ssm_norm.weight"), &[head], GgmlType::F32, norm);
+            w.tensor(
+                &p("ssm_out.weight"),
+                &[value_dim, d],
+                GgmlType::F32,
+                f32s(value_dim * d, 160 + l),
+            );
+        }
+        w.tensor(
+            &p("ffn_gate.weight"),
+            &[d, n_ff],
+            GgmlType::F32,
+            f32s(d * n_ff, 50 + l),
+        );
+        w.tensor(
+            &p("ffn_up.weight"),
+            &[d, n_ff],
+            GgmlType::F32,
+            f32s(d * n_ff, 60 + l),
+        );
+        w.tensor(
+            &p("ffn_down.weight"),
+            &[n_ff, d],
+            GgmlType::F32,
+            f32s(n_ff * d, 70 + l),
+        );
+    }
+    let p = dir.join("tiny_qwen35.gguf");
+    std::fs::write(&p, w.to_bytes()).unwrap();
+    p
+}
+
+/// Qwen3.5 on Metal gives the CPU's logits: token by token (tightly), a prompt at once (the
+/// batched kernels round activations to f16), and three sequences in one call, each with its
+/// own conv history and recurrent state.
+#[test]
+fn qwen35_matches_cpu() {
+    use llmario_engine_metal::MetalOptions;
+    use llmario_engine_model::SeqTokens;
+    if !metal() {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let path = tiny_qwen35(dir.path());
+    let f = GgufFile::open(&path).unwrap();
+    let mut cpu = CpuBackend::new(&f, 2, 256, 64).unwrap();
+    let mut gpu = MetalBackend::new(&f, 256, 64).unwrap();
+    let mut next = 3u32;
+    let mut spread = 0f32;
+    for step in 0..40 {
+        let lc = cpu.forward(&[next]).to_vec();
+        let lg = gpu.forward(&[next]).to_vec();
+        spread = spread.max(
+            lc.iter().fold(f32::MIN, |a, &b| a.max(b)) - lc.iter().fold(f32::MAX, |a, &b| a.min(b)),
+        );
+        let diff = max_abs_diff(&lc, &lg);
+        assert!(diff < 1e-3, "step {step}: {diff}");
+        next = argmax(&lc) as u32;
+    }
+    assert!(spread > 0.1, "logit spread {spread}");
+    let toks: Vec<u32> = (0..40).map(|i| (i * 7 + 3) % 64).collect();
+    let mut cpu = CpuBackend::new(&f, 2, 256, 64).unwrap();
+    let mut gpu = MetalBackend::new(&f, 256, 64).unwrap();
+    let lc = cpu.forward(&toks).to_vec();
+    let lg = gpu.forward(&toks).to_vec();
+    let diff = max_abs_diff(&lc, &lg);
+    eprintln!("prompt at once differs by {diff} (spread {spread})");
+    assert!(diff < 6e-3, "prompt: {diff}");
+    assert_eq!(argmax(&lc), argmax(&lg));
+    // Then decode on top of the prompt.
+    for t in [5u32, 9, 13] {
+        let diff = max_abs_diff(cpu.forward(&[t]), gpu.forward(&[t]));
+        assert!(diff < 6e-3, "decode after prompt: {diff}");
+    }
+
+    let prompts: [&[u32]; 3] = [&toks, &[9], &[4, 8, 15, 16, 23]];
+    let mut gpu = MetalBackend::with_options(
+        &f,
+        MetalOptions {
+            n_seqs: 3,
+            ..MetalOptions::new(256, 64)
+        },
+    )
+    .unwrap();
+    let batch: Vec<SeqTokens> = prompts
+        .iter()
+        .enumerate()
+        .map(|(i, p)| SeqTokens { seq: i, tokens: p })
+        .collect();
+    let got = gpu.forward_batch(&batch).unwrap().to_vec();
+    for (i, p) in prompts.iter().enumerate() {
+        let mut cpu = CpuBackend::new(&f, 2, 256, 64).unwrap();
+        let want = cpu.forward(p).to_vec();
+        let diff = max_abs_diff(&want, &got[i * 64..(i + 1) * 64]);
+        assert!(diff < 6e-3, "sequence {i}: {diff}");
+    }
+}
+
+/// The recurrent state follows the sequence: created on its first token, freed when cleared,
+/// reset by any cut (it cannot be rewound), and carried by snapshots.
+#[test]
+fn qwen35_state_lifecycle_and_snapshot() {
+    use llmario_engine_metal::MetalOptions;
+    use llmario_engine_model::SeqTokens;
+    if !metal() {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let path = tiny_qwen35(dir.path());
+    let f = GgufFile::open(&path).unwrap();
+    let mut a = MetalBackend::new(&f, 256, 64).unwrap();
+    let base = a.kv_in_use_bytes();
+    a.forward(&(0..20).collect::<Vec<u32>>());
+    assert!(a.kv_in_use_bytes() > base);
+    assert!(!a.snapshot_trimmable());
+    let snap = a.export_seq(0).unwrap();
+    let want = a.forward(&[7]).to_vec();
+    let mut b = MetalBackend::with_options(
+        &f,
+        MetalOptions {
+            n_seqs: 2,
+            ..MetalOptions::new(256, 64)
+        },
+    )
+    .unwrap();
+    assert_eq!(a.kv_fingerprint(), b.kv_fingerprint());
+    b.forward(&[1, 2, 3]);
+    assert!(b.import_seq(1, &snap));
+    let got = b
+        .forward_batch(&[SeqTokens {
+            seq: 1,
+            tokens: &[7],
+        }])
+        .unwrap()
+        .to_vec();
+    assert!(
+        max_abs_diff(&want, &got) < 1e-5,
+        "{}",
+        max_abs_diff(&want, &got)
+    );
+    // Any cut resets; clearing frees the state.
+    a.truncate(15);
+    assert_eq!(a.kv_len(), 0);
+    assert_eq!(a.kv_in_use_bytes(), base);
+}
+
+/// More backends alive at once than Metal allows residency sets on one queue (3 each, 32 per
+/// queue): the backends past the limit declare their buffers per command instead, and every one
+/// still computes the CPU's logits (Metal used to abort the process here).
+#[test]
+fn many_backends_share_one_queue() {
+    if !metal() {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let path = tiny_model_dh(dir.path(), 64, 64, 128);
+    let f = GgufFile::open(&path).unwrap();
+    let toks: Vec<u32> = (0..40).map(|i| (i * 3 + 1) % 64).collect();
+    let mut cpu = CpuBackend::new(&f, 2, 128, 64).unwrap();
+    let want = cpu.forward(&toks).to_vec();
+    let mut gpus: Vec<MetalBackend> = (0..12)
+        .map(|_| MetalBackend::new(&f, 128, 64).unwrap())
+        .collect();
+    for (i, g) in gpus.iter_mut().enumerate() {
+        let got = g.forward(&toks).to_vec();
+        let diff = max_abs_diff(&want, &got);
+        assert!(diff < 2e-3, "backend {i}: {diff}");
+        // A decode step reads the blocks the prompt wrote (through the address table).
+        g.forward(&[5]);
+    }
+}
