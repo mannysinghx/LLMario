@@ -9,7 +9,7 @@ use llmario_engine_core::GgmlType;
 use llmario_engine_cpu::{QMat, RopeKind};
 use llmario_engine_formats::GgufFile;
 use llmario_engine_model::weights::Weights;
-use llmario_engine_model::{ArchSpec, ModelBackend};
+use llmario_engine_model::{ArchSpec, KvFull, ModelBackend, SeqTokens};
 use std::sync::Arc;
 
 /// A weight matrix addressed inside one no-copy view of the mapping.
@@ -959,27 +959,40 @@ impl ModelBackend for MetalBackend<'_> {
     fn max_ctx(&self) -> usize {
         self.max_ctx
     }
-    fn kv_len(&self) -> usize {
+    fn seq_len(&self, s: usize) -> usize {
+        assert_eq!(s, 0, "the Metal backend holds one sequence");
         self.kv_len
     }
-    fn truncate(&mut self, n: usize) {
+    fn truncate_seq(&mut self, s: usize, n: usize) {
+        assert_eq!(s, 0, "the Metal backend holds one sequence");
         self.kv_len = self.kv_len.min(n);
     }
-    fn clear(&mut self) {
+    fn clear_seq(&mut self, s: usize) {
+        assert_eq!(s, 0, "the Metal backend holds one sequence");
         self.kv_len = 0;
     }
     fn max_batch(&self) -> usize {
         self.n_batch
     }
-    fn forward(&mut self, tokens: &[u32]) -> &[f32] {
-        if let Err(e) = self.run(tokens) {
+    fn forward_batch(&mut self, batch: &[SeqTokens]) -> std::result::Result<&[f32], KvFull> {
+        assert!(
+            batch.len() == 1 && batch[0].seq == 0,
+            "the Metal backend runs one sequence per call"
+        );
+        if let Err(e) = self.run(batch[0].tokens) {
             // A failed command buffer leaves no usable state behind; surface it loudly rather
             // than return stale logits.
             panic!("Metal forward failed: {e}");
         }
-        &self.logits
+        Ok(&self.logits)
     }
     fn reserved_bytes(&self) -> u64 {
         self.reserved
+    }
+    fn kv_in_use_bytes(&self) -> u64 {
+        self.kc.len() as u64 + self.vc.len() as u64
+    }
+    fn kv_reserved_bytes(&self) -> u64 {
+        self.kc.len() as u64 + self.vc.len() as u64
     }
 }

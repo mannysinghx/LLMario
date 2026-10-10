@@ -22,7 +22,7 @@
 //! `attn_output * torch.sigmoid(gate)` before `o_proj`.
 
 use crate::arch::{ArchSpec, BlockKind, GdnSpec};
-use crate::forward::{attend, per_head_norm, project, Attend, Scratch};
+use crate::forward::{attend, per_head_norm, project, Attend, Rows, Scratch};
 use crate::gdn::{self, GdnDims};
 use crate::kv::KvCache;
 use crate::weights::{mat, vec1, vecn};
@@ -200,17 +200,17 @@ impl HybridScratch {
     }
 }
 
-/// Run every layer of the hybrid stack over the `n` tokens in `s.x` (positions `pos0..`).
-pub fn forward_layers(
+/// Run every layer of the hybrid stack over the stacked rows in `s.x` (placement in `rows`).
+pub(crate) fn forward_layers(
     spec: &ArchSpec,
     w: &HybridWeights,
     pool: &ThreadPool,
     kv: &mut KvCache,
-    n: usize,
-    pos0: usize,
+    rows: &Rows,
     s: &mut Scratch,
 ) {
     let g = spec.gdn.as_ref().expect("hybrid spec");
+    let n = rows.n();
     let mut attn_idx = 0usize;
     let mut rs_idx = 0usize;
     for layer in &w.layers {
@@ -225,11 +225,11 @@ pub fn forward_layers(
         }
         match &layer.mixer {
             Mixer::Attention(a) => {
-                attention_mixer(spec, a, pool, kv, attn_idx, n, pos0, s);
+                attention_mixer(spec, a, pool, kv, attn_idx, rows, s);
                 attn_idx += 1;
             }
             Mixer::DeltaNet(m) => {
-                deltanet_mixer(spec, g, m, pool, kv, rs_idx, n, s);
+                deltanet_mixer(spec, g, m, pool, kv, rs_idx, rows, s);
                 rs_idx += 1;
             }
         }
@@ -238,17 +238,16 @@ pub fn forward_layers(
 }
 
 /// Gated full attention: `s.h` (normed input) → `s.x += W_o (attend(q, K, V) ⊙ sigmoid(gate))`.
-#[allow(clippy::too_many_arguments)]
 fn attention_mixer(
     spec: &ArchSpec,
     a: &AttnMixer,
     pool: &ThreadPool,
     kv: &mut KvCache,
     al: usize,
-    n: usize,
-    pos0: usize,
+    rows: &Rows,
     s: &mut Scratch,
 ) {
+    let n = rows.n();
     let hs = s.hybrid.as_mut().expect("hybrid scratch");
     let d = spec.d_model as usize;
     let n_head = spec.n_head as usize;
@@ -287,21 +286,21 @@ fn attention_mixer(
         attn_factor: spec.rope.attn_factor,
     };
     for t in 0..n {
+        let (seq, pos) = (rows.seq[t], rows.pos[t]);
         let q = &mut s.q[t * q_dim..(t + 1) * q_dim];
         let k = &mut s.k[t * kv_dim..(t + 1) * kv_dim];
         per_head_norm(q, hd, &a.q_norm, spec.rms_eps);
         per_head_norm(k, hd, &a.k_norm, spec.rms_eps);
-        rope(q, n_head, (pos0 + t) as u32, &rp);
-        rope(k, n_kv, (pos0 + t) as u32, &rp);
-        kv.store_k(al, pos0 + t, k);
-        kv.store_v(al, pos0 + t, &s.v[t * v_dim..(t + 1) * v_dim]);
+        rope(q, n_head, pos as u32, &rp);
+        rope(k, n_kv, pos as u32, &rp);
+        kv.store_k(seq, al, pos, k);
+        kv.store_v(seq, al, pos, &s.v[t * v_dim..(t + 1) * v_dim]);
     }
     attend(
         pool,
         kv,
         al,
-        n,
-        pos0,
+        rows,
         &s.q[..n * q_dim],
         Attend {
             n_head,
@@ -332,9 +331,10 @@ fn deltanet_mixer(
     pool: &ThreadPool,
     kv: &mut KvCache,
     ri: usize,
-    n: usize,
+    rows: &Rows,
     s: &mut Scratch,
 ) {
+    let n = rows.n();
     let hs = s.hybrid.as_mut().expect("hybrid scratch");
     let d = spec.d_model as usize;
     let cd = g.conv_dim() as usize;
@@ -350,16 +350,20 @@ fn deltanet_mixer(
     project(pool, &m.w_alpha, &s.h, n, d, &mut hs.alpha[..n * hv], None);
     project(pool, &m.w_beta, &s.h, n, d, &mut hs.beta[..n * hv], None);
 
-    let rs = &mut kv.rs[ri];
-    gdn::conv_silu(
-        &mut rs.conv,
-        &hs.qkv[..n * cd],
-        &m.conv,
-        n,
-        cd,
-        d_conv,
-        &mut hs.conv_out[..n * cd],
-    );
+    // The causal conv runs over each sequence's rows with that sequence's history.
+    for sg in &rows.segs {
+        let rs = &mut kv.seq_mut(sg.seq).rs[ri];
+        let (a, b) = (sg.start * cd, (sg.start + sg.n) * cd);
+        gdn::conv_silu(
+            &mut rs.conv,
+            &hs.qkv[a..b],
+            &m.conv,
+            sg.n,
+            cd,
+            d_conv,
+            &mut hs.conv_out[a..b],
+        );
+    }
     for t in 0..n {
         let row = &hs.conv_out[t * cd..(t + 1) * cd];
         hs.q[t * kd..(t + 1) * kd].copy_from_slice(&row[..kd]);
@@ -376,22 +380,27 @@ fn deltanet_mixer(
             hs.beta[i] = gdn::sigmoid(hs.beta[i]);
         }
     }
-    gdn::gated_delta_scan(
-        pool,
-        GdnDims {
-            n_k_heads: hk,
-            n_v_heads: hv,
-            head_dim: hdim,
-        },
-        &mut rs.state,
-        &hs.q[..n * kd],
-        &hs.k[..n * kd],
-        &hs.v[..n * vd],
-        &hs.alpha[..n * hv],
-        &hs.beta[..n * hv],
-        n,
-        &mut hs.out[..n * vd],
-    );
+    // The recurrence runs over each sequence's rows with that sequence's state.
+    for sg in &rows.segs {
+        let rs = &mut kv.seq_mut(sg.seq).rs[ri];
+        let (t0, t1) = (sg.start, sg.start + sg.n);
+        gdn::gated_delta_scan(
+            pool,
+            GdnDims {
+                n_k_heads: hk,
+                n_v_heads: hv,
+                head_dim: hdim,
+            },
+            &mut rs.state,
+            &hs.q[t0 * kd..t1 * kd],
+            &hs.k[t0 * kd..t1 * kd],
+            &hs.v[t0 * vd..t1 * vd],
+            &hs.alpha[t0 * hv..t1 * hv],
+            &hs.beta[t0 * hv..t1 * hv],
+            sg.n,
+            &mut hs.out[t0 * vd..t1 * vd],
+        );
+    }
     gdn::gated_rms_norm(
         &mut hs.out[..n * vd],
         &hs.z[..n * vd],
@@ -637,8 +646,8 @@ mod tests {
         for &t in toks {
             lb = m.forward(pool, &mut kv_b, &[t], &mut s_b).to_vec();
         }
-        assert_eq!(kv_a.len, toks.len());
-        assert_eq!(kv_b.len, toks.len());
+        assert_eq!(kv_a.len(0), toks.len());
+        assert_eq!(kv_b.len(0), toks.len());
         let max_abs = la.iter().map(|v| v.abs()).fold(0f32, f32::max);
         for (i, (a, b)) in la.iter().zip(&lb).enumerate() {
             assert!(
@@ -646,7 +655,7 @@ mod tests {
                 "logit {i}: {a} vs {b} (max |logit| {max_abs})"
             );
         }
-        for (ra, rb) in kv_a.rs.iter().zip(&kv_b.rs) {
+        for (ra, rb) in kv_a.seq(0).rs.iter().zip(&kv_b.seq(0).rs) {
             for (a, b) in ra.state.iter().zip(&rb.state) {
                 assert!((a - b).abs() <= tol * 10.0, "recurrent state {a} vs {b}");
             }
@@ -677,15 +686,17 @@ mod tests {
         );
         assert_eq!(spec.n_attn_layers(), 1);
         assert_eq!(spec.n_recurrent_layers(), 3);
-        // One K/V slab, not four; recurrent state charged on top.
+        // One paged attention layer, not four; recurrent state charged on top. A 16-position
+        // context still takes one 32-position block, plus the copy-on-write spare.
         let kv = KvCache::new(&spec, 16);
-        assert_eq!(kv.n_layer, 1);
-        assert_eq!(kv.rs.len(), 3);
-        assert_eq!(kv.rs[0].conv.len(), 3 * 64);
-        assert_eq!(kv.rs[0].state.len(), 4 * 8 * 8);
+        assert_eq!(kv.n_layers(), 1);
+        assert_eq!(kv.seq(0).rs.len(), 3);
+        assert_eq!(kv.seq(0).rs[0].conv.len(), 3 * 64);
+        assert_eq!(kv.seq(0).rs[0].state.len(), 4 * 8 * 8);
+        assert_eq!(kv.layout.paged_bytes_per_token(), (8 + 8) * 2);
         assert_eq!(
             KvCache::bytes(&spec, 16),
-            (8 + 8) * 2 * 16 + 3 * (3 * 64 + 4 * 8 * 8) * 4
+            (1 + 1) * 32 * (8 + 8) * 2 + 3 * (3 * 64 + 4 * 8 * 8) * 4
         );
         assert_eq!(spec.kv_bytes_per_token(4.0), 16 * 4);
     }
@@ -705,18 +716,77 @@ mod tests {
         let mut kv = KvCache::new(&m.spec, 64);
         let mut s = Scratch::new(&m.spec, 8);
         m.forward(&pool, &mut kv, &toks, &mut s);
-        assert!(kv.rs[0].state.iter().any(|v| *v != 0.0));
-        kv.truncate(toks.len());
-        assert_eq!(kv.len, toks.len());
-        kv.truncate(3);
-        assert_eq!(kv.len, 0);
-        assert!(kv.rs.iter().all(|r| r.state.iter().all(|v| *v == 0.0)));
-        assert!(kv.rs.iter().all(|r| r.conv.iter().all(|v| *v == 0.0)));
+        assert!(kv.seq(0).rs[0].state.iter().any(|v| *v != 0.0));
+        kv.truncate(0, toks.len());
+        assert_eq!(kv.len(0), toks.len());
+        kv.truncate(0, 3);
+        assert_eq!(kv.len(0), 0);
+        assert!(kv
+            .seq(0)
+            .rs
+            .iter()
+            .all(|r| r.state.iter().all(|v| *v == 0.0)));
+        assert!(kv
+            .seq(0)
+            .rs
+            .iter()
+            .all(|r| r.conv.iter().all(|v| *v == 0.0)));
         // Recomputing from scratch reproduces the same logits (state fully reset).
         let l1 = m.forward(&pool, &mut kv, &toks, &mut s).to_vec();
-        kv.clear();
+        kv.clear(0);
         let l2 = m.forward(&pool, &mut kv, &toks, &mut s).to_vec();
         assert_eq!(l1, l2);
+    }
+
+    /// Several sequences in one call keep separate recurrent states: each gets the logits it
+    /// gets alone, for the prefill and for a following decode step.
+    #[test]
+    fn hybrid_batched_sequences_keep_separate_state() {
+        use crate::forward::SeqTokens;
+        use crate::kv::KvOptions;
+        let dir = tempfile::tempdir().unwrap();
+        let f = GgufFile::open(&tiny_hybrid_model(dir.path())).unwrap();
+        let m = Model::load(&f).unwrap();
+        let pool = ThreadPool::new(3);
+        let prompts: [&[u32]; 3] = [&[3, 17, 5, 42], &[9], &[61, 2, 8, 8, 8, 1]];
+        let mut alone = Vec::new();
+        for p in prompts {
+            let mut kv = KvCache::new(&m.spec, 32);
+            let mut s = Scratch::new(&m.spec, 16);
+            let a = m.forward(&pool, &mut kv, p, &mut s).to_vec();
+            let b = m.forward(&pool, &mut kv, &[4], &mut s).to_vec();
+            alone.push((a, b));
+        }
+        let mut kv = KvCache::with_options(&m.spec, KvOptions::new(32).seqs(3));
+        let mut s = Scratch::with_seqs(&m.spec, 16, 3);
+        let batch: Vec<SeqTokens> = prompts
+            .iter()
+            .enumerate()
+            .map(|(i, p)| SeqTokens { seq: i, tokens: p })
+            .collect();
+        let first = m
+            .forward_batch(&pool, &mut kv, &batch, &mut s)
+            .unwrap()
+            .to_vec();
+        let dec: Vec<SeqTokens> = (0..3)
+            .map(|i| SeqTokens {
+                seq: i,
+                tokens: &[4],
+            })
+            .collect();
+        let next = m
+            .forward_batch(&pool, &mut kv, &dec, &mut s)
+            .unwrap()
+            .to_vec();
+        let v = m.spec.n_vocab as usize;
+        for (i, (a, b)) in alone.iter().enumerate() {
+            for (x, y) in a.iter().zip(&first[i * v..(i + 1) * v]) {
+                assert!((x - y).abs() < 1e-5, "prefill seq {i}: {x} vs {y}");
+            }
+            for (x, y) in b.iter().zip(&next[i * v..(i + 1) * v]) {
+                assert!((x - y).abs() < 1e-5, "decode seq {i}: {x} vs {y}");
+            }
+        }
     }
 
     /// Real model (gated on `LLMARIO_TEST_GGUF`, comma-separated; only `qwen35` files are used):

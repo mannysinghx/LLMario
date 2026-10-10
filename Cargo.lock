@@ -2624,9 +2624,11 @@ name = "llmario-engine-model"
 version = "0.2.1"
 dependencies = [
  "half",
+ "libc",
  "llmario-engine-core",
  "llmario-engine-cpu",
  "llmario-engine-formats",
+ "llmario-engine-kv",
  "serde",
  "tempfile",
  "thiserror 2.0.21",
@@ -2643,6 +2645,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "tempfile",
  "thiserror 2.0.21",
 ]
 
