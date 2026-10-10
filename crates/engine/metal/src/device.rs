@@ -35,6 +35,8 @@ pub const SHADER_SOURCE: &str = concat!(
     include_str!("shaders/misc.metal"),
     "\n",
     include_str!("shaders/attn_prefill.metal"),
+    "\n",
+    include_str!("shaders/moe.metal"),
 );
 
 /// Every kernel the backend binds, by `host_name`.
@@ -95,6 +97,30 @@ pub const KERNELS: &[&str] = &[
     "swiglu",
     "add",
     "add_bias",
+    "gemv_id_f32",
+    "gemv_id_f16",
+    "gemv_id_q4_0",
+    "gemv_id_q8_0",
+    "gemv_id_q4_k",
+    "gemv_id_q5_k",
+    "gemv_id_q6_k",
+    "gemv_glu_id_f32",
+    "gemv_glu_id_f16",
+    "gemv_glu_id_q4_0",
+    "gemv_glu_id_q8_0",
+    "gemv_glu_id_q4_k",
+    "gemv_glu_id_q5_k",
+    "gemv_glu_id_q6_k",
+    "gemm_id_f32",
+    "gemm_id_f16",
+    "gemm_id_q4_0",
+    "gemm_id_q8_0",
+    "gemm_id_q4_k",
+    "gemm_id_q5_k",
+    "gemm_id_q6_k",
+    "moe_route",
+    "moe_group",
+    "moe_combine",
 ];
 
 type Device = ProtocolObject<dyn MTLDevice>;

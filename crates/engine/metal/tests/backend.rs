@@ -728,3 +728,520 @@ fn metal_snapshot_round_trip() {
         assert_ne!(cpu.kv_fingerprint(), a.kv_fingerprint());
     }
 }
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct MoeRouteParams {
+    n_expert: u32,
+    k: u32,
+    norm: u32,
+    pad: u32,
+}
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct GemvIdParams {
+    rows: u32,
+    cols: u32,
+    expert_bytes: u32,
+    k: u32,
+    x_per_pair: u32,
+    pad: [u32; 3],
+}
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct MoeGroupParams {
+    n_pairs: u32,
+    n_expert: u32,
+    cap: u32,
+    pad: u32,
+}
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct GemmIdParams {
+    rows: u32,
+    cols: u32,
+    row_bytes: u32,
+    expert_bytes: u32,
+    k: u32,
+    x_per_pair: u32,
+    cap: u32,
+    pad: u32,
+}
+
+/// The CPU routing rule (moe.rs `route`): softmax, top-k descending with ties to the lower
+/// expert, optional renormalisation with the sum clamped at 6.1035156e-5.
+fn route_ref(logits: &[f32], k: usize, norm: bool) -> (Vec<u32>, Vec<f32>) {
+    let m = logits.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
+    let e: Vec<f64> = logits.iter().map(|&l| ((l - m) as f64).exp()).collect();
+    let z: f64 = e.iter().sum();
+    let mut idx: Vec<u32> = (0..logits.len() as u32).collect();
+    idx.sort_by(|&a, &b| {
+        logits[b as usize]
+            .total_cmp(&logits[a as usize])
+            .then(a.cmp(&b))
+    });
+    let sel = idx[..k].to_vec();
+    let mut w: Vec<f32> = sel.iter().map(|&i| (e[i as usize] / z) as f32).collect();
+    if norm {
+        let s = w.iter().sum::<f32>().max(6.103_515_6e-5);
+        for v in &mut w {
+            *v /= s;
+        }
+    }
+    (sel, w)
+}
+
+/// `moe_route` picks the CPU's experts in the CPU's order (including ties and expert counts
+/// that are not a multiple of the simdgroup width) with the same weights.
+#[test]
+fn moe_route_matches_the_cpu_rule() {
+    if !metal() {
+        return;
+    }
+    let gpu = Gpu::get().unwrap();
+    for (ne, k, norm) in [
+        (128usize, 8usize, true),
+        (40, 3, true),
+        (5, 5, false),
+        (64, 1, true),
+    ] {
+        let n = 6;
+        let mut logits: Vec<f32> = (0..n * ne)
+            .map(|i| (((i * 7919) % 1013) as f32 / 1013.0 - 0.5) * 6.0)
+            .collect();
+        // Row 0: a three-way tie at the top; row 1: every logit equal.
+        if ne >= 8 {
+            for e in [2, 5, 7] {
+                logits[e] = 9.0;
+            }
+        }
+        for v in &mut logits[ne..2 * ne] {
+            *v = 0.25;
+        }
+        let lbuf = gpu.alloc(logits.len() * 4).unwrap();
+        lbuf.write_f32(0, &logits);
+        let sbuf = gpu.alloc(n * k * 4).unwrap();
+        let wbuf = gpu.alloc(n * k * 4).unwrap();
+        let cmd = gpu.begin().unwrap();
+        cmd.dispatch(
+            "moe_route",
+            &[(0, &lbuf, 0), (1, &sbuf, 0), (2, &wbuf, 0)],
+            3,
+            &MoeRouteParams {
+                n_expert: ne as u32,
+                k: k as u32,
+                norm: norm as u32,
+                pad: 0,
+            },
+            (n, 1, 1),
+            (32, 1, 1),
+        )
+        .unwrap();
+        cmd.finish().unwrap();
+        let sel: Vec<u32> = sbuf.as_slice()[..n * k * 4]
+            .chunks_exact(4)
+            .map(|c| u32::from_le_bytes(c.try_into().unwrap()))
+            .collect();
+        let mut w = vec![0f32; n * k];
+        wbuf.read_f32(0, &mut w);
+        for t in 0..n {
+            let (rs, rw) = route_ref(&logits[t * ne..(t + 1) * ne], k, norm);
+            assert_eq!(&sel[t * k..(t + 1) * k], &rs[..], "ne {ne} k {k} row {t}");
+            for j in 0..k {
+                let (a, b) = (w[t * k + j], rw[j]);
+                assert!(
+                    (a - b).abs() <= 1e-6 * b.abs().max(1.0),
+                    "row {t} slot {j}: {a} vs {b}"
+                );
+            }
+        }
+    }
+}
+
+/// The expert matvec (plain and gate/up SwiGLU) and the grouped expert GEMM of every supported
+/// weight type against the scalar dequantizer, with experts shared between rows, rows per token
+/// (`pair / k`) and rows per pair.
+#[test]
+fn moe_expert_kernels_match_scalar_reference() {
+    if !metal() {
+        return;
+    }
+    let gpu = Gpu::get().unwrap();
+    let (ne, rows, cols, n, k) = (5usize, 70usize, 512usize, 7usize, 2usize);
+    let pairs = n * k;
+    // Expert choices per (token, slot): expert 4 by most tokens, expert 1 by none.
+    let sel: Vec<u32> = (0..pairs)
+        .map(|p| [4u32, 0, 4, 2, 3, 4, 0][p / k] ^ (p % k) as u32)
+        .map(|e| if e == 1 { 4 } else { e % ne as u32 })
+        .collect();
+    let sel_bytes: Vec<u8> = sel.iter().flat_map(|e| e.to_le_bytes()).collect();
+    let selbuf = gpu.alloc(sel_bytes.len()).unwrap();
+    selbuf.write_bytes(0, &sel_bytes);
+    let xt: Vec<f32> = (0..n * cols)
+        .map(|i| ((i * 48271 % 1000) as f32 / 1000.0 - 0.5) * 2.0)
+        .collect();
+    let xp: Vec<f32> = (0..pairs * cols)
+        .map(|i| ((i * 69621 % 1000) as f32 / 1000.0 - 0.5) * 2.0)
+        .collect();
+    let xtbuf = gpu.alloc(xt.len() * 4).unwrap();
+    xtbuf.write_f32(0, &xt);
+    let xpbuf = gpu.alloc(xp.len() * 4).unwrap();
+    xpbuf.write_f32(0, &xp);
+    let ybuf = gpu.alloc(pairs * rows * 4).unwrap();
+    let counts = gpu.alloc(ne * 4).unwrap();
+    let ids = gpu.alloc(ne * n * 4).unwrap();
+    // Group once (the expert lists do not depend on the weight type).
+    let cmd = gpu.begin().unwrap();
+    cmd.dispatch(
+        "moe_group",
+        &[(0, &selbuf, 0), (1, &counts, 0), (2, &ids, 0)],
+        3,
+        &MoeGroupParams {
+            n_pairs: pairs as u32,
+            n_expert: ne as u32,
+            cap: n as u32,
+            pad: 0,
+        },
+        (1, 1, 1),
+        (256, 1, 1),
+    )
+    .unwrap();
+    cmd.finish().unwrap();
+    for dtype in [
+        GgmlType::F32,
+        GgmlType::F16,
+        GgmlType::Q4_0,
+        GgmlType::Q8_0,
+        GgmlType::Q4_K,
+        GgmlType::Q5_K,
+        GgmlType::Q6_K,
+    ] {
+        let eb = dtype.row_bytes(cols) * rows;
+        let w = random_matrix(dtype, ne * rows, cols, 11 + dtype.id() as u64);
+        let w2 = random_matrix(dtype, ne * rows, cols, 23 + dtype.id() as u64);
+        let wbuf = gpu.alloc(w.len()).unwrap();
+        wbuf.write_bytes(0, &w);
+        let w2buf = gpu.alloc(w2.len()).unwrap();
+        w2buf.write_bytes(0, &w2);
+        // Reference per pair: expert sel[p] times its token row (or its own row).
+        let expect = |wb: &[u8], x: &[f32], per_pair: bool| -> Vec<f32> {
+            let mut out = vec![0f32; pairs * rows];
+            for p in 0..pairs {
+                let e = sel[p] as usize;
+                let xr = if per_pair { p } else { p / k };
+                let y = reference_matmul(
+                    dtype,
+                    &wb[e * eb..(e + 1) * eb],
+                    rows,
+                    cols,
+                    &x[xr * cols..(xr + 1) * cols],
+                    1,
+                );
+                out[p * rows..(p + 1) * rows].copy_from_slice(&y);
+            }
+            out
+        };
+        let read = || {
+            let mut v = vec![0f32; pairs * rows];
+            ybuf.read_f32(0, &mut v);
+            v
+        };
+        for per_pair in [false, true] {
+            let (x, xbuf) = if per_pair {
+                (&xp, &xpbuf)
+            } else {
+                (&xt, &xtbuf)
+            };
+            let want = expect(&w, x, per_pair);
+            let scale = want.iter().fold(0f32, |m, v| m.max(v.abs())).max(1e-3);
+            let gp = GemvIdParams {
+                rows: rows as u32,
+                cols: cols as u32,
+                expert_bytes: eb as u32,
+                k: k as u32,
+                x_per_pair: per_pair as u32,
+                pad: [0; 3],
+            };
+            let cmd = gpu.begin().unwrap();
+            cmd.dispatch(
+                kernel_name("gemv_id", dtype),
+                &[
+                    (0, &wbuf, 0),
+                    (1, xbuf, 0),
+                    (2, &ybuf, 0),
+                    (4, &wbuf, 0),
+                    (5, &selbuf, 0),
+                ],
+                3,
+                &gp,
+                (groups(rows, 4), pairs, 1),
+                (64, 1, 1),
+            )
+            .unwrap();
+            cmd.finish().unwrap();
+            let diff = max_abs_diff(&read(), &want);
+            assert!(
+                diff <= 2e-3 * scale,
+                "{dtype} gemv_id (per pair {per_pair}): {diff} (scale {scale})"
+            );
+            let mp = GemmIdParams {
+                rows: rows as u32,
+                cols: cols as u32,
+                row_bytes: dtype.row_bytes(cols) as u32,
+                expert_bytes: eb as u32,
+                k: k as u32,
+                x_per_pair: per_pair as u32,
+                cap: n as u32,
+                pad: 0,
+            };
+            let cmd = gpu.begin().unwrap();
+            cmd.dispatch(
+                kernel_name("gemm_id", dtype),
+                &[
+                    (0, &wbuf, 0),
+                    (1, xbuf, 0),
+                    (2, &ybuf, 0),
+                    (4, &counts, 0),
+                    (5, &ids, 0),
+                ],
+                3,
+                &mp,
+                (groups(n, 32), groups(rows, 64), ne),
+                (128, 1, 1),
+            )
+            .unwrap();
+            cmd.finish().unwrap();
+            let diff = max_abs_diff(&read(), &want);
+            assert!(
+                diff <= 6e-3 * scale,
+                "{dtype} gemm_id (per pair {per_pair}): {diff} (scale {scale})"
+            );
+        }
+        // Gate/up SwiGLU per pair.
+        let g = expect(&w, &xt, false);
+        let u = expect(&w2, &xt, false);
+        let want: Vec<f32> = g
+            .iter()
+            .zip(&u)
+            .map(|(&g, &u)| g / (1.0 + (-g).exp()) * u)
+            .collect();
+        let scale = want.iter().fold(0f32, |m, v| m.max(v.abs())).max(1e-3);
+        let cmd = gpu.begin().unwrap();
+        cmd.dispatch(
+            kernel_name("gemv_glu_id", dtype),
+            &[
+                (0, &wbuf, 0),
+                (1, &xtbuf, 0),
+                (2, &ybuf, 0),
+                (4, &w2buf, 0),
+                (5, &selbuf, 0),
+            ],
+            3,
+            &GemvIdParams {
+                rows: rows as u32,
+                cols: cols as u32,
+                expert_bytes: eb as u32,
+                k: k as u32,
+                x_per_pair: 0,
+                pad: [0; 3],
+            },
+            (groups(rows, 4), pairs, 1),
+            (64, 1, 1),
+        )
+        .unwrap();
+        cmd.finish().unwrap();
+        let diff = max_abs_diff(&read(), &want);
+        assert!(
+            diff <= 4e-3 * scale,
+            "{dtype} gemv_glu_id: {diff} (scale {scale})"
+        );
+    }
+}
+
+/// A tiny random `qwen3moe` model (two layers, 6 experts, 2 per token) for the CPU-vs-Metal
+/// comparison; head width 64 so prompts take the flash attention kernel.
+fn tiny_moe(dir: &std::path::Path) -> std::path::PathBuf {
+    let (d, n_head, n_kv, hd, vocab, n_layer) = (64u64, 4u64, 2u64, 64u64, 64u64, 2u64);
+    let (ne, k, ff) = (6u64, 2u64, 48u64);
+    let f32s = |n: u64, seed: u64| -> Vec<u8> {
+        (0..n)
+            .flat_map(|i| {
+                let v = (((i * 2654435761 + seed * 97) % 1000) as f32 / 1000.0 - 0.5) * 0.3;
+                v.to_le_bytes()
+            })
+            .collect()
+    };
+    let ones = |n: u64| -> Vec<u8> { (0..n).flat_map(|_| 1.0f32.to_le_bytes()).collect() };
+    let a = "qwen3moe";
+    let mut w = GgufWriter::new();
+    w.meta("general.architecture", MetaValue::Str(a.into()))
+        .meta(&format!("{a}.block_count"), MetaValue::U32(n_layer as u32))
+        .meta(&format!("{a}.embedding_length"), MetaValue::U32(d as u32))
+        .meta(
+            &format!("{a}.attention.head_count"),
+            MetaValue::U32(n_head as u32),
+        )
+        .meta(
+            &format!("{a}.attention.head_count_kv"),
+            MetaValue::U32(n_kv as u32),
+        )
+        .meta(
+            &format!("{a}.attention.key_length"),
+            MetaValue::U32(hd as u32),
+        )
+        .meta(
+            &format!("{a}.attention.value_length"),
+            MetaValue::U32(hd as u32),
+        )
+        .meta(&format!("{a}.expert_count"), MetaValue::U32(ne as u32))
+        .meta(&format!("{a}.expert_used_count"), MetaValue::U32(k as u32))
+        .meta(
+            &format!("{a}.expert_feed_forward_length"),
+            MetaValue::U32(ff as u32),
+        )
+        .meta(&format!("{a}.vocab_size"), MetaValue::U32(vocab as u32))
+        .meta(&format!("{a}.context_length"), MetaValue::U32(128))
+        .meta(&format!("{a}.rope.freq_base"), MetaValue::F32(1_000_000.0))
+        .meta(
+            &format!("{a}.attention.layer_norm_rms_epsilon"),
+            MetaValue::F32(1e-6),
+        );
+    w.tensor(
+        "token_embd.weight",
+        &[d, vocab],
+        GgmlType::F32,
+        f32s(d * vocab, 1),
+    );
+    w.tensor("output_norm.weight", &[d], GgmlType::F32, ones(d));
+    w.tensor(
+        "output.weight",
+        &[d, vocab],
+        GgmlType::F32,
+        f32s(d * vocab, 2),
+    );
+    for l in 0..n_layer {
+        let p = |s: &str| format!("blk.{l}.{s}");
+        w.tensor(&p("attn_norm.weight"), &[d], GgmlType::F32, ones(d));
+        for (name, rows, seed) in [
+            ("attn_q.weight", n_head * hd, 10),
+            ("attn_k.weight", n_kv * hd, 20),
+            ("attn_v.weight", n_kv * hd, 30),
+        ] {
+            w.tensor(
+                &p(name),
+                &[d, rows],
+                GgmlType::F32,
+                f32s(d * rows, seed + l),
+            );
+        }
+        w.tensor(
+            &p("attn_output.weight"),
+            &[n_head * hd, d],
+            GgmlType::F32,
+            f32s(n_head * hd * d, 40 + l),
+        );
+        w.tensor(&p("attn_q_norm.weight"), &[hd], GgmlType::F32, ones(hd));
+        w.tensor(&p("attn_k_norm.weight"), &[hd], GgmlType::F32, ones(hd));
+        w.tensor(&p("ffn_norm.weight"), &[d], GgmlType::F32, ones(d));
+        w.tensor(
+            &p("ffn_gate_inp.weight"),
+            &[d, ne],
+            GgmlType::F32,
+            f32s(d * ne, 50 + l),
+        );
+        w.tensor(
+            &p("ffn_gate_exps.weight"),
+            &[d, ff, ne],
+            GgmlType::F32,
+            f32s(d * ff * ne, 60 + l),
+        );
+        w.tensor(
+            &p("ffn_up_exps.weight"),
+            &[d, ff, ne],
+            GgmlType::F32,
+            f32s(d * ff * ne, 70 + l),
+        );
+        w.tensor(
+            &p("ffn_down_exps.weight"),
+            &[ff, d, ne],
+            GgmlType::F32,
+            f32s(ff * d * ne, 80 + l),
+        );
+    }
+    let p = dir.join("tiny_moe.gguf");
+    std::fs::write(&p, w.to_bytes()).unwrap();
+    p
+}
+
+/// A `qwen3moe` model on Metal gives the CPU's logits: a 40-token prompt (grouped expert GEMMs),
+/// decode steps (expert matvecs), a 3-token prompt (matvec path with several rows), and three
+/// sequences in one call.
+#[test]
+fn moe_model_matches_cpu() {
+    use llmario_engine_metal::MetalOptions;
+    use llmario_engine_model::SeqTokens;
+    if !metal() {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let path = tiny_moe(dir.path());
+    let f = GgufFile::open(&path).unwrap();
+    let toks: Vec<u32> = (0..40).map(|i| (i * 7 + 3) % 64).collect();
+    let mut cpu = CpuBackend::new(&f, 2, 128, 64).unwrap();
+    let mut gpu = MetalBackend::new(&f, 128, 64).unwrap();
+    let tol = 2e-3;
+    let lc = cpu.forward(&toks).to_vec();
+    let lg = gpu.forward(&toks).to_vec();
+    let spread =
+        lc.iter().fold(f32::MIN, |a, &b| a.max(b)) - lc.iter().fold(f32::MAX, |a, &b| a.min(b));
+    eprintln!(
+        "prefill: logit spread {spread}, max diff {}",
+        max_abs_diff(&lc, &lg)
+    );
+    // The tolerance must be small against the logits for the comparison to mean anything.
+    assert!(spread > 100.0 * tol, "logit spread {spread}");
+    assert!(
+        max_abs_diff(&lc, &lg) < tol,
+        "prefill: {}",
+        max_abs_diff(&lc, &lg)
+    );
+    assert_eq!(argmax(&lc), argmax(&lg));
+    let mut next = argmax(&lc) as u32;
+    for step in 0..8 {
+        let lc = cpu.forward(&[next]).to_vec();
+        let lg = gpu.forward(&[next]).to_vec();
+        assert!(
+            max_abs_diff(&lc, &lg) < tol,
+            "decode step {step}: {}",
+            max_abs_diff(&lc, &lg)
+        );
+        next = argmax(&lc) as u32;
+    }
+    let lc = cpu.forward(&[5, 9, 13]).to_vec();
+    let lg = gpu.forward(&[5, 9, 13]).to_vec();
+    assert!(max_abs_diff(&lc, &lg) < tol, "3-token prompt");
+
+    // Three sequences in one Metal call equal the CPU running each alone.
+    let prompts: [&[u32]; 3] = [&toks, &[9], &[4, 8, 15]];
+    let mut gpu = MetalBackend::with_options(
+        &f,
+        MetalOptions {
+            n_seqs: 3,
+            ..MetalOptions::new(128, 64)
+        },
+    )
+    .unwrap();
+    let batch: Vec<SeqTokens> = prompts
+        .iter()
+        .enumerate()
+        .map(|(i, p)| SeqTokens { seq: i, tokens: p })
+        .collect();
+    let got = gpu.forward_batch(&batch).unwrap().to_vec();
+    let v = 64;
+    for (i, p) in prompts.iter().enumerate() {
+        let mut cpu = CpuBackend::new(&f, 2, 128, 64).unwrap();
+        let want = cpu.forward(p).to_vec();
+        let diff = max_abs_diff(&want, &got[i * v..(i + 1) * v]);
+        assert!(diff < tol, "sequence {i}: {diff}");
+    }
+}

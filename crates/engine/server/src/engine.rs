@@ -356,10 +356,28 @@ fn open_backend<'a>(
     let n_batch = plan.n_batch as usize;
     let n_seqs = plan.slots as usize;
     let kv_type = plan.kv_type();
+    // The Metal backend keeps every weight resident (the GPU reads them through wired buffers),
+    // so a plan that leaves experts on disk runs on the CPU, where the page cache streams them.
+    let streamed = plan.weights_streamed();
+    if streamed > 0 && opts.device == Device::Metal {
+        anyhow::bail!(
+            "the plan streams {} MiB of experts from disk, which the Metal backend cannot do yet \
+             (it keeps every weight resident); use --device auto or cpu, or a larger memory limit",
+            streamed >> 20
+        );
+    }
     let want_metal = match opts.device {
         Device::Cpu => false,
         Device::Metal => true,
-        Device::Auto => metal_available(),
+        Device::Auto => {
+            if streamed > 0 {
+                tracing::info!(
+                    streamed_mib = streamed >> 20,
+                    "experts are streamed from disk; running on the CPU"
+                );
+            }
+            streamed == 0 && metal_available()
+        }
     };
     if want_metal {
         #[cfg(all(feature = "metal", target_os = "macos"))]
