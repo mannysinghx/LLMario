@@ -45,6 +45,10 @@ pub fn matmul(pool: &ThreadPool, w: &QMat, x: &[f32], n: usize, y: &mut [f32]) {
     super::common::matmul(&TABLE, pool, w, x, n, y)
 }
 
+pub fn rows_multi(pool: &ThreadPool, jobs: &mut [crate::RowsJob]) {
+    super::common::rows_multi(&TABLE, pool, jobs)
+}
+
 // ---- 32-element blocks × Q8_0 ----
 
 /// Signed int8 dot of 32 weight quants with 32 activation quants.

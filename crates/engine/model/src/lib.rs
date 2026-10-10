@@ -9,8 +9,8 @@
 //!   Qwen3-Next hybrid family ([`hybrid`]: Gated DeltaNet layers from [`gdn`] plus gated
 //!   full-attention layers) with the fp32 recurrent state kept per sequence in the same
 //!   [`kv::KvCache`], and the Gemma 4 family ([`gemma4`]: sliding-window / global attention
-//!   with per-layer geometry, the window layers cached in rings). MoE families arrive in M4 as
-//!   additional blocks.
+//!   with per-layer geometry, the window layers cached in rings), and the Qwen3 MoE family
+//!   ([`moe`]: the Qwen3 attention block with a routed mixture-of-experts FFN).
 
 pub mod arch;
 pub mod backend;
@@ -19,9 +19,10 @@ pub mod gdn;
 pub mod gemma4;
 pub mod hybrid;
 pub mod kv;
+pub mod moe;
 pub mod weights;
 
-pub use arch::{ArchSpec, AttnGeom, BlockKind, Family, GdnSpec, Gemma4Spec};
+pub use arch::{ArchSpec, AttnGeom, BlockKind, Family, GdnSpec, Gemma4Spec, MoeSpec};
 pub use backend::{CpuBackend, CpuOptions, ModelBackend};
 pub use forward::{Model, SeqTokens};
 pub use kv::{KvCache, KvFull, KvOptions, KvType};

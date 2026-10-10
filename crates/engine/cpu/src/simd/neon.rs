@@ -54,6 +54,10 @@ pub fn matmul(pool: &ThreadPool, w: &QMat, x: &[f32], n: usize, y: &mut [f32]) {
     super::common::matmul(&TABLE, pool, w, x, n, y)
 }
 
+pub fn rows_multi(pool: &ThreadPool, jobs: &mut [crate::RowsJob]) {
+    super::common::rows_multi(&TABLE, pool, jobs)
+}
+
 /// Safe wrapper: checks the row lengths, then calls the `target_feature` kernel.
 macro_rules! wrap_q {
     ($name:ident, $inner:ident, $block:expr, $wbytes:expr, $abytes:expr) => {

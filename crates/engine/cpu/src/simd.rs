@@ -39,6 +39,7 @@ pub struct Kernels {
     pub name: &'static str,
     pub matvec: fn(&ThreadPool, &QMat, &[f32], &mut [f32]),
     pub matmul: fn(&ThreadPool, &QMat, &[f32], usize, &mut [f32]),
+    pub rows_multi: fn(&ThreadPool, &mut [crate::RowsJob]),
 }
 
 impl Kernels {
@@ -49,6 +50,10 @@ impl Kernels {
     #[inline]
     pub fn matmul(&self, pool: &ThreadPool, w: &QMat, x: &[f32], n: usize, y: &mut [f32]) {
         (self.matmul)(pool, w, x, n, y)
+    }
+    #[inline]
+    pub fn rows_multi(&self, pool: &ThreadPool, jobs: &mut [crate::RowsJob]) {
+        (self.rows_multi)(pool, jobs)
     }
 }
 
@@ -110,6 +115,7 @@ pub static SCALAR: Kernels = Kernels {
     name: "scalar",
     matvec: scalar_matvec,
     matmul: scalar_matmul,
+    rows_multi: scalar_rows_multi,
 };
 
 /// Portable quantised-activation kernels (no intrinsics).
@@ -117,6 +123,7 @@ pub static INT8: Kernels = Kernels {
     name: "int8",
     matvec: int8::matvec,
     matmul: int8::matmul,
+    rows_multi: int8::rows_multi,
 };
 
 /// NEON + dotprod kernels.
@@ -125,6 +132,7 @@ pub static NEON: Kernels = Kernels {
     name: "neon",
     matvec: neon::matvec,
     matmul: neon::matmul,
+    rows_multi: neon::rows_multi,
 };
 
 /// AVX2 + F16C kernels.
@@ -133,6 +141,7 @@ pub static AVX2: Kernels = Kernels {
     name: "avx2",
     matvec: avx2::matvec,
     matmul: avx2::matmul,
+    rows_multi: avx2::rows_multi,
 };
 
 /// Rows handled by one parallel chunk; small enough to balance, large enough to amortise.
@@ -154,6 +163,14 @@ fn scalar_matvec(pool: &ThreadPool, w: &QMat, x: &[f32], y: &mut [f32]) {
             unsafe { *y_ptr.get().add(r) = acc };
         }
     });
+}
+
+fn scalar_rows_multi(pool: &ThreadPool, jobs: &mut [crate::RowsJob]) {
+    for j in jobs.iter_mut() {
+        for (x, y) in j.xs.iter().zip(j.ys.iter_mut()) {
+            scalar_matvec(pool, &j.w, x, y);
+        }
+    }
 }
 
 fn scalar_matmul(pool: &ThreadPool, w: &QMat, x: &[f32], n: usize, y: &mut [f32]) {

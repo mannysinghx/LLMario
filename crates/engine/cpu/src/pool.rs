@@ -1,7 +1,11 @@
 //! The engine's worker pool (Architecture §4.2 / §7.3).
 //!
 //! - Sized to the physical performance-class cores by default (never SMT siblings).
-//! - Workers spin for a bounded time on a new job, then park on a condvar; nothing polls.
+//! - Workers spin for a bounded time on a new job (reading it through a read lock, so spinners
+//!   never queue on a mutex), then park on a condvar; nothing polls. A region signals the condvar
+//!   only when a worker is parked, and the caller spins briefly on the completion count before
+//!   sleeping and is signalled only when it does sleep: a decode step publishes hundreds of
+//!   regions, and syscalls per region were most of the CPU backend's idle time.
 //! - One parallel region per fused op: [`ThreadPool::parallel_for`] splits an index range into
 //!   contiguous chunks (static partition, so each worker's weight stream stays contiguous during
 //!   decode) and blocks the caller until every chunk is done. The caller is worker 0.
@@ -11,7 +15,7 @@
 
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Condvar, Mutex, RwLock};
 use std::thread;
 
 type JobFn = dyn Fn(usize, usize) + Send + Sync;
@@ -31,11 +35,18 @@ struct Job {
 }
 
 struct Shared {
+    /// The current job for parking workers (condvar protocol).
     job: Mutex<Option<Arc<Job>>>,
     cv: Condvar,
+    /// The same job for spinning workers (concurrent reads).
+    published: RwLock<Option<Arc<Job>>>,
+    /// Workers waiting on `cv` (counted under `job`'s lock).
+    parked: AtomicUsize,
     generation: AtomicU64,
     done_lock: Mutex<()>,
     done_cv: Condvar,
+    /// The caller is (about to be) asleep on `done_cv` for the current region.
+    caller_waiting: AtomicBool,
     stop: AtomicBool,
 }
 
@@ -45,8 +56,11 @@ pub struct ThreadPool {
     handles: Vec<thread::JoinHandle<()>>,
 }
 
-/// Spin iterations before a worker parks (tens of microseconds on current CPUs).
-const SPIN_ITERS: usize = 4_000;
+/// Spin iterations before a worker parks (a few hundred microseconds on current CPUs: long
+/// enough to stay warm between the regions of one forward pass).
+const SPIN_ITERS: usize = 40_000;
+/// Spin iterations of the caller on the completion count before it sleeps.
+const DONE_SPIN_ITERS: usize = 20_000;
 
 impl ThreadPool {
     /// A pool with `n_threads` workers in total (the calling thread participates as worker 0, so
@@ -56,9 +70,12 @@ impl ThreadPool {
         let shared = Arc::new(Shared {
             job: Mutex::new(None),
             cv: Condvar::new(),
+            published: RwLock::new(None),
+            parked: AtomicUsize::new(0),
             generation: AtomicU64::new(0),
             done_lock: Mutex::new(()),
             done_cv: Condvar::new(),
+            caller_waiting: AtomicBool::new(false),
             stop: AtomicBool::new(false),
         });
         let mut handles = Vec::new();
@@ -126,18 +143,36 @@ impl ThreadPool {
             done: AtomicUsize::new(0),
             panicked: AtomicBool::new(false),
         });
-        {
+        *self.shared.published.write().unwrap() = Some(job.clone());
+        let wake = {
             let mut slot = self.shared.job.lock().unwrap();
             *slot = Some(job.clone());
             self.shared.generation.store(gen, Ordering::Release);
+            // Read under the lock: a worker that counted itself parked has released the lock in
+            // `wait`, and one that has not yet taken it will see the new job.
+            self.shared.parked.load(Ordering::Acquire) > 0
+        };
+        if wake {
+            self.shared.cv.notify_all();
         }
-        self.shared.cv.notify_all();
         run_chunks(&self.shared, &job);
-        let mut guard = self.shared.done_lock.lock().unwrap();
-        while job.done.load(Ordering::Acquire) < n_chunks {
-            guard = self.shared.done_cv.wait(guard).unwrap();
+        let mut spins = 0;
+        while job.done.load(Ordering::Acquire) < n_chunks && spins < DONE_SPIN_ITERS {
+            std::hint::spin_loop();
+            spins += 1;
         }
-        drop(guard);
+        if job.done.load(Ordering::Acquire) < n_chunks {
+            let mut guard = self.shared.done_lock.lock().unwrap();
+            // Dekker handshake with `run_chunks`: either this load sees the last chunk done, or
+            // the last finisher sees `caller_waiting` and signals under `done_lock`.
+            self.shared.caller_waiting.store(true, Ordering::SeqCst);
+            while job.done.load(Ordering::SeqCst) < n_chunks {
+                guard = self.shared.done_cv.wait(guard).unwrap();
+            }
+            self.shared.caller_waiting.store(false, Ordering::SeqCst);
+            drop(guard);
+        }
+        *self.shared.published.write().unwrap() = None;
         *self.shared.job.lock().unwrap() = None;
         if job.panicked.load(Ordering::Acquire) {
             panic!("a parallel_for chunk panicked");
@@ -159,8 +194,8 @@ fn run_chunks(s: &Shared, job: &Job) {
                 job.panicked.store(true, Ordering::Release);
             }
         }
-        let d = job.done.fetch_add(1, Ordering::AcqRel) + 1;
-        if d == job.n_chunks {
+        let d = job.done.fetch_add(1, Ordering::SeqCst) + 1;
+        if d == job.n_chunks && s.caller_waiting.load(Ordering::SeqCst) {
             let _g = s.done_lock.lock().unwrap();
             s.done_cv.notify_all();
         }
@@ -177,7 +212,7 @@ fn worker_loop(s: Arc<Shared>) {
         let mut job = None;
         for _ in 0..SPIN_ITERS {
             if s.generation.load(Ordering::Acquire) != seen_gen {
-                job = s.job.lock().unwrap().clone();
+                job = s.published.read().unwrap().clone();
                 if job.as_ref().is_some_and(|j| j.gen != seen_gen) {
                     break;
                 }
@@ -198,7 +233,9 @@ fn worker_loop(s: Arc<Shared>) {
                             break j.clone();
                         }
                     }
+                    s.parked.fetch_add(1, Ordering::AcqRel);
                     guard = s.cv.wait(guard).unwrap();
+                    s.parked.fetch_sub(1, Ordering::AcqRel);
                 }
             }
         };

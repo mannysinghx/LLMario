@@ -704,3 +704,69 @@ fn bench_overheads() {
         }
     }
 }
+
+/// `rows_multi` gives every (product, row) exactly what `matvec` gives it alone, for every kernel
+/// set and weight type, with products of different shapes, types and row counts mixed in one call
+/// and chunk boundaries falling inside products.
+#[test]
+fn rows_multi_equals_separate_matvecs() {
+    let pool = ThreadPool::new(4);
+    let mut rng = Rng(0x5eed_6006);
+    for k in available() {
+        for (i, &t) in TYPES.iter().enumerate() {
+            let other = TYPES[(i + 3) % TYPES.len()];
+            // (rows, cols, type, input rows)
+            let shapes = [
+                (37usize, 256usize, t, 1usize),
+                (64, 512, t, 3),
+                (5, 256, other, 2),
+                (130, 256, t, 1),
+            ];
+            let mats: Vec<Vec<u8>> = shapes
+                .iter()
+                .map(|&(r, c, ty, _)| random_matrix(ty, r, c, &mut rng))
+                .collect();
+            let xs: Vec<Vec<Vec<f32>>> = shapes
+                .iter()
+                .map(|&(_, c, _, m)| {
+                    (0..m)
+                        .map(|_| (0..c).map(|_| rng.unit()).collect())
+                        .collect()
+                })
+                .collect();
+            let mut want: Vec<Vec<Vec<f32>>> = shapes
+                .iter()
+                .map(|&(r, _, _, m)| vec![vec![0f32; r]; m])
+                .collect();
+            for (j, &(r, c, ty, m)) in shapes.iter().enumerate() {
+                let w = QMat::new(ty, r, c, &mats[j]);
+                for row in 0..m {
+                    k.matvec(&pool, &w, &xs[j][row], &mut want[j][row]);
+                }
+            }
+            let mut got: Vec<Vec<Vec<f32>>> = shapes
+                .iter()
+                .map(|&(r, _, _, m)| vec![vec![0f32; r]; m])
+                .collect();
+            {
+                let mut jobs: Vec<crate::RowsJob> = shapes
+                    .iter()
+                    .zip(&mats)
+                    .zip(&xs)
+                    .zip(got.iter_mut())
+                    .map(|(((&(r, c, ty, _), m), x), y)| crate::RowsJob {
+                        w: QMat::new(ty, r, c, m),
+                        xs: x.iter().map(|v| v.as_slice()).collect(),
+                        ys: y.iter_mut().map(|v| v.as_mut_slice()).collect(),
+                    })
+                    .collect();
+                k.rows_multi(&pool, &mut jobs);
+            }
+            assert_eq!(
+                got, want,
+                "{} {:?}: rows_multi differs from matvec",
+                k.name, t
+            );
+        }
+    }
+}

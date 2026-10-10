@@ -335,14 +335,24 @@ kernel void attn_vec_t(device const float* q [[buffer(0)]],
     float l = 0.0f;
 
     const uint ke = kvh * hd + tiisg * ND;
+    // Block base addresses, looked up once per block rather than once per key.
+    uint blk = 0xffffffffu;
+    device const uchar* kb = nullptr;
+    device const uchar* vb = nullptr;
     for (uint base = r0; base < r1; base += ATTN_KB) {
         float s[ATTN_KB];
         for (int j = 0; j < ATTN_KB; j++) {
             const uint pos = base + j;
             float acc = 0.0f;
             if (pos < r1) {
+                if ((pos >> p.kv.shift) != blk) {
+                    blk = pos >> p.kv.shift;
+                    device const uchar* b0 = reinterpret_cast<device const uchar*>(stab[blk]);
+                    kb = b0 + p.kv.k_base;
+                    vb = b0 + p.kv.v_base;
+                }
                 float kr[ND];
-                kv_load<ND, KVT>(kv_row_ptr(stab, pos, p.kv.k_base, p.kv.k_row, p.kv), ke, kr);
+                kv_load<ND, KVT>(kb + (pos & p.kv.mask) * p.kv.k_row, ke, kr);
                 for (int i = 0; i < ND; i++) acc += qr[i] * kr[i];
             }
             s[j] = acc;
@@ -361,8 +371,14 @@ kernel void attn_vec_t(device const float* q [[buffer(0)]],
             if (pos < r1) {
                 const float pr = exp(s[j] - m_new);
                 l += pr;
+                if ((pos >> p.kv.shift) != blk) {
+                    blk = pos >> p.kv.shift;
+                    device const uchar* b0 = reinterpret_cast<device const uchar*>(stab[blk]);
+                    kb = b0 + p.kv.k_base;
+                    vb = b0 + p.kv.v_base;
+                }
                 float vr[ND];
-                kv_load<ND, KVT>(kv_row_ptr(stab, pos, p.kv.v_base, p.kv.v_row, p.kv), ke, vr);
+                kv_load<ND, KVT>(vb + (pos & p.kv.mask) * p.kv.v_row, ke, vr);
                 for (int i = 0; i < ND; i++) o[i] += pr * vr[i];
             }
         }
