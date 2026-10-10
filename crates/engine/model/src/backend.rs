@@ -9,7 +9,7 @@
 //! batching); the single-slot methods are shorthands for slot 0.
 
 use crate::forward::{Scratch, SeqTokens};
-use crate::kv::{KvFull, KvOptions, KvType};
+use crate::kv::{KvFull, KvOptions, KvType, SeqSnapshot};
 use crate::{ArchSpec, KvCache, Model};
 use llmario_engine_cpu::ThreadPool;
 use llmario_engine_formats::GgufFile;
@@ -50,6 +50,39 @@ pub trait ModelBackend: Send {
     /// for a backend without a pool limit.
     fn kv_free_tokens(&self) -> usize {
         usize::MAX
+    }
+    /// Hash of the cache layout, stable across runs: snapshots move only between equal
+    /// fingerprints (0 = this backend cannot snapshot).
+    fn kv_fingerprint(&self) -> u64 {
+        0
+    }
+    /// Bytes of a snapshot of `len` cached tokens.
+    fn snapshot_bytes(&self, _len: usize) -> usize {
+        0
+    }
+    /// Whether a restored snapshot can be cut back to a shorter prefix.
+    fn snapshot_trimmable(&self) -> bool {
+        false
+    }
+    /// Write slot `s`'s cached state (`snapshot_bytes(seq_len(s))` bytes) to `w`.
+    fn write_seq(&self, _s: usize, _w: &mut dyn std::io::Write) -> std::io::Result<()> {
+        Err(std::io::ErrorKind::Unsupported.into())
+    }
+    /// Replace slot `s`'s state with `len` tokens' worth of snapshot bytes. `false` (nothing
+    /// changed) when unsupported, when the size does not match, or when the pool cannot hold it.
+    fn read_seq(&mut self, _s: usize, _len: usize, _bytes: &[u8]) -> bool {
+        false
+    }
+    /// [`ModelBackend::write_seq`] into memory.
+    fn export_seq(&self, s: usize) -> Option<SeqSnapshot> {
+        let len = self.seq_len(s);
+        let mut bytes = Vec::with_capacity(self.snapshot_bytes(len));
+        self.write_seq(s, &mut bytes).ok()?;
+        Some(SeqSnapshot { len, bytes })
+    }
+    /// [`ModelBackend::read_seq`] from memory.
+    fn import_seq(&mut self, s: usize, snap: &SeqSnapshot) -> bool {
+        self.read_seq(s, snap.len, &snap.bytes)
     }
 
     // Single-slot shorthands (slot 0).
@@ -230,5 +263,22 @@ impl ModelBackend for CpuBackend<'_> {
             return usize::MAX;
         }
         self.kv.pool().free_blocks() * self.kv.layout.block_tokens
+    }
+    fn kv_fingerprint(&self) -> u64 {
+        self.kv.fingerprint()
+    }
+    fn snapshot_bytes(&self, len: usize) -> usize {
+        self.kv.snapshot_bytes(len)
+    }
+    fn snapshot_trimmable(&self) -> bool {
+        self.kv.snapshot_trimmable()
+    }
+    fn write_seq(&self, s: usize, w: &mut dyn std::io::Write) -> std::io::Result<()> {
+        self.kv.write_seq(s, w)
+    }
+    fn read_seq(&mut self, s: usize, len: usize, bytes: &[u8]) -> bool {
+        len <= self.kv.max_ctx()
+            && bytes.len() == self.kv.snapshot_bytes(len)
+            && self.kv.read_seq(s, len, bytes).is_ok()
     }
 }

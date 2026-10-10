@@ -741,6 +741,25 @@ mod tests {
         assert_eq!(l1, l2);
     }
 
+    /// Snapshots carry the recurrent state: an imported sequence continues identically.
+    #[test]
+    fn hybrid_snapshot_round_trip() {
+        let dir = tempfile::tempdir().unwrap();
+        let f = GgufFile::open(&tiny_hybrid_model(dir.path())).unwrap();
+        let m = Model::load(&f).unwrap();
+        let pool = ThreadPool::new(2);
+        let mut a = KvCache::new(&m.spec, 32);
+        let mut s = Scratch::new(&m.spec, 16);
+        m.forward(&pool, &mut a, &[3, 17, 5, 42, 9], &mut s);
+        let snap = a.export(0);
+        assert!(a.layout.recurrent_bytes > 0 && !a.snapshot_trimmable());
+        let want = m.forward(&pool, &mut a, &[4], &mut s).to_vec();
+        let mut b = KvCache::new(&m.spec, 32);
+        b.import(0, &snap).unwrap();
+        let got = m.forward(&pool, &mut b, &[4], &mut s).to_vec();
+        assert_eq!(want, got);
+    }
+
     /// Several sequences in one call keep separate recurrent states: each gets the logits it
     /// gets alone, for the prefill and for a following decode step.
     #[test]

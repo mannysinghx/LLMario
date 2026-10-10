@@ -1098,6 +1098,49 @@ mod tests {
         }
     }
 
+    /// A snapshot carries a sequence's whole state: imported into another cache (another slot,
+    /// another process) it continues exactly like the original.
+    #[test]
+    fn snapshot_round_trip_continues_identically() {
+        use crate::kv::KvOptions;
+        let dir = tempfile::tempdir().unwrap();
+        let path = tiny_model(dir.path());
+        let f = GgufFile::open(&path).unwrap();
+        let m = Model::load(&f).unwrap();
+        let pool = ThreadPool::new(2);
+        let opts = KvOptions::new(64).block_tokens(4).seqs(2);
+        let mut a = KvCache::with_options(&m.spec, opts);
+        let mut s = Scratch::with_seqs(&m.spec, 16, 2);
+        let prompt: Vec<u32> = (0..11).map(|i| (i * 5 + 3) % 64).collect();
+        m.forward(&pool, &mut a, &prompt, &mut s);
+        let snap = a.export(0);
+        assert_eq!(snap.len, 11);
+        assert_eq!(snap.bytes.len(), 3 * a.layout.block_bytes);
+        assert!(a.snapshot_trimmable());
+        let want = m.forward(&pool, &mut a, &[7], &mut s).to_vec();
+        // Into slot 1 of a fresh cache with the same layout.
+        let mut b = KvCache::with_options(&m.spec, opts);
+        assert_eq!(a.fingerprint(), b.fingerprint());
+        b.import(1, &snap).unwrap();
+        assert_eq!(b.len(1), 11);
+        let got = m
+            .forward_batch(
+                &pool,
+                &mut b,
+                &[SeqTokens {
+                    seq: 1,
+                    tokens: &[7],
+                }],
+                &mut s,
+            )
+            .unwrap()
+            .to_vec();
+        assert_eq!(want, got);
+        // A different layout has a different fingerprint.
+        let c = KvCache::with_options(&m.spec, opts.block_tokens(8));
+        assert_ne!(a.fingerprint(), c.fingerprint());
+    }
+
     /// Blocks are backed only while used: growth maps them, truncation and clearing give them
     /// back, and a full shared pool refuses a batch without changing any sequence.
     #[test]

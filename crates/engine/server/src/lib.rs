@@ -7,6 +7,7 @@ pub mod agent;
 pub mod api;
 pub mod engine;
 pub mod footprint;
+pub mod kvtier;
 pub mod openai;
 pub mod toolcall;
 
@@ -59,7 +60,19 @@ pub struct ServeOptions {
     pub searxng_url: Option<String>,
     /// KV cache element type; `None` = automatic (see [`kv_choice`]).
     pub kv_type: Option<KvType>,
+    /// Directory of the KV disk tier (conversations evicted from memory are saved there and
+    /// read back when they continue); `None` = off.
+    pub kv_cache_dir: Option<PathBuf>,
+    /// Byte budget of that directory (0 = off).
+    pub kv_cache_bytes: u64,
+    /// Fewest tokens worth a disk write or a restore.
+    pub kv_cache_min_tokens: usize,
 }
+
+/// Default budget of the KV disk tier.
+pub const KV_CACHE_DEFAULT_BYTES: u64 = 8 * GIB;
+/// Default fewest tokens worth a disk write or a restore (below this, recomputing is cheap).
+pub const KV_CACHE_MIN_TOKENS: usize = 256;
 
 /// Machines (or memory budgets) at or below this size get the q8_0 KV cache by default
 /// (Architecture §8.3: q8_0 is the default on 8 and 16 GB machines).

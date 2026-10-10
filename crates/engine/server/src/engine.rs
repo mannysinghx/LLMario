@@ -5,6 +5,7 @@
 //! within the token budget, samples per job and streams events back. With one slot this is the
 //! sequential engine it replaced.
 
+use crate::kvtier::{self, DiskTier, Hit};
 use crate::{Device, ServeOptions};
 use llmario_engine_chat::ChatTemplate;
 use llmario_engine_core::ledger::{DeviceId, Ledger};
@@ -16,7 +17,7 @@ use llmario_engine_formats::GgufFile;
 use llmario_engine_model::{ArchSpec, CpuBackend, CpuOptions, KvType, ModelBackend, SeqTokens};
 use llmario_engine_plan::Plan;
 use llmario_engine_tokenizer::{Detokenizer, Tokenizer};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc};
 use std::time::Instant;
 
@@ -66,6 +67,17 @@ pub struct Stats {
     pub steps: AtomicU64,
     /// Most jobs one step has carried (continuous batching at work when > 1).
     pub max_seqs_in_step: AtomicU64,
+    /// The KV disk tier: on, and whether its files can be cut back to a shorter prefix.
+    pub disk_enabled: AtomicBool,
+    pub disk_trimmable: AtomicBool,
+    pub disk_saves: AtomicU64,
+    pub disk_restores: AtomicU64,
+    pub disk_restored_tokens: AtomicU64,
+    pub disk_save_micros: AtomicU64,
+    pub disk_restore_micros: AtomicU64,
+    /// This model's files in the directory.
+    pub disk_bytes: AtomicU64,
+    pub disk_files: AtomicU64,
 }
 
 impl Stats {
@@ -84,6 +96,17 @@ impl Stats {
             "decode_tok_s": if dm > 0.0 { ct as f64 / dm } else { 0.0 },
             "steps": self.steps.load(Ordering::Relaxed),
             "max_seqs_in_step": self.max_seqs_in_step.load(Ordering::Relaxed),
+            "kv_disk": {
+                "enabled": self.disk_enabled.load(Ordering::Relaxed),
+                "trimmable": self.disk_trimmable.load(Ordering::Relaxed),
+                "saves": self.disk_saves.load(Ordering::Relaxed),
+                "restores": self.disk_restores.load(Ordering::Relaxed),
+                "restored_tokens": self.disk_restored_tokens.load(Ordering::Relaxed),
+                "save_ms": self.disk_save_micros.load(Ordering::Relaxed) as f64 / 1e3,
+                "restore_ms": self.disk_restore_micros.load(Ordering::Relaxed) as f64 / 1e3,
+                "bytes": self.disk_bytes.load(Ordering::Relaxed),
+                "files": self.disk_files.load(Ordering::Relaxed),
+            },
         })
     }
 }
@@ -222,6 +245,7 @@ fn load_worker<'a>(
         GrammarTokenizer::from_tokenizer(&tokenizer)
             .map_err(|e| anyhow::anyhow!("grammar tokenizer: {e}"))?,
     );
+    let tier = open_tier(file, opts, backend.as_ref(), &stats);
     let mut worker = Worker {
         backend,
         tokenizer,
@@ -229,6 +253,8 @@ fn load_worker<'a>(
         ledger: ledger_handle,
         grammar_env,
         grammar_cache: GrammarCache::new(64),
+        tier,
+        min_disk_tokens: opts.kv_cache_min_tokens.max(1),
     };
     // Warm-up: one token through every kernel so the first request pays nothing.
     let bos = worker.tokenizer.bos().unwrap_or(0);
@@ -258,6 +284,54 @@ fn load_worker<'a>(
         "model loaded and warmed up"
     );
     Ok((worker, template))
+}
+
+/// Open the KV disk tier when a directory is configured and the backend can snapshot its cache;
+/// a failure only turns the tier off.
+fn open_tier(
+    file: &GgufFile,
+    opts: &ServeOptions,
+    backend: &(dyn ModelBackend + '_),
+    stats: &Stats,
+) -> Option<DiskTier> {
+    let dir = opts.kv_cache_dir.as_ref()?;
+    if opts.kv_cache_bytes == 0 {
+        return None;
+    }
+    let fingerprint = backend.kv_fingerprint();
+    if fingerprint == 0 {
+        tracing::warn!(
+            backend = backend.name(),
+            "this backend cannot save its KV cache; the disk tier is off"
+        );
+        return None;
+    }
+    match DiskTier::open(
+        dir,
+        opts.kv_cache_bytes,
+        kvtier::model_key(file),
+        fingerprint,
+    ) {
+        Ok(t) => {
+            let (bytes, files) = t.usage();
+            stats.disk_enabled.store(true, Ordering::Relaxed);
+            stats
+                .disk_trimmable
+                .store(backend.snapshot_trimmable(), Ordering::Relaxed);
+            stats.disk_bytes.store(bytes, Ordering::Relaxed);
+            stats.disk_files.store(files as u64, Ordering::Relaxed);
+            tracing::info!(
+                budget_mib = opts.kv_cache_bytes >> 20,
+                files,
+                "KV disk tier on"
+            );
+            Some(t)
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "KV disk tier unavailable");
+            None
+        }
+    }
 }
 
 /// The ledger device that holds the backend's KV cache.
@@ -340,6 +414,10 @@ struct Worker<'a> {
     ledger: Arc<Ledger>,
     grammar_env: Arc<GrammarTokenizer>,
     grammar_cache: GrammarCache,
+    /// Saved conversations on disk (`None`: off).
+    tier: Option<DiskTier>,
+    /// Fewest tokens worth a disk write or a restore.
+    min_disk_tokens: usize,
 }
 
 /// What a slot's KV cache holds (for prefix reuse between jobs) and whether a job owns it.
@@ -524,13 +602,40 @@ impl Worker<'_> {
                 .take_while(|(a, b)| a == b)
                 .count()
         };
-        let slot = (0..slots.len())
+        let mut slot = (0..slots.len())
             .filter(|&i| !slots[i].busy)
             .max_by_key(|&i| (prefix(&slots[i].cached), std::cmp::Reverse(i)))
             .expect("a free slot");
+        // A conversation saved on disk that keeps clearly more of the prompt than any slot does
+        // is read back into the free slot holding the least (the others stay for reuse).
+        if let Some(hit) = self.tier.as_ref().and_then(|t| t.best(&job.prompt)) {
+            let mem = prefix(&slots[slot].cached).min(job.prompt.len() - 1);
+            if hit.usable >= mem + self.min_disk_tokens {
+                let target = (0..slots.len())
+                    .filter(|&i| !slots[i].busy)
+                    .min_by_key(|&i| (slots[i].cached.len(), i))
+                    .expect("a free slot");
+                if self.restore(target, &hit, slots) {
+                    slot = target;
+                }
+            }
+        }
         // Keep the longest common prefix, but always recompute at least the last prompt token so
         // its logits are fresh.
         let common = prefix(&slots[slot].cached).min(job.prompt.len() - 1);
+        // What the slot is about to drop goes to disk first when it is worth keeping (a cache
+        // that cannot be rewound loses everything on any cut).
+        let len = slots[slot].cached.len();
+        let dropped = if common >= len {
+            0
+        } else if self.backend.snapshot_trimmable() {
+            len - common
+        } else {
+            len
+        };
+        if dropped >= self.min_disk_tokens {
+            self.spill(slot, slots);
+        }
         self.backend.truncate_seq(slot, common);
         // Backends with recurrent state may keep less than asked (they reset instead of
         // trimming); always continue from what the backend actually kept.
@@ -640,6 +745,7 @@ impl Worker<'_> {
                 let idle: Vec<usize> = (0..slots.len()).filter(|&s| !slots[s].busy).collect();
                 if idle.iter().any(|&s| !slots[s].cached.is_empty()) {
                     for s in idle {
+                        self.spill(s, slots);
                         self.backend.clear_seq(s);
                         slots[s].cached.clear();
                     }
@@ -684,6 +790,82 @@ impl Worker<'_> {
             let a = active.remove(i);
             self.finish(a, d, slots, draining);
         }
+    }
+
+    /// Save slot `s`'s cache to the disk tier when it holds at least `min_disk_tokens` tokens no
+    /// file covers yet.
+    fn spill(&mut self, s: usize, slots: &[Slot]) {
+        let Some(tier) = self.tier.as_mut() else {
+            return;
+        };
+        let tokens = &slots[s].cached;
+        let len = self.backend.seq_len(s);
+        if len < self.min_disk_tokens || len != tokens.len() || tier.covers(tokens) {
+            return;
+        }
+        let t0 = Instant::now();
+        let backend = &self.backend;
+        let bytes = backend.snapshot_bytes(len);
+        let trimmable = backend.snapshot_trimmable();
+        match tier.save(tokens, trimmable, bytes, |w| backend.write_seq(s, w)) {
+            Ok(true) => {
+                let (b, n) = tier.usage();
+                self.stats.disk_saves.fetch_add(1, Ordering::Relaxed);
+                self.stats
+                    .disk_save_micros
+                    .fetch_add(t0.elapsed().as_micros() as u64, Ordering::Relaxed);
+                self.stats.disk_bytes.store(b, Ordering::Relaxed);
+                self.stats.disk_files.store(n as u64, Ordering::Relaxed);
+                tracing::debug!(
+                    tokens = len,
+                    mib = bytes >> 20,
+                    ms = t0.elapsed().as_millis() as u64,
+                    "KV cache saved to disk"
+                );
+            }
+            Ok(false) => {}
+            Err(e) => tracing::warn!(error = %e, "KV cache not saved to disk"),
+        }
+    }
+
+    /// Read the file of `hit` into slot `s` (saving what `s` holds first); `false` leaves the
+    /// slot as it was.
+    fn restore(&mut self, s: usize, hit: &Hit, slots: &mut [Slot]) -> bool {
+        let t0 = Instant::now();
+        let Some(tier) = self.tier.as_ref() else {
+            return false;
+        };
+        let Ok(loaded) = tier.load(hit) else {
+            return false;
+        };
+        if slots[s].cached.len() >= self.min_disk_tokens {
+            self.spill(s, slots);
+        }
+        if !self.backend.read_seq(s, loaded.len(), loaded.payload()) {
+            tracing::warn!(
+                tokens = loaded.len(),
+                "a saved KV cache did not fit; computing the prompt instead"
+            );
+            let kept = self.backend.seq_len(s);
+            slots[s].cached.truncate(kept);
+            return false;
+        }
+        let n = loaded.len();
+        slots[s].cached = loaded.tokens;
+        self.stats.disk_restores.fetch_add(1, Ordering::Relaxed);
+        self.stats
+            .disk_restored_tokens
+            .fetch_add(hit.usable as u64, Ordering::Relaxed);
+        self.stats
+            .disk_restore_micros
+            .fetch_add(t0.elapsed().as_micros() as u64, Ordering::Relaxed);
+        tracing::debug!(
+            tokens = n,
+            usable = hit.usable,
+            ms = t0.elapsed().as_millis() as u64,
+            "KV cache restored from disk"
+        );
+        true
     }
 
     /// Account and answer a job that ended; its slot becomes free (its cache stays for reuse).

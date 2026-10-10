@@ -146,6 +146,12 @@ pub struct NativeConfig {
     pub web_access: bool,
     /// Self-hosted SearXNG instance (JSON output enabled) for `web_search`.
     pub searxng_url: Option<String>,
+    /// Disk budget in GiB for saved conversation state (the KV disk tier): conversations pushed
+    /// out of memory are written there and read back when they continue, instead of being
+    /// recomputed. `None` = 8; 0 = off.
+    pub kv_cache_gb: Option<f64>,
+    /// Directory of that state. `None` = `$LLMARIO_HOME/cache/kv`.
+    pub kv_cache_dir: Option<PathBuf>,
     /// Extra flags appended verbatim.
     pub extra_args: Vec<String>,
 }

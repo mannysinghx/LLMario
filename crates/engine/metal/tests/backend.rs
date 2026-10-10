@@ -685,3 +685,46 @@ fn metal_kv_blocks_follow_use() {
     // The reservation is the whole context (4 blocks of 32 + the copy-on-write spare).
     assert_eq!(gpu.kv_reserved_bytes() - table, 5 * (two / 2));
 }
+
+/// A Metal sequence exported after a 40-token prompt and imported into another backend's second
+/// slot continues exactly as the original does (f16 and q8_0); the CPU layout has a different
+/// fingerprint, so a snapshot never crosses backends.
+#[test]
+fn metal_snapshot_round_trip() {
+    use llmario_engine_metal::MetalOptions;
+    use llmario_engine_model::{KvType, SeqTokens};
+    if !metal() {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let path = tiny_model_dh(dir.path(), 64, 64, 128);
+    let f = GgufFile::open(&path).unwrap();
+    let toks: Vec<u32> = (0..40).map(|i| (i * 3 + 2) % 64).collect();
+    for kv_type in [KvType::F16, KvType::Q8_0] {
+        let opts = MetalOptions {
+            kv_type,
+            ..MetalOptions::new(128, 64)
+        };
+        let mut a = MetalBackend::with_options(&f, opts).unwrap();
+        a.forward(&toks);
+        let snap = a.export_seq(0).unwrap();
+        assert_eq!(snap.len, 40);
+        let want = a.forward(&[5]).to_vec();
+        let mut b = MetalBackend::with_options(&f, MetalOptions { n_seqs: 2, ..opts }).unwrap();
+        assert_eq!(a.kv_fingerprint(), b.kv_fingerprint());
+        b.forward(&[1, 2, 3]);
+        assert!(b.import_seq(1, &snap));
+        assert_eq!(b.seq_len(1), 40);
+        assert_eq!(b.seq_len(0), 3);
+        let got = b
+            .forward_batch(&[SeqTokens {
+                seq: 1,
+                tokens: &[5],
+            }])
+            .unwrap()
+            .to_vec();
+        assert!(max_abs_diff(&want, &got) < 1e-5, "{kv_type:?}");
+        let cpu = CpuBackend::new(&f, 1, 128, 64).unwrap();
+        assert_ne!(cpu.kv_fingerprint(), a.kv_fingerprint());
+    }
+}
