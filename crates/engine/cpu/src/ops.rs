@@ -121,10 +121,31 @@ pub fn add_inplace(x: &mut [f32], y: &[f32]) {
 
 /// Dot product of two f32 slices.
 #[inline]
+/// `Σ aᵢ·bᵢ` over 16 independent lanes (summed pairwise at the end), so the compiler maps it
+/// onto vector registers: a single running sum is a chain of dependent adds the compiler may not
+/// reorder, which made the attention scores latency-bound.
 pub fn dot(a: &[f32], b: &[f32]) -> f32 {
-    let mut s = 0f32;
-    for i in 0..a.len() {
-        s += a[i] * b[i];
+    const L: usize = 16;
+    let n = a.len().min(b.len());
+    let (a, b) = (&a[..n], &b[..n]);
+    let mut acc = [0f32; L];
+    let mut ca = a.chunks_exact(L);
+    let mut cb = b.chunks_exact(L);
+    for (x, y) in (&mut ca).zip(&mut cb) {
+        for l in 0..L {
+            acc[l] += x[l] * y[l];
+        }
+    }
+    let mut w = L;
+    while w > 1 {
+        w /= 2;
+        for l in 0..w {
+            acc[l] += acc[l + w];
+        }
+    }
+    let mut s = acc[0];
+    for (x, y) in ca.remainder().iter().zip(cb.remainder()) {
+        s += x * y;
     }
     s
 }

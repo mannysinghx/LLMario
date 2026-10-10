@@ -605,12 +605,15 @@ pub(crate) fn attend(
     let span = window.map(|w| w.min(n_ctx)).unwrap_or(n_ctx);
     let out_ptr = SendPtr(attn.as_mut_ptr());
     // Few (row, KV head) tasks over a long context — a decode step with 4–8 KV heads — would
-    // leave most cores idle: split each task's key range across workers (flash-decoding) and
-    // merge the partial softmaxes. Prompts have enough tasks already.
+    // leave cores idle: split each task's key range across workers (flash-decoding) and merge the
+    // partial softmaxes. Aim for two items per thread so the rounds balance (8 tasks on 12
+    // threads: 3 splits, 24 items; a plain `threads / tasks` gave 1, leaving 4 threads idle).
+    // Prompts have enough tasks already.
     let tasks = n * n_kv;
-    let splits = if tasks < pool.n_threads() && span >= 2 * SPLIT_MIN_KEYS {
-        (pool.n_threads() / tasks)
-            .max(1)
+    let threads = pool.n_threads();
+    let splits = if tasks < 2 * threads && span >= 2 * SPLIT_MIN_KEYS {
+        (2 * threads)
+            .div_ceil(tasks)
             .min(span / SPLIT_MIN_KEYS)
             .max(1)
     } else {
