@@ -70,6 +70,14 @@ pub struct PlanRequest {
     /// shortens the context.
     #[serde(default)]
     pub kv_auto: bool,
+    /// As a last resort for a mixture-of-experts model whose weights exceed the budget, plan only
+    /// a resident share of the experts and let the rest be read from disk when a token needs them.
+    #[serde(default = "yes")]
+    pub expert_streaming: bool,
+}
+
+fn yes() -> bool {
+    true
 }
 
 impl Default for PlanRequest {
@@ -83,6 +91,7 @@ impl Default for PlanRequest {
             runtime_fixed: RUNTIME_FIXED_DEFAULT,
             kv_type: KvType::F16,
             kv_auto: false,
+            expert_streaming: true,
         }
     }
 }
@@ -90,16 +99,36 @@ impl Default for PlanRequest {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "snake_case", tag = "step")]
 pub enum DegradationStep {
-    PromptCacheDropped { before: u64 },
-    SlotsReduced { from: u32, to: u32 },
-    KvPrecisionReduced { from: KvType, to: KvType },
-    ContextReduced { from: u32, to: u32 },
+    PromptCacheDropped {
+        before: u64,
+    },
+    SlotsReduced {
+        from: u32,
+        to: u32,
+    },
+    KvPrecisionReduced {
+        from: KvType,
+        to: KvType,
+    },
+    ContextReduced {
+        from: u32,
+        to: u32,
+    },
+    /// Only `resident` of the model's `expert_bytes` of routed-expert weights are planned to stay
+    /// in memory; the rest are read from disk when a token selects them (slower decode).
+    ExpertsStreamed {
+        expert_bytes: u64,
+        resident: u64,
+    },
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct DeviceTotals {
     pub device: DeviceId,
     pub weights_mapped: u64,
+    /// Mapped weight bytes the plan does not count as resident (streamed experts).
+    #[serde(default)]
+    pub weights_streamed: u64,
     pub kv_cache: u64,
     pub recurrent_state: u64,
     pub scratch: u64,
@@ -152,6 +181,17 @@ pub fn plan(
 ) -> Result<Plan, PlanError> {
     let spec = ArchSpec::from_gguf(file)?;
     let weights = file.tensor_bytes_total();
+    // Routed-expert weights (`*_exps.*` tensors) and the share one token reads.
+    let expert_bytes: u64 = file
+        .tensors
+        .iter()
+        .filter(|t| t.name.contains("_exps."))
+        .map(|t| t.span.len)
+        .sum();
+    let active_expert_bytes = match &spec.moe {
+        Some(m) if m.n_expert > 0 => expert_bytes * m.n_expert_used as u64 / m.n_expert as u64,
+        _ => 0,
+    };
     let mut slots = req.slots.max(1);
     let mut ctx = req.ctx_per_slot.max(1).min(spec.context_length.max(1));
     let mut prompt_cache = req.prompt_cache_bytes;
@@ -179,7 +219,14 @@ pub fn plan(
         planned: u64,
         layout: KvLayout,
     }
-    let total = |slots: u32, ctx: u32, prompt_cache: u64, kv_type: KvType| -> Totals {
+    // Weight bytes planned resident (all of them unless experts are streamed).
+    let mut resident_weights = weights;
+    let total = |slots: u32,
+                 ctx: u32,
+                 prompt_cache: u64,
+                 kv_type: KvType,
+                 resident_weights: u64|
+     -> Totals {
         let layout = KvLayout::new(
             &spec,
             &KvOptions::new(ctx as usize)
@@ -193,26 +240,26 @@ pub fn plan(
             kv,
             recurrent,
             scratch,
-            planned: weights + kv + recurrent + scratch + prompt_cache + req.runtime_fixed,
+            planned: resident_weights + kv + recurrent + scratch + prompt_cache + req.runtime_fixed,
             layout,
         }
     };
 
-    let mut t = total(slots, ctx, prompt_cache, kv_type);
+    let mut t = total(slots, ctx, prompt_cache, kv_type, resident_weights);
     // Ladder step 1: caches.
     if t.planned > usable && prompt_cache > 0 {
         steps.push(DegradationStep::PromptCacheDropped {
             before: prompt_cache,
         });
         prompt_cache = 0;
-        t = total(slots, ctx, prompt_cache, kv_type);
+        t = total(slots, ctx, prompt_cache, kv_type, resident_weights);
     }
     // Step 2: slots (16 → 4 → 1).
     while t.planned > usable && slots > 1 {
         let to = if slots > 4 { 4 } else { 1 };
         steps.push(DegradationStep::SlotsReduced { from: slots, to });
         slots = to;
-        t = total(slots, ctx, prompt_cache, kv_type);
+        t = total(slots, ctx, prompt_cache, kv_type, resident_weights);
     }
     // Step 3: KV precision.
     if t.planned > usable && req.kv_auto && kv_type == KvType::F16 && q8_ok {
@@ -221,16 +268,40 @@ pub fn plan(
             to: KvType::Q8_0,
         });
         kv_type = KvType::Q8_0;
-        t = total(slots, ctx, prompt_cache, kv_type);
+        t = total(slots, ctx, prompt_cache, kv_type, resident_weights);
+    }
+    // Step 5 is streaming routed experts from disk (MoE only): keep the dense weights and a
+    // resident share of the experts — a quarter of them, or four tokens' worth of active experts
+    // if that is more — and let the page cache hold what else fits. When the weights alone exceed
+    // the budget a shorter context cannot help, so streaming comes before step 4 then.
+    let resident_share = (expert_bytes / 4)
+        .max(4 * active_expert_bytes)
+        .min(expert_bytes);
+    let streamed_weights = weights - expert_bytes + resident_share;
+    let can_stream = req.expert_streaming && expert_bytes > 0 && streamed_weights < weights;
+    let stream = |steps: &mut Vec<DegradationStep>, resident_weights: &mut u64| {
+        steps.push(DegradationStep::ExpertsStreamed {
+            expert_bytes,
+            resident: resident_share,
+        });
+        *resident_weights = streamed_weights;
+    };
+    if t.planned > usable && can_stream && weights > usable {
+        stream(&mut steps, &mut resident_weights);
+        t = total(slots, ctx, prompt_cache, kv_type, resident_weights);
     }
     // Step 4: context, halving toward the floor.
     while t.planned > usable && ctx > CONTEXT_FLOOR {
         let to = (ctx / 2).max(CONTEXT_FLOOR);
         steps.push(DegradationStep::ContextReduced { from: ctx, to });
         ctx = to;
-        t = total(slots, ctx, prompt_cache, kv_type);
+        t = total(slots, ctx, prompt_cache, kv_type, resident_weights);
     }
-    // Step 5 (host offload of experts / layers) arrives with the MoE families.
+    // Step 5 as the last resort when the weights alone fit but the whole plan still does not.
+    if t.planned > usable && can_stream && resident_weights == weights {
+        stream(&mut steps, &mut resident_weights);
+        t = total(slots, ctx, prompt_cache, kv_type, resident_weights);
+    }
     let fits = t.planned <= usable && kv_type_refusal.is_none();
     let refusal = kv_type_refusal.or_else(|| {
         (!fits).then(|| {
@@ -245,10 +316,14 @@ pub fn plan(
         )
         })
     });
-    let bytes_per_token = weights + (t.layout.paged_bytes_per_token() as u64) * ctx as u64;
+    // Read per generated token: the weights (for an MoE model, the dense ones plus the active
+    // share of the experts) and the KV cache at full context.
+    let read_weights = weights - expert_bytes + active_expert_bytes;
+    let bytes_per_token = read_weights + (t.layout.paged_bytes_per_token() as u64) * ctx as u64;
     let devices = vec![DeviceTotals {
         device: budget.device,
         weights_mapped: weights,
+        weights_streamed: weights - resident_weights,
         kv_cache: t.kv,
         recurrent_state: t.recurrent,
         scratch: t.scratch,
@@ -305,6 +380,12 @@ pub fn render(p: &Plan) -> String {
             fmt(d.prompt_cache),
             fmt(d.runtime_fixed)
         ));
+        if d.weights_streamed > 0 {
+            s.push_str(&format!(
+                "         streamed experts {:>10} (read from disk when a token needs them)\n",
+                fmt(d.weights_streamed)
+            ));
+        }
         s.push_str(&format!(
             "         planned {:>10}  usable {:>10}  (ceiling {} − headroom {})\n",
             fmt(d.planned),
@@ -498,6 +579,138 @@ mod tests {
                 to: 32768
             }]
         ));
+    }
+
+    /// A small `qwen3moe` file whose 16 experts (1 used per token) dominate the weights.
+    fn moe_model(dir: &std::path::Path) -> GgufFile {
+        let (d, n_head, hd, ff, ne, vocab) = (64u64, 2u64, 32u64, 128u64, 16u64, 64u64);
+        let f32s = |n: u64| -> Vec<u8> { (0..n).flat_map(|_| 0.01f32.to_le_bytes()).collect() };
+        let mut w = GgufWriter::new();
+        w.meta("general.architecture", MetaValue::Str("qwen3moe".into()))
+            .meta("qwen3moe.block_count", MetaValue::U32(2))
+            .meta("qwen3moe.embedding_length", MetaValue::U32(d as u32))
+            .meta(
+                "qwen3moe.attention.head_count",
+                MetaValue::U32(n_head as u32),
+            )
+            .meta(
+                "qwen3moe.attention.head_count_kv",
+                MetaValue::U32(n_head as u32),
+            )
+            .meta("qwen3moe.attention.key_length", MetaValue::U32(hd as u32))
+            .meta("qwen3moe.attention.value_length", MetaValue::U32(hd as u32))
+            .meta("qwen3moe.expert_count", MetaValue::U32(ne as u32))
+            .meta("qwen3moe.expert_used_count", MetaValue::U32(1))
+            .meta(
+                "qwen3moe.expert_feed_forward_length",
+                MetaValue::U32(ff as u32),
+            )
+            .meta("qwen3moe.vocab_size", MetaValue::U32(vocab as u32))
+            .meta("qwen3moe.context_length", MetaValue::U32(4096));
+        w.tensor(
+            "token_embd.weight",
+            &[d, vocab],
+            GgmlType::F32,
+            f32s(d * vocab),
+        );
+        w.tensor("output_norm.weight", &[d], GgmlType::F32, f32s(d));
+        for l in 0..2 {
+            let p = |s: &str| format!("blk.{l}.{s}");
+            w.tensor(&p("attn_norm.weight"), &[d], GgmlType::F32, f32s(d));
+            for t in ["attn_q", "attn_k", "attn_v"] {
+                w.tensor(
+                    &p(&format!("{t}.weight")),
+                    &[d, n_head * hd],
+                    GgmlType::F32,
+                    f32s(d * n_head * hd),
+                );
+            }
+            w.tensor(
+                &p("attn_output.weight"),
+                &[n_head * hd, d],
+                GgmlType::F32,
+                f32s(d * n_head * hd),
+            );
+            w.tensor(&p("attn_q_norm.weight"), &[hd], GgmlType::F32, f32s(hd));
+            w.tensor(&p("attn_k_norm.weight"), &[hd], GgmlType::F32, f32s(hd));
+            w.tensor(&p("ffn_norm.weight"), &[d], GgmlType::F32, f32s(d));
+            w.tensor(
+                &p("ffn_gate_inp.weight"),
+                &[d, ne],
+                GgmlType::F32,
+                f32s(d * ne),
+            );
+            w.tensor(
+                &p("ffn_gate_exps.weight"),
+                &[d, ff, ne],
+                GgmlType::F32,
+                f32s(d * ff * ne),
+            );
+            w.tensor(
+                &p("ffn_up_exps.weight"),
+                &[d, ff, ne],
+                GgmlType::F32,
+                f32s(d * ff * ne),
+            );
+            w.tensor(
+                &p("ffn_down_exps.weight"),
+                &[ff, d, ne],
+                GgmlType::F32,
+                f32s(ff * d * ne),
+            );
+        }
+        let path = dir.join("moe.gguf");
+        std::fs::write(&path, w.to_bytes()).unwrap();
+        GgufFile::open(&path).unwrap()
+    }
+
+    #[test]
+    fn moe_experts_stream_when_weights_exceed_the_budget() {
+        let dir = tempfile::tempdir().unwrap();
+        let f = moe_model(dir.path());
+        let weights = f.tensor_bytes_total();
+        let experts: u64 = 2 * 3 * 64 * 128 * 16 * 4;
+        let r = PlanRequest {
+            ctx_per_slot: 1024,
+            ..req(1024, false)
+        };
+        // Plenty of memory: everything resident; the speed estimate reads 1 of 16 experts.
+        let p = plan(&f, "m", &r, &budget(u64::MAX / 4)).unwrap();
+        assert!(p.fits && p.degradations.is_empty());
+        assert_eq!(p.devices[0].weights_streamed, 0);
+        // The speed estimate reads the dense weights and 1 of the 16 experts per token.
+        let paged = p.bytes_per_token - (weights - experts + experts / 16);
+        assert_eq!(
+            paged % 1024,
+            0,
+            "KV part is per-token bytes × 1024 positions"
+        );
+        assert!(p.bytes_per_token < weights);
+        // Half the weights' worth of memory: the experts stream; a quarter of them stay planned.
+        let full = p.planned_peak;
+        let p = plan(&f, "m", &r, &budget(full - weights / 2)).unwrap();
+        assert!(p.fits, "{:?}", p.refusal);
+        assert_eq!(
+            p.degradations,
+            vec![DegradationStep::ExpertsStreamed {
+                expert_bytes: experts,
+                resident: experts / 4
+            }]
+        );
+        assert_eq!(p.devices[0].weights_streamed, experts - experts / 4);
+        assert!(render(&p).contains("streamed experts"));
+        // Without streaming the same budget refuses.
+        let p = plan(
+            &f,
+            "m",
+            &PlanRequest {
+                expert_streaming: false,
+                ..r.clone()
+            },
+            &budget(p.planned_peak),
+        )
+        .unwrap();
+        assert!(!p.fits);
     }
 
     #[test]
