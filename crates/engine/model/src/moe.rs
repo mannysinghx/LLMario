@@ -18,10 +18,12 @@
 //! that chose it (a matmul for a prompt, a matvec for one decode token), so a prompt reads each
 //! expert's weights once. Expert matrices are slices of the mapped file: the OS keeps the hot
 //! ones resident and may drop cold ones under memory pressure, reading them back from disk when a
-//! token selects them again.
+//! token selects them again. When the plan streams experts, the selected experts' reads start
+//! right after routing (`stream.rs`).
 
 use crate::arch::{ArchSpec, MoeSpec};
 use crate::forward::project;
+use crate::stream::{self, Reader, Recent, SimCache, StreamOptions};
 use crate::weights::MoeWeights;
 use llmario_engine_cpu::ops::{add_inplace, swiglu_inplace};
 use llmario_engine_cpu::{rows_multi, softmax, RowsJob, ThreadPool};
@@ -44,6 +46,10 @@ pub(crate) struct MoeScratch {
     acc: Vec<f32>,
     /// Per-expert pair lists (reused across calls).
     pairs: Vec<Vec<u32>>,
+    /// Expert residency (see `stream.rs`): reads started after routing (skipping experts used
+    /// recently), and the simulation of a smaller page cache.
+    reader: Option<(Reader, Recent)>,
+    pub(crate) sim: Option<SimCache>,
 }
 
 impl MoeScratch {
@@ -59,7 +65,65 @@ impl MoeScratch {
             up: vec![0.0; n * k * ff],
             acc: vec![0.0; n * k * d],
             pairs: vec![Vec::new(); m.n_expert as usize],
+            reader: None,
+            sim: None,
         }
+    }
+
+    /// Apply `o` for the model in `file` with layers `layers`.
+    pub(crate) fn set_stream(
+        &mut self,
+        o: StreamOptions,
+        file: &llmario_engine_formats::GgufFile,
+        m: &MoeSpec,
+        layers: &[crate::weights::LayerWeights],
+    ) {
+        let ne = m.n_expert as usize;
+        let moe_layers = layers.iter().filter(|l| l.moe.is_some()).count();
+        self.reader = o.prefetch.then(|| {
+            let window = 3 * moe_layers * m.n_expert_used as usize;
+            (
+                Reader::new(file),
+                Recent::new(layers.len() * ne, window as u64),
+            )
+        });
+        self.sim = o.sim_resident.map(|frac| {
+            let mut total = 0u64;
+            // The simulated cache starts empty, so the real one must too.
+            for mw in layers.iter().filter_map(|l| l.moe.as_ref()) {
+                total += (expert_bytes(mw) * ne) as u64;
+                for e in 0..ne {
+                    stream::evict(mw.gate.expert(e).data);
+                    stream::evict(mw.up.expert(e).data);
+                    stream::evict(mw.down.expert(e).data);
+                }
+            }
+            SimCache::new(
+                layers.len() * ne,
+                (f64::from(frac.clamp(0.0, 1.0)) * total as f64) as u64,
+            )
+        });
+    }
+
+    /// End of a step (`rows` rows in all): the simulation evicts what its budget does not hold.
+    pub(crate) fn end_step(
+        &mut self,
+        m: &MoeSpec,
+        layers: &[crate::weights::LayerWeights],
+        rows: usize,
+    ) {
+        let Some(sim) = self.sim.as_mut() else {
+            return;
+        };
+        let ne = m.n_expert as usize;
+        sim.end_step(rows == 1, |slot| {
+            if let Some(mw) = &layers[slot / ne].moe {
+                let e = slot % ne;
+                stream::evict(mw.gate.expert(e).data);
+                stream::evict(mw.up.expert(e).data);
+                stream::evict(mw.down.expert(e).data);
+            }
+        });
     }
 
     pub fn bytes(spec: &ArchSpec, m: &MoeSpec, n: usize) -> u64 {
@@ -112,6 +176,7 @@ pub(crate) fn moe_ffn(
     m: &MoeSpec,
     mw: &MoeWeights,
     pool: &ThreadPool,
+    l: usize,
     n: usize,
     h: &[f32],
     x: &mut [f32],
@@ -140,6 +205,23 @@ pub(crate) fn moe_ffn(
         }
     }
     let used: Vec<usize> = (0..ne).filter(|&e| !s.pairs[e].is_empty()).collect();
+    if let Some(sim) = s.sim.as_mut() {
+        for &e in &used {
+            sim.touch(l * ne + e, expert_bytes(mw) as u64);
+        }
+    }
+    // Every selected expert's reads start now, all at once, instead of as page faults inside the
+    // products below.
+    if let Some((r, recent)) = s.reader.as_mut() {
+        for &e in &used {
+            if recent.use_slot(l * ne + e) {
+                r.fetch(mw.gate.expert(e).data);
+                r.fetch(mw.up.expert(e).data);
+                r.fetch(mw.down.expert(e).data);
+            }
+        }
+        recent.advance(npairs as u64);
+    }
 
     // Gate and up: one product per used expert over its rows, all in one dispatch.
     {
@@ -216,6 +298,11 @@ pub(crate) fn moe_ffn(
         }
         add_inplace(&mut x[t * d..(t + 1) * d], &sum);
     }
+}
+
+/// Bytes of one expert's gate, up and down matrices.
+fn expert_bytes(mw: &MoeWeights) -> usize {
+    mw.gate.expert_bytes() + mw.up.expert_bytes() + mw.down.expert_bytes()
 }
 
 #[cfg(test)]
@@ -378,7 +465,7 @@ mod tests {
             let x0: Vec<f32> = (0..n * D as usize).map(|i| (i as f32) * 0.01).collect();
             let mut x = x0.clone();
             let mut s = MoeScratch::new(&m.spec, &ms, n);
-            moe_ffn(&m.spec, &ms, mw, &pool, n, &h, &mut x, &mut s);
+            moe_ffn(&m.spec, &ms, mw, &pool, 0, n, &h, &mut x, &mut s);
             let d = D as usize;
             for t in 0..n {
                 let ht = &h[t * d..(t + 1) * d];

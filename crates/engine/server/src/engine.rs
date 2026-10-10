@@ -408,6 +408,11 @@ fn open_backend<'a>(
         CpuOptions {
             n_seqs,
             kv_type,
+            // Experts left on disk: start the selected experts' reads right after routing.
+            stream: llmario_engine_model::StreamOptions {
+                prefetch: streamed > 0,
+                sim_resident: None,
+            },
             ..CpuOptions::new(threads, ctx, n_batch)
         },
     )?))
