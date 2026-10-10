@@ -23,6 +23,22 @@ pub enum Family {
     /// Gemma 4 (`gemma4`): 5:1 sliding-window / global attention, per-layer head geometry,
     /// K=V global layers, GeGLU, pre+post norms, logit soft-capping. See `gemma4.rs`.
     Gemma4,
+    /// Qwen3 MoE (`qwen3moe`: Qwen3-30B-A3B, Qwen3-Coder-30B-A3B, 235B-A22B): the Qwen3
+    /// attention block with a routed mixture-of-experts SwiGLU FFN. See `moe.rs`.
+    Qwen3Moe,
+}
+
+/// Routed mixture-of-experts FFN geometry (GGUF `expert_*` keys).
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct MoeSpec {
+    /// Experts per layer (`expert_count`).
+    pub n_expert: u32,
+    /// Experts each token uses (`expert_used_count`).
+    pub n_expert_used: u32,
+    /// Hidden width of one expert's FFN (`expert_feed_forward_length`).
+    pub n_ff_exp: u32,
+    /// Renormalise the selected experts' router probabilities to sum to 1.
+    pub norm_topk: bool,
 }
 
 /// Gemma 4 specifics beyond the dense fields of [`ArchSpec`] (which hold the *global* layers'
@@ -175,6 +191,8 @@ pub struct ArchSpec {
     pub attn_out_gate: bool,
     /// Gemma 4 sliding-window / per-layer geometry (`Some` only for [`Family::Gemma4`]).
     pub gemma4: Option<Gemma4Spec>,
+    /// Routed experts in every layer's FFN (`Some` only for [`Family::Qwen3Moe`]).
+    pub moe: Option<MoeSpec>,
 }
 
 impl ArchSpec {
@@ -190,9 +208,10 @@ impl ArchSpec {
             "smollm3" => Family::SmolLm3,
             "qwen35" | "qwen3next" => Family::Qwen35,
             "gemma4" => Family::Gemma4,
+            "qwen3moe" => Family::Qwen3Moe,
             other => return Err(ModelError::UnsupportedArch(other.into())),
         };
-        if f.tensor("blk.0.ffn_gate_inp.weight").is_some() {
+        if family != Family::Qwen3Moe && f.tensor("blk.0.ffn_gate_inp.weight").is_some() {
             // Qwen3-Next 80B-A3B, the Qwen3.5-35B-A3B MoE and Gemma 4 26B-A4B: expert FFNs
             // arrive in M4.
             return Err(ModelError::UnsupportedArch(format!(
@@ -244,7 +263,31 @@ impl ArchSpec {
             .get_arch_u32("attention.key_length")
             .unwrap_or(d_model / n_head.max(1));
         let head_dim_v = f.get_arch_u32("attention.value_length").unwrap_or(head_dim);
-        let n_ff = u("feed_forward_length")?;
+        let moe = match family {
+            Family::Qwen3Moe => {
+                let m = MoeSpec {
+                    n_expert: u("expert_count")?,
+                    n_expert_used: u("expert_used_count")?,
+                    n_ff_exp: u("expert_feed_forward_length")?,
+                    // llama.cpp `qwen3moe`: build_moe_ffn(..., norm_w = true, ...).
+                    norm_topk: true,
+                };
+                if m.n_expert == 0 || m.n_expert_used == 0 || m.n_expert_used > m.n_expert {
+                    return Err(ModelError::UnsupportedArch(format!(
+                        "{arch}: {} experts with {} used per token",
+                        m.n_expert, m.n_expert_used
+                    )));
+                }
+                Some(m)
+            }
+            _ => None,
+        };
+        // MoE files may omit the dense FFN width; the expert width sizes the scratch then.
+        // MoE layers have no dense FFN: the expert width is the one the scratch needs.
+        let n_ff = match &moe {
+            Some(m) => m.n_ff_exp,
+            None => u("feed_forward_length")?,
+        };
         let n_vocab = f
             .get_arch_u32("vocab_size")
             .or_else(|| f.get_array("tokenizer.ggml.tokens").map(|a| a.len() as u32))
@@ -269,7 +312,7 @@ impl ArchSpec {
             // NeoX RoPE over the first `n_rot` = 64 dims of the 256-wide head
             // (`ggml_mrope_cache_init` + `rotate_pairs<T>(n_dims, n_dims/2, …)` in ggml-cpu/ops.cpp).
             // Image/video positions (differing per section) are out of scope for text inference.
-            Family::Qwen2 | Family::Qwen3 | Family::Qwen35 => RopeKind::Neox,
+            Family::Qwen2 | Family::Qwen3 | Family::Qwen35 | Family::Qwen3Moe => RopeKind::Neox,
             // llama.cpp `llama_model_rope_type`: LLM_ARCH_GEMMA4 → LLAMA_ROPE_TYPE_NEOX.
             Family::Gemma4 => RopeKind::Neox,
         };
@@ -430,7 +473,7 @@ impl ArchSpec {
                 freq_scale,
                 attn_factor: 1.0,
             },
-            qk_norm: matches!(family, Family::Qwen3 | Family::Gemma4),
+            qk_norm: matches!(family, Family::Qwen3 | Family::Gemma4 | Family::Qwen3Moe),
             attn_bias: matches!(family, Family::Qwen2),
             nope_layers,
             tied_embeddings: f.tensor("output.weight").is_none(),
@@ -438,6 +481,7 @@ impl ArchSpec {
             gdn,
             attn_out_gate: matches!(family, Family::Qwen35),
             gemma4,
+            moe,
         })
     }
 

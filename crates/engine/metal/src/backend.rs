@@ -280,6 +280,12 @@ impl<'a> MetalBackend<'a> {
         let (max_ctx, n_batch, kv_type) = (o.max_ctx, o.n_batch, o.kv_type);
         let gpu = Gpu::get()?;
         let spec = ArchSpec::from_gguf(file)?;
+        if spec.moe.is_some() {
+            return Err(MetalError::Unsupported(format!(
+                "family {:?} (mixture-of-experts layers) is CPU-only in this build",
+                spec.family
+            )));
+        }
         if spec.gdn.is_some() || spec.n_attn_layers() != spec.n_layer {
             return Err(MetalError::Unsupported(format!(
                 "family {:?} (recurrent layers) is CPU-only in this build",

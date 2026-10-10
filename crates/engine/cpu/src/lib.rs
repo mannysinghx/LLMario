@@ -61,6 +61,26 @@ pub fn matvec(pool: &ThreadPool, w: &QMat, x: &[f32], y: &mut [f32]) {
     simd::kernels().matvec(pool, w, x, y);
 }
 
+/// One product of [`rows_multi`]: `ys[i] = w xs[i]` for each of its rows.
+pub struct RowsJob<'a, 'b> {
+    pub w: QMat<'a>,
+    pub xs: Vec<&'b [f32]>,
+    pub ys: Vec<&'b mut [f32]>,
+}
+
+/// Several independent products, each over its own few rows, in one parallel dispatch; results
+/// equal calling [`matvec`] on every (product, row).
+pub fn rows_multi(pool: &ThreadPool, jobs: &mut [RowsJob]) {
+    for j in jobs.iter() {
+        assert_eq!(j.xs.len(), j.ys.len());
+        for (x, y) in j.xs.iter().zip(&j.ys) {
+            assert_eq!(x.len(), j.w.cols);
+            assert_eq!(y.len(), j.w.rows);
+        }
+    }
+    simd::kernels().rows_multi(pool, jobs);
+}
+
 /// `Y = X Wᵀ` for `n` tokens: `x` is `n × cols` (row-major), `y` is `n × rows`.
 pub fn matmul(pool: &ThreadPool, w: &QMat, x: &[f32], n: usize, y: &mut [f32]) {
     assert_eq!(x.len(), n * w.cols);

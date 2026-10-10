@@ -63,6 +63,7 @@ pub fn build_environment(now: Option<DateTime<FixedOffset>>) -> Environment<'sta
     env.add_filter("join", join);
     env.add_test("sequence", is_sequence);
     env.add_test("number", is_number);
+    env.add_test("iterable", is_iterable);
     env.add_function("raise_exception", raise_exception);
     env.add_function("strftime_now", move |format: String| {
         strftime_now(now, &format)
@@ -226,6 +227,23 @@ fn is_sequence(value: &Value) -> bool {
     )
 }
 
+/// Jinja2's `iterable` test is `iter(value)` succeeding: strings, sequences, mappings and
+/// undefined (Jinja2's `Undefined` iterates as empty) are iterable; `None`, numbers and booleans
+/// are not. minijinja's built-in test calls `none` iterable, which breaks templates that guard a
+/// `length` with it (Qwen3-Coder: `tools is iterable and tools | length > 0` with `tools=None`).
+fn is_iterable(value: &Value) -> bool {
+    match value.kind() {
+        ValueKind::None | ValueKind::Bool | ValueKind::Number => false,
+        ValueKind::Undefined
+        | ValueKind::String
+        | ValueKind::Bytes
+        | ValueKind::Seq
+        | ValueKind::Map
+        | ValueKind::Iterable => true,
+        _ => value.try_iter().is_ok(),
+    }
+}
+
 /// Jinja2's `number` test is `isinstance(value, Number)`, and Python's `bool` is a `Number`.
 fn is_number(value: &Value) -> bool {
     matches!(value.kind(), ValueKind::Number | ValueKind::Bool)
@@ -234,6 +252,34 @@ fn is_number(value: &Value) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn iterable_test_matches_jinja2() {
+        let env = build_environment(None);
+        let t = |expr: &str, ctx: minijinja::Value| -> String {
+            env.render_str(&format!("{{{{ {expr} }}}}"), ctx).unwrap()
+        };
+        let ctx = minijinja::context! { n => (), s => "ab", l => vec![1, 2], m => minijinja::context!{a => 1}, i => 3, b => true };
+        assert_eq!(t("n is iterable", ctx.clone()), "False");
+        assert_eq!(t("i is iterable", ctx.clone()), "False");
+        assert_eq!(t("b is iterable", ctx.clone()), "False");
+        assert_eq!(t("s is iterable", ctx.clone()), "True");
+        assert_eq!(t("l is iterable", ctx.clone()), "True");
+        assert_eq!(t("m is iterable", ctx.clone()), "True");
+        assert_eq!(t("missing is iterable", ctx.clone()), "True");
+        // The Qwen3-Coder guard renders with tools = None instead of failing on `length`.
+        let guard = "{% if tools is iterable and tools | length > 0 %}T{% else %}F{% endif %}";
+        assert_eq!(
+            env.render_str(guard, minijinja::context! { tools => () })
+                .unwrap(),
+            "F"
+        );
+        assert_eq!(
+            env.render_str(guard, minijinja::context! { tools => vec![1] })
+                .unwrap(),
+            "T"
+        );
+    }
 
     #[test]
     fn generation_tags_become_if_blocks() {

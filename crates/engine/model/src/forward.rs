@@ -15,6 +15,7 @@ use crate::arch::{ArchSpec, Family};
 use crate::gemma4;
 use crate::hybrid::{self, HybridScratch};
 use crate::kv::{KvCache, KvFull};
+use crate::moe::{self, MoeScratch};
 use crate::weights::{LayerWeights, Weights};
 use llmario_engine_cpu::ops::{add_inplace, dot, swiglu_inplace, RopeParams};
 use llmario_engine_cpu::{dequant_row, matmul, matvec, rms_norm, rope, softmax, ThreadPool};
@@ -103,6 +104,8 @@ pub struct Scratch {
     pub(crate) logits: Vec<f32>,
     /// Extra buffers of the hybrid family (`None` for the dense families).
     pub(crate) hybrid: Option<HybridScratch>,
+    /// Extra buffers of the MoE families.
+    pub(crate) moe: Option<MoeScratch>,
 }
 
 impl Scratch {
@@ -132,6 +135,7 @@ impl Scratch {
             last: vec![0.0; m * d],
             logits: vec![0.0; m * spec.n_vocab as usize],
             hybrid: spec.gdn.as_ref().map(|g| HybridScratch::new(spec, g, n)),
+            moe: spec.moe.as_ref().map(|m| MoeScratch::new(spec, m, n)),
         }
     }
 
@@ -156,7 +160,12 @@ impl Scratch {
             .as_ref()
             .map(|g| HybridScratch::bytes(spec, g, n as usize))
             .unwrap_or(0);
-        (n * per_tok + m * (d + spec.n_vocab as u64)) * 4 + hybrid
+        let moe = spec
+            .moe
+            .as_ref()
+            .map(|mo| MoeScratch::bytes(spec, mo, n as usize))
+            .unwrap_or(0);
+        (n * per_tok + m * (d + spec.n_vocab as u64)) * 4 + hybrid + moe
     }
 
     /// Rows one call may stack.
@@ -342,7 +351,10 @@ impl<'a> Model<'a> {
         } else {
             for (l, layer) in self.weights.layers.iter().enumerate() {
                 self.attention_block(pool, kv, l, layer, rows, scratch);
-                self.ffn_block(pool, layer, n, scratch);
+                match &layer.moe {
+                    Some(mw) => self.moe_block(pool, layer, mw, n, scratch),
+                    None => self.ffn_block(pool, layer, n, scratch),
+                }
             }
         }
         for sg in &rows.segs {
@@ -492,7 +504,12 @@ impl<'a> Model<'a> {
         );
         project(pool, &layer.w_up, &s.h, n, d, &mut s.up[..n * n_ff], None);
         match spec.family {
-            Family::Llama | Family::Qwen2 | Family::Qwen3 | Family::SmolLm3 | Family::Qwen35 => {
+            Family::Llama
+            | Family::Qwen2
+            | Family::Qwen3
+            | Family::SmolLm3
+            | Family::Qwen35
+            | Family::Qwen3Moe => {
                 swiglu_inplace(&mut s.gate[..n * n_ff], &s.up[..n * n_ff]);
             }
             // Gemma 4 (GeGLU) never reaches this block: its layers run in `gemma4.rs`.
@@ -510,6 +527,32 @@ impl<'a> Model<'a> {
         for t in 0..n {
             add_inplace(&mut s.x[t * d..(t + 1) * d], &s.ffn[t * d..(t + 1) * d]);
         }
+    }
+}
+
+impl Model<'_> {
+    /// Pre-norm and the routed experts of a mixture-of-experts layer (see `moe.rs`).
+    fn moe_block(
+        &self,
+        pool: &ThreadPool,
+        layer: &LayerWeights,
+        mw: &crate::weights::MoeWeights,
+        n: usize,
+        s: &mut Scratch,
+    ) {
+        let spec = &self.spec;
+        let d = spec.d_model as usize;
+        let m = spec.moe.as_ref().expect("MoE spec");
+        for t in 0..n {
+            rms_norm(
+                &s.x[t * d..(t + 1) * d],
+                &layer.ffn_norm,
+                spec.rms_eps,
+                &mut s.h[t * d..(t + 1) * d],
+            );
+        }
+        let ms = s.moe.as_mut().expect("MoE scratch");
+        moe::moe_ffn(spec, m, mw, pool, n, &s.h, &mut s.x, ms);
     }
 }
 
@@ -561,6 +604,24 @@ pub(crate) fn attend(
     let n_ctx = rows.pos.iter().copied().max().unwrap_or(0) + 1;
     let span = window.map(|w| w.min(n_ctx)).unwrap_or(n_ctx);
     let out_ptr = SendPtr(attn.as_mut_ptr());
+    // Few (row, KV head) tasks over a long context — a decode step with 4–8 KV heads — would
+    // leave most cores idle: split each task's key range across workers (flash-decoding) and
+    // merge the partial softmaxes. Prompts have enough tasks already.
+    let tasks = n * n_kv;
+    let splits = if tasks < pool.n_threads() && span >= 2 * SPLIT_MIN_KEYS {
+        (pool.n_threads() / tasks)
+            .max(1)
+            .min(span / SPLIT_MIN_KEYS)
+            .max(1)
+    } else {
+        1
+    };
+    if splits > 1 {
+        attend_split(
+            pool, &readers, rows, q_all, a, splits, span, out_ptr, attn_dim,
+        );
+        return;
+    }
     pool.parallel_for(n * n_kv, None, |start, end| {
         let mut scores = vec![0f32; group * span];
         let mut row = vec![0f32; hd.max(hdv)];
@@ -605,6 +666,135 @@ pub(crate) fn attend(
             }
         }
     });
+}
+
+/// Keys per split below which splitting a decode task's key range does not pay.
+const SPLIT_MIN_KEYS: usize = 128;
+
+/// [`attend`] with each (row, KV head) task's visible keys cut into `splits` contiguous ranges:
+/// every range computes, per query head of the group, its running max `m`, its sum `l` of
+/// `exp(s − m)` and its unnormalised `Σ exp(s − m)·v`; the ranges then merge exactly
+/// (`m* = max m_r`, `out = Σ e^{m_r − m*} o_r / Σ e^{m_r − m*} l_r`), the usual log-sum-exp merge.
+#[allow(clippy::too_many_arguments)]
+fn attend_split(
+    pool: &ThreadPool,
+    readers: &[crate::kv::LayerReader],
+    rows: &Rows,
+    q_all: &[f32],
+    a: Attend,
+    splits: usize,
+    span: usize,
+    out_ptr: SendPtr,
+    attn_dim: usize,
+) {
+    let Attend {
+        n_head,
+        n_kv,
+        hd,
+        hdv,
+        scale,
+        window,
+    } = a;
+    let n = rows.n();
+    let q_dim = n_head * hd;
+    let group = n_head / n_kv;
+    // Partials per (task, split): `group × (hdv + 2)` floats (o, m, l per head).
+    let stride = group * (hdv + 2);
+    let mut part = vec![0f32; n * n_kv * splits * stride];
+    let part_ptr = SendPtr(part.as_mut_ptr());
+    let chunk = span.div_ceil(splits);
+    pool.parallel_for(n * n_kv * splits, None, |start, end| {
+        let mut scores = vec![0f32; group * chunk];
+        let mut row = vec![0f32; hd.max(hdv)];
+        for idx in start..end {
+            let sp = idx % splits;
+            let task = idx / splits;
+            let t = task / n_kv;
+            let kvh = task % n_kv;
+            let rd = &readers[rows.seg_of[t]];
+            let t_abs = rows.pos[t];
+            let p_lo = window.map(|w| (t_abs + 1).saturating_sub(w)).unwrap_or(0);
+            let r0 = p_lo + sp * chunk;
+            let r1 = (r0 + chunk).min(t_abs + 1);
+            // SAFETY: every (task, split) owns its own `stride`-wide slice of `part`.
+            let out =
+                unsafe { std::slice::from_raw_parts_mut(part_ptr.get().add(idx * stride), stride) };
+            if r0 >= r1 {
+                for g in 0..group {
+                    out[g * (hdv + 2) + hdv] = f32::NEG_INFINITY;
+                    out[g * (hdv + 2) + hdv + 1] = 0.0;
+                }
+                continue;
+            }
+            let m_pos = r1 - r0;
+            for (i, p) in (r0..r1).enumerate() {
+                rd.load_k(p, kvh * hd, &mut row[..hd]);
+                for g in 0..group {
+                    let h = kvh * group + g;
+                    let q = &q_all[t * q_dim + h * hd..t * q_dim + (h + 1) * hd];
+                    scores[g * chunk + i] = dot(q, &row[..hd]) * scale;
+                }
+            }
+            for g in 0..group {
+                let sc = &mut scores[g * chunk..g * chunk + m_pos];
+                let m = sc.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+                let mut l = 0f32;
+                for v in sc.iter_mut() {
+                    *v = (*v - m).exp();
+                    l += *v;
+                }
+                let o = &mut out[g * (hdv + 2)..(g + 1) * (hdv + 2)];
+                o[..hdv].iter_mut().for_each(|v| *v = 0.0);
+                o[hdv] = m;
+                o[hdv + 1] = l;
+            }
+            for (i, p) in (r0..r1).enumerate() {
+                rd.load_v(p, kvh * hdv, &mut row[..hdv]);
+                for g in 0..group {
+                    let w = scores[g * chunk + i];
+                    let o = &mut out[g * (hdv + 2)..g * (hdv + 2) + hdv];
+                    for j in 0..hdv {
+                        o[j] += w * row[j];
+                    }
+                }
+            }
+        }
+    });
+    // Merge the splits of every (task, head).
+    let mut merged = vec![0f32; hdv];
+    for task in 0..n * n_kv {
+        let (t, kvh) = (task / n_kv, task % n_kv);
+        for g in 0..group {
+            let at = |sp: usize| (task * splits + sp) * stride + g * (hdv + 2);
+            let m_star = (0..splits)
+                .map(|sp| part[at(sp) + hdv])
+                .fold(f32::NEG_INFINITY, f32::max);
+            merged.iter_mut().for_each(|v| *v = 0.0);
+            let mut l_star = 0f32;
+            for sp in 0..splits {
+                let o = &part[at(sp)..at(sp) + hdv + 2];
+                if o[hdv] == f32::NEG_INFINITY {
+                    continue;
+                }
+                let c = (o[hdv] - m_star).exp();
+                l_star += c * o[hdv + 1];
+                for j in 0..hdv {
+                    merged[j] += c * o[j];
+                }
+            }
+            let inv = if l_star > 0.0 { 1.0 / l_star } else { 0.0 };
+            // SAFETY: the parallel region is over; this thread alone writes row t's heads.
+            let dst = unsafe {
+                std::slice::from_raw_parts_mut(
+                    out_ptr.get().add(t * attn_dim + (kvh * group + g) * hdv),
+                    hdv,
+                )
+            };
+            for j in 0..hdv {
+                dst[j] = merged[j] * inv;
+            }
+        }
+    }
 }
 
 /// `y = W x (+ b)` for `n` tokens of width `cols`.
@@ -872,6 +1062,38 @@ mod tests {
                     );
                 }
                 assert_eq!(kv.len(i), prompts[i].len() + 1);
+            }
+        }
+    }
+
+    /// Decode steps over a long context split each (row, KV head) task's keys across workers
+    /// when there are fewer tasks than threads; the merged result equals the unsplit one (a
+    /// 1-thread pool never splits).
+    #[test]
+    fn split_key_attention_equals_unsplit() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = tiny_model(dir.path());
+        let f = GgufFile::open(&path).unwrap();
+        let mut m = Model::load(&f).unwrap();
+        m.spec.context_length = 512;
+        let prompt: Vec<u32> = (0..300).map(|i| (i * 13 + 5) % 64).collect();
+        let run = |threads: usize| -> Vec<Vec<f32>> {
+            let pool = ThreadPool::new(threads);
+            let mut kv = KvCache::new(&m.spec, 512);
+            let mut s = Scratch::new(&m.spec, 512);
+            m.forward(&pool, &mut kv, &prompt, &mut s);
+            (0..3)
+                .map(|i| {
+                    m.forward(&pool, &mut kv, &[(i * 7) as u32], &mut s)
+                        .to_vec()
+                })
+                .collect()
+        };
+        let a = run(1);
+        let b = run(8);
+        for (x, y) in a.iter().zip(&b) {
+            for (u, v) in x.iter().zip(y) {
+                assert!((u - v).abs() < 1e-4, "{u} vs {v}");
             }
         }
     }

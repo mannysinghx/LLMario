@@ -204,6 +204,104 @@ pub fn matvec(table: &DotTable, pool: &ThreadPool, w: &QMat, x: &[f32], y: &mut 
     });
 }
 
+/// Several independent products in one parallel dispatch, each `y_i = W x_i` for its own list of
+/// input / output rows (the routed experts of a mixture-of-experts layer: many small matrices,
+/// each applied to the few tokens that chose it, where one pool round trip per product would cost
+/// more than the arithmetic). Every input row is quantised once; the weight rows of all products
+/// form one index space split into chunks, each weight row is applied to all of its product's
+/// input rows while it is in cache, and every dot uses the same row kernel as [`matvec`], so the
+/// results are bit-identical to calling it per (product, row).
+pub fn rows_multi(table: &DotTable, pool: &ThreadPool, jobs: &mut [crate::RowsJob]) {
+    let mut kinds = Vec::with_capacity(jobs.len());
+    for j in jobs.iter() {
+        match table.resolve(j.w.dtype) {
+            Some(k) => kinds.push(k),
+            None => {
+                // A type without a row kernel: the plain path, row by row.
+                for j in jobs.iter_mut() {
+                    for (x, y) in j.xs.iter().zip(j.ys.iter_mut()) {
+                        matvec(table, pool, &j.w, x, y);
+                    }
+                }
+                return;
+            }
+        }
+    }
+    // Quantised inputs, `[product][row]` back to back.
+    let mut acts: Vec<Vec<u8>> = Vec::with_capacity(jobs.len());
+    let mut starts = Vec::with_capacity(jobs.len() + 1);
+    let mut total = 0usize;
+    for (j, kind) in jobs.iter().zip(&kinds) {
+        let ab = act_row_bytes(kind, j.w.cols);
+        let mut a = vec![0u8; ab * j.xs.len()];
+        for (i, x) in j.xs.iter().enumerate() {
+            quantize_act(kind, x, &mut a[i * ab..(i + 1) * ab]);
+        }
+        acts.push(a);
+        starts.push(total);
+        total += j.w.rows;
+    }
+    starts.push(total);
+    let ptrs: Vec<Vec<SendPtr<f32>>> = jobs
+        .iter_mut()
+        .map(|j| j.ys.iter_mut().map(|y| SendPtr(y.as_mut_ptr())).collect())
+        .collect();
+    let jobs_ref: &[crate::RowsJob] = jobs;
+    let chunks = matvec_chunks(total, pool.n_threads());
+    pool.parallel_for(total, Some(chunks), |s, e| {
+        // The first product this chunk touches; later ones follow in order.
+        let mut ji = starts.partition_point(|&st| st <= s) - 1;
+        let mut g = s;
+        while g < e {
+            while g >= starts[ji + 1] {
+                ji += 1;
+            }
+            let job = &jobs_ref[ji];
+            let kind = &kinds[ji];
+            let cols = job.w.cols;
+            let ab = act_row_bytes(kind, cols);
+            let end = e.min(starts[ji + 1]);
+            let mut r = g - starts[ji];
+            let r_end = end - starts[ji];
+            let n = job.xs.len();
+            if let Some(f2) = table.lookup2(job.w.dtype) {
+                while r + 1 < r_end {
+                    for i in 0..n {
+                        let (v0, v1) = f2(
+                            job.w.row(r),
+                            job.w.row(r + 1),
+                            &acts[ji][i * ab..(i + 1) * ab],
+                            cols,
+                        );
+                        // SAFETY: global row ranges of the chunks are disjoint, so every
+                        // (product, weight row) — hence every output element — is written by
+                        // exactly one chunk; `r + 1 < rows == ys[i].len()`.
+                        unsafe {
+                            *ptrs[ji][i].get().add(r) = v0;
+                            *ptrs[ji][i].get().add(r + 1) = v1;
+                        }
+                    }
+                    r += 2;
+                }
+            }
+            while r < r_end {
+                for (i, (x, y)) in job.xs.iter().zip(&ptrs[ji]).enumerate() {
+                    // `xs[i]` is one row, so the float kernels read it as token 0; the quantised
+                    // ones read activation row `i`.
+                    let v = match *kind {
+                        RowKernel::F32(f) => f(job.w.row(r), x),
+                        _ => row_dot(kind, job.w.row(r), cols, x, &acts[ji], ab, i),
+                    };
+                    // SAFETY: as above.
+                    unsafe { *y.get().add(r) = v };
+                }
+                r += 1;
+            }
+            g = end;
+        }
+    });
+}
+
 /// `Y = X Wᵀ` for `n` tokens with the row kernels of `table`.
 pub fn matmul(table: &DotTable, pool: &ThreadPool, w: &QMat, x: &[f32], n: usize, y: &mut [f32]) {
     if n == 1 {
