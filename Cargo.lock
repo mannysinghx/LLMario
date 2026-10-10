@@ -2610,6 +2610,7 @@ dependencies = [
  "llmario-engine-core",
  "llmario-engine-cpu",
  "llmario-engine-formats",
+ "llmario-engine-kv",
  "llmario-engine-model",
  "objc2",
  "objc2-foundation",

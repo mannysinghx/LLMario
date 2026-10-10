@@ -4,12 +4,13 @@
 //! op for op; only the storage (f16 KV cache, shared buffers) and the execution differ.
 
 use crate::device::{groups, Buf, Cmd, Gpu};
-use crate::{DeviceInfo, MetalError, Result};
+use crate::kv::{MetalKv, BLOCK_TOKENS};
+use crate::{DeviceInfo, MetalError, MetalOptions, Result};
 use llmario_engine_core::GgmlType;
 use llmario_engine_cpu::{QMat, RopeKind};
 use llmario_engine_formats::GgufFile;
 use llmario_engine_model::weights::Weights;
-use llmario_engine_model::{ArchSpec, KvFull, ModelBackend, SeqTokens};
+use llmario_engine_model::{ArchSpec, KvFull, KvType, ModelBackend, SeqTokens};
 use std::sync::Arc;
 
 /// A weight matrix addressed inside one no-copy view of the mapping.
@@ -58,6 +59,8 @@ struct Scratch {
     ffn: Buf,
     logits: Buf,
     tokens: Buf,
+    /// `(sequence, position)` of each row, `[n_batch][2]` u32.
+    tokpos: Buf,
     part: Buf,
 }
 
@@ -109,6 +112,19 @@ struct NormParams {
     cols: u32,
     eps: f32,
 }
+/// Paged-cache addressing of one layer (misc.metal `KvPage`).
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct KvPage {
+    shift: u32,
+    mask: u32,
+    k_base: u32,
+    v_base: u32,
+    k_row: u32,
+    v_row: u32,
+    bps: u32,
+    pad: u32,
+}
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct QkRopeParams {
@@ -119,11 +135,6 @@ struct QkRopeParams {
     hdv: u32,
     rot_dim: u32,
     mode: u32,
-    pos0: u32,
-    k_off: u32,
-    v_off: u32,
-    kv_dim: u32,
-    v_dim: u32,
     q_norm: u32,
     k_norm: u32,
     rope: u32,
@@ -131,6 +142,7 @@ struct QkRopeParams {
     theta: f32,
     freq_scale: f32,
     attn_factor: f32,
+    kv: KvPage,
 }
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -140,14 +152,14 @@ struct AttnParams {
     n_kv_head: u32,
     hd: u32,
     hdv: u32,
-    kv_dim: u32,
-    v_dim: u32,
     pos0: u32,
-    k_off: u32,
-    v_off: u32,
     n_split: u32,
     split_len: u32,
     scale: f32,
+    pad0: u32,
+    pad1: u32,
+    pad2: u32,
+    kv: KvPage,
 }
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -232,21 +244,21 @@ pub struct MetalBackend<'a> {
     output_norm_off: usize,
     layers: Vec<LayerRefs>,
     consts: Buf,
-    kc: Buf,
-    vc: Buf,
+    kv: MetalKv,
     s: Scratch,
     max_ctx: usize,
-    /// KV rows allocated per layer (`max_ctx` padded for the prefill kernel's whole-tile loads).
-    max_ctx_alloc: usize,
     n_batch: usize,
-    kv_len: usize,
-    /// Decode attention kernel for this head geometry.
+    /// Sequences one call may carry (the scratch's logits rows).
+    max_seqs: usize,
+    /// Decode attention kernel for this head geometry and cache type.
     attn_vec: &'static str,
     /// Prefill attention kernel (`None`: use `attn_vec` for every batch).
     attn_prefill: Option<&'static str>,
+    qk_rope_kv: &'static str,
     reserved: u64,
     logits: Vec<f32>,
-    residency_from: usize,
+    /// Owner id of this backend's residency sets.
+    residency_owner: u64,
     last_gpu_secs: f64,
 }
 
@@ -259,7 +271,13 @@ impl<'a> MetalBackend<'a> {
         crate::device::device_info()
     }
 
+    /// A single-slot f16 backend.
     pub fn new(file: &'a GgufFile, max_ctx: usize, n_batch: usize) -> Result<MetalBackend<'a>> {
+        Self::with_options(file, MetalOptions::new(max_ctx, n_batch))
+    }
+
+    pub fn with_options(file: &'a GgufFile, o: MetalOptions) -> Result<MetalBackend<'a>> {
+        let (max_ctx, n_batch, kv_type) = (o.max_ctx, o.n_batch, o.kv_type);
         let gpu = Gpu::get()?;
         let spec = ArchSpec::from_gguf(file)?;
         if spec.gdn.is_some() || spec.n_attn_layers() != spec.n_layer {
@@ -296,20 +314,39 @@ impl<'a> MetalBackend<'a> {
                 "d_model {d} is not a multiple of 16"
             )));
         }
-        let attn_vec = match (hd, hdv) {
-            (32, 32) => "attn_vec_hd32",
-            (64, 64) => "attn_vec_hd64",
-            (128, 128) => "attn_vec_hd128",
-            (256, 256) => "attn_vec_hd256",
-            _ => "attn_vec_generic",
+        if !kv_type.supports_head_dim(hd) || !kv_type.supports_head_dim(hdv) {
+            return Err(MetalError::Unsupported(format!(
+                "KV cache type {} with head width {hd}/{hdv} (needs multiples of 32)",
+                kv_type.name()
+            )));
+        }
+        let q8 = kv_type == KvType::Q8_0;
+        let attn_vec = match ((hd, hdv), q8) {
+            ((32, 32), false) => "attn_vec_hd32_f16",
+            ((64, 64), false) => "attn_vec_hd64_f16",
+            ((128, 128), false) => "attn_vec_hd128_f16",
+            ((256, 256), false) => "attn_vec_hd256_f16",
+            (_, false) => "attn_vec_generic_f16",
+            ((32, 32), true) => "attn_vec_hd32_q8_0",
+            ((64, 64), true) => "attn_vec_hd64_q8_0",
+            ((128, 128), true) => "attn_vec_hd128_q8_0",
+            ((256, 256), true) => "attn_vec_hd256_q8_0",
+            (_, true) => "attn_vec_generic_q8_0",
         };
-        let attn_prefill = match (hd, hdv) {
-            (64, 64) => Some("attn_prefill_hd64"),
-            (128, 128) => Some("attn_prefill_hd128"),
+        let attn_prefill = match ((hd, hdv), q8) {
+            ((64, 64), false) => Some("attn_prefill_hd64_f16"),
+            ((128, 128), false) => Some("attn_prefill_hd128_f16"),
+            ((64, 64), true) => Some("attn_prefill_hd64_q8_0"),
+            ((128, 128), true) => Some("attn_prefill_hd128_q8_0"),
             _ => None,
         };
+        let qk_rope_kv = if q8 {
+            "qk_rope_kv_q8_0"
+        } else {
+            "qk_rope_kv_f16"
+        };
         let n_batch_alloc = n_batch.div_ceil(FA_BQ) * FA_BQ;
-        let max_ctx_alloc = max_ctx.div_ceil(FA_BQ) * FA_BQ + FA_BQ;
+        let max_seqs = o.n_seqs.clamp(1, n_batch);
 
         // --- Weight views over the mapping (zero-copy).
         let max_tensor = file.tensors.iter().map(|t| t.span.len).max().unwrap_or(0) as usize;
@@ -395,14 +432,10 @@ impl<'a> MetalBackend<'a> {
         let consts_buf = gpu.alloc(consts.len() * 4)?;
         consts_buf.write_f32(0, &consts);
 
-        // --- KV cache (f16) and scratch, allocated once.
-        let n_layer = spec.n_layer as usize;
+        // --- Paged KV cache (blocks created on demand) and scratch, allocated once.
         let kv_dim = spec.kv_dim() as usize;
         let v_dim = spec.v_dim() as usize;
-        let k_bytes = n_layer * max_ctx_alloc * kv_dim * 2;
-        let v_bytes = n_layer * max_ctx_alloc * v_dim * 2;
-        let kc = gpu.alloc(k_bytes)?;
-        let vc = gpu.alloc(v_bytes)?;
+        let kv = MetalKv::new(&gpu, &spec, max_ctx, max_seqs, kv_type)?;
         let nb = n_batch_alloc;
         let s = Scratch {
             x: gpu.alloc(nb * d * 4)?,
@@ -414,13 +447,12 @@ impl<'a> MetalBackend<'a> {
             gate: gpu.alloc(nb * spec.n_ff as usize * 4)?,
             up: gpu.alloc(nb * spec.n_ff as usize * 4)?,
             ffn: gpu.alloc(nb * d * 4)?,
-            logits: gpu.alloc(spec.n_vocab as usize * 4)?,
+            logits: gpu.alloc(max_seqs * spec.n_vocab as usize * 4)?,
             tokens: gpu.alloc(nb * 4)?,
+            tokpos: gpu.alloc(nb * 8)?,
             part: gpu.alloc(ATTN_SPLIT_PAIRS * ATTN_MAX_SPLIT * (hdv + 2) * 4)?,
         };
-        let reserved = [
-            &kc,
-            &vc,
+        let scratch_bytes: u64 = [
             &s.x,
             &s.h,
             &s.q,
@@ -432,20 +464,21 @@ impl<'a> MetalBackend<'a> {
             &s.ffn,
             &s.logits,
             &s.tokens,
+            &s.tokpos,
             &s.part,
             &consts_buf,
         ]
         .iter()
         .map(|b| b.len() as u64)
         .sum();
+        let reserved = scratch_bytes + kv.reserved_bytes();
 
         // --- Residency (macOS 15+).
-        let residency_from = gpu.residency_count();
+        let residency_owner = crate::device::residency_owner();
         let weight_refs: Vec<&Buf> = views.iter().collect();
-        let wired = gpu.make_resident("llmario-weights", &weight_refs);
+        let wired = gpu.make_resident(residency_owner, "llmario-weights", &weight_refs);
         let kv_refs: Vec<&Buf> = vec![
-            &kc,
-            &vc,
+            &kv.table,
             &s.x,
             &s.h,
             &s.q,
@@ -457,23 +490,25 @@ impl<'a> MetalBackend<'a> {
             &s.ffn,
             &s.logits,
             &s.tokens,
+            &s.tokpos,
             &s.part,
             &consts_buf,
         ];
-        gpu.make_resident("llmario-kv-scratch", &kv_refs);
+        gpu.make_resident(residency_owner, "llmario-scratch", &kv_refs);
         tracing::info!(
             device = %gpu.info.name,
             views = views.len(),
             weight_bytes = file.tensor_bytes_total(),
-            kv_mib = (k_bytes + v_bytes) / (1024 * 1024),
-            scratch_kib = (reserved - (k_bytes + v_bytes) as u64) / 1024,
+            kv_type = kv_type.name(),
+            kv_reserved_mib = kv.reserved_bytes() / (1024 * 1024),
+            scratch_kib = scratch_bytes / 1024,
             residency = wired,
             working_set_mib = gpu.info.recommended_max_working_set / (1024 * 1024),
             "Metal backend ready"
         );
 
         Ok(MetalBackend {
-            logits: vec![0.0; spec.n_vocab as usize],
+            logits: vec![0.0; max_seqs * spec.n_vocab as usize],
             gpu,
             spec,
             _weights: weights,
@@ -483,17 +518,16 @@ impl<'a> MetalBackend<'a> {
             output_norm_off,
             layers,
             consts: consts_buf,
-            kc,
-            vc,
+            kv,
             s,
             max_ctx,
-            max_ctx_alloc,
             n_batch,
-            kv_len: 0,
+            max_seqs,
             attn_vec,
             attn_prefill,
+            qk_rope_kv,
             reserved,
-            residency_from,
+            residency_owner,
             last_gpu_secs: 0.0,
         })
     }
@@ -680,13 +714,28 @@ impl<'a> MetalBackend<'a> {
         rows: usize,
         cols: usize,
     ) -> Result<()> {
+        self.rms_norm_at(cmd, x, x_off, w_off, y, 0, rows, cols)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn rms_norm_at(
+        &self,
+        cmd: &Cmd,
+        x: &Buf,
+        x_off: usize,
+        w_off: usize,
+        y: &Buf,
+        y_off: usize,
+        rows: usize,
+        cols: usize,
+    ) -> Result<()> {
         let p = NormParams {
             cols: cols as u32,
             eps: self.spec.rms_eps,
         };
         cmd.dispatch(
             "rms_norm",
-            &[(0, x, x_off), (1, &self.consts, w_off), (2, y, 0)],
+            &[(0, x, x_off), (1, &self.consts, w_off), (2, y, y_off)],
             3,
             &p,
             (rows, 1, 1),
@@ -709,7 +758,11 @@ impl<'a> MetalBackend<'a> {
         )
     }
 
-    fn attention_block(&self, cmd: &Cmd, l: usize, n: usize, pos0: usize) -> Result<()> {
+    /// One attention layer over the stacked rows: QKV, per-head norm + RoPE + paged KV write,
+    /// decode attention for the rows of `segs[..n_vec]` (one dispatch), prefill attention per
+    /// remaining segment, output projection with the residual.
+    fn attention_block(&self, cmd: &Cmd, l: usize, rows: &Rows) -> Result<()> {
+        let n = rows.n;
         let spec = &self.spec;
         let layer = &self.layers[l];
         let d = spec.d_model as usize;
@@ -739,8 +792,7 @@ impl<'a> MetalBackend<'a> {
             }
             cmd.barrier();
         }
-        let k_off = l * self.max_ctx_alloc * kv_dim;
-        let v_off = l * self.max_ctx_alloc * v_dim;
+        let page = self.kv_page(l);
         {
             let r = &spec.rope;
             let p = QkRopeParams {
@@ -754,11 +806,6 @@ impl<'a> MetalBackend<'a> {
                     RopeKind::Normal => 0,
                     RopeKind::Neox => 1,
                 },
-                pos0: pos0 as u32,
-                k_off: k_off as u32,
-                v_off: v_off as u32,
-                kv_dim: kv_dim as u32,
-                v_dim: v_dim as u32,
                 q_norm: layer.c.q_norm.is_some() as u32,
                 k_norm: layer.c.k_norm.is_some() as u32,
                 rope: (!spec.nope_layers.contains(&(l as u32))) as u32,
@@ -766,17 +813,18 @@ impl<'a> MetalBackend<'a> {
                 theta: r.theta,
                 freq_scale: r.freq_scale,
                 attn_factor: r.attn_factor,
+                kv: page,
             };
             cmd.dispatch(
-                "qk_rope_kv",
+                self.qk_rope_kv,
                 &[
                     (0, &s.q, 0),
                     (1, &s.k, 0),
                     (2, &s.v, 0),
                     (3, &self.consts, layer.c.q_norm.unwrap_or(0)),
                     (4, &self.consts, layer.c.k_norm.unwrap_or(0)),
-                    (5, &self.kc, 0),
-                    (6, &self.vc, 0),
+                    (5, &self.kv.table, 0),
+                    (6, &s.tokpos, 0),
                 ],
                 7,
                 &p,
@@ -785,59 +833,54 @@ impl<'a> MetalBackend<'a> {
             )?;
             cmd.barrier();
         }
-        {
-            let n_pos_max = pos0 + n;
-            let flash = n >= FA_MIN_TOKENS && self.attn_prefill.is_some();
-            let n_split = if flash || n * n_head >= ATTN_SPLIT_PAIRS {
+        let base = AttnParams {
+            n_q: 0,
+            n_head: n_head as u32,
+            n_kv_head: n_kv as u32,
+            hd: hd as u32,
+            hdv: hdv as u32,
+            pos0: 0,
+            n_split: 1,
+            split_len: 1,
+            scale: 1.0 / (hd as f32).sqrt(),
+            pad0: 0,
+            pad1: 0,
+            pad2: 0,
+            kv: page,
+        };
+        // Decode-style rows (single tokens and short runs): one dispatch, each row reads its own
+        // sequence and position from `tokpos`.
+        if rows.n_vec > 0 {
+            let n_vec = rows.n_vec;
+            let n_pos_max = rows.max_vec_pos + 1;
+            let n_split = if n_vec * n_head >= ATTN_SPLIT_PAIRS {
                 1
             } else {
                 n_pos_max.div_ceil(ATTN_SPLIT_KEYS).clamp(1, ATTN_MAX_SPLIT)
             };
-            let split_len = n_pos_max.div_ceil(n_split).max(1);
             let p = AttnParams {
-                n_q: n as u32,
-                n_head: n_head as u32,
-                n_kv_head: n_kv as u32,
-                hd: hd as u32,
-                hdv: hdv as u32,
-                kv_dim: kv_dim as u32,
-                v_dim: v_dim as u32,
-                pos0: pos0 as u32,
-                k_off: k_off as u32,
-                v_off: v_off as u32,
+                n_q: n_vec as u32,
                 n_split: n_split as u32,
-                split_len: split_len as u32,
-                scale: 1.0 / (hd as f32).sqrt(),
+                split_len: n_pos_max.div_ceil(n_split).max(1) as u32,
+                ..base
             };
-            let bufs = [
-                (0, &s.q, 0),
-                (1, &self.kc, 0),
-                (2, &self.vc, 0),
-                (3, &s.attn, 0),
-                (4, &s.part, 0),
-            ];
-            if flash {
-                cmd.dispatch(
-                    self.attn_prefill.unwrap(),
-                    &bufs,
-                    5,
-                    &p,
-                    (groups(n, FA_BQ), n_head, 1),
-                    (ATTN_TG, 1, 1),
-                )?;
-            } else {
-                cmd.dispatch(
-                    self.attn_vec,
-                    &bufs,
-                    5,
-                    &p,
-                    (n, n_head, n_split),
-                    (ATTN_TG, 1, 1),
-                )?;
-            }
-            cmd.barrier();
+            cmd.dispatch(
+                self.attn_vec,
+                &[
+                    (0, &s.q, 0),
+                    (1, &self.kv.table, 0),
+                    (2, &s.tokpos, 0),
+                    (3, &s.attn, 0),
+                    (4, &s.part, 0),
+                ],
+                5,
+                &p,
+                (n_vec, n_head, n_split),
+                (ATTN_TG, 1, 1),
+            )?;
             if n_split > 1 {
-                let threads = n * n_head * hdv;
+                cmd.barrier();
+                let threads = n_vec * n_head * hdv;
                 cmd.dispatch(
                     "attn_reduce",
                     &[(0, &s.part, 0), (1, &s.attn, 0)],
@@ -846,13 +889,52 @@ impl<'a> MetalBackend<'a> {
                     (groups(threads, ELEM_TG), 1, 1),
                     (ELEM_TG, 1, 1),
                 )?;
-                cmd.barrier();
             }
         }
+        // Prompt segments: the flash kernel, one dispatch per sequence (rows are disjoint).
+        for sg in &rows.segs[rows.n_vec_segs..] {
+            let p = AttnParams {
+                n_q: sg.n as u32,
+                pos0: sg.pos0 as u32,
+                ..base
+            };
+            cmd.dispatch(
+                self.attn_prefill
+                    .expect("prefill segments need the flash kernel"),
+                &[
+                    (0, &s.q, sg.start * n_head * hd * 4),
+                    (
+                        1,
+                        &self.kv.table,
+                        sg.seq * self.kv.layout.blocks_per_seq * 8,
+                    ),
+                    (3, &s.attn, sg.start * n_head * hdv * 4),
+                ],
+                5,
+                &p,
+                (groups(sg.n, FA_BQ), n_head, 1),
+                (ATTN_TG, 1, 1),
+            )?;
+        }
+        cmd.barrier();
         // x += Wo attn (residual fused into the projection).
         self.project(cmd, &layer.wo, &s.attn, 0, n, &s.x, true)?;
         cmd.barrier();
         Ok(())
+    }
+
+    fn kv_page(&self, l: usize) -> KvPage {
+        let lay = &self.kv.layout.layers[l];
+        KvPage {
+            shift: BLOCK_TOKENS.trailing_zeros(),
+            mask: (BLOCK_TOKENS - 1) as u32,
+            k_base: lay.k_base() as u32,
+            v_base: lay.v_base() as u32,
+            k_row: lay.k_row as u32,
+            v_row: lay.v_row as u32,
+            bps: self.kv.layout.blocks_per_seq as u32,
+            pad: 0,
+        }
     }
 
     fn ffn_block(&self, cmd: &Cmd, l: usize, n: usize) -> Result<()> {
@@ -879,37 +961,140 @@ impl<'a> MetalBackend<'a> {
         Ok(())
     }
 
-    /// Encode one forward over `n` tokens at positions `pos0..` into `cmd`.
-    fn encode(&self, cmd: &Cmd, n: usize, pos0: usize) -> Result<()> {
+    /// Encode one forward over the stacked rows into `cmd`, ending with the logits of each
+    /// row in `rows.outs` (one per batch entry, in batch order).
+    fn encode(&self, cmd: &Cmd, rows: &Rows) -> Result<()> {
         let d = self.spec.d_model as usize;
+        let n = rows.n;
         self.embed(cmd, n)?;
         cmd.barrier();
         for l in 0..self.layers.len() {
-            self.attention_block(cmd, l, n, pos0)?;
+            self.attention_block(cmd, l, rows)?;
             self.ffn_block(cmd, l, n)?;
         }
-        // Final norm + head on the last token only.
-        self.rms_norm(
-            cmd,
-            &self.s.x,
-            (n - 1) * d * 4,
-            self.output_norm_off,
-            &self.s.h,
-            1,
-            d,
-        )?;
+        // Final norm + head on each sequence's last row.
+        for (i, &row) in rows.outs.iter().enumerate() {
+            self.rms_norm_at(
+                cmd,
+                &self.s.x,
+                row * d * 4,
+                self.output_norm_off,
+                &self.s.h,
+                i * d * 4,
+                1,
+                d,
+            )?;
+        }
         cmd.barrier();
         let head = self.output.unwrap_or(self.token_embd);
-        self.project(cmd, &head, &self.s.h, 0, 1, &self.s.logits, false)
+        self.project(
+            cmd,
+            &head,
+            &self.s.h,
+            0,
+            rows.outs.len(),
+            &self.s.logits,
+            false,
+        )
     }
 
-    fn prepare(&mut self, tokens: &[u32]) -> usize {
-        let n = tokens.len();
-        assert!(n >= 1 && n <= self.n_batch, "batch of {n} tokens");
-        assert!(self.kv_len + n <= self.max_ctx, "context overflow");
-        let bytes: Vec<u8> = tokens.iter().flat_map(|t| t.to_le_bytes()).collect();
-        self.s.tokens.write_bytes(0, &bytes);
-        n
+    /// Lay out a batch: decode-style segments first (so their rows are one contiguous range for
+    /// the decode attention dispatch), then prompt segments; upload tokens and (seq, pos).
+    fn layout_rows(&self, batch: &[SeqTokens]) -> Rows {
+        let flash_ok = self.attn_prefill.is_some();
+        let is_vec = |n: usize| !(flash_ok && n >= FA_MIN_TOKENS);
+        let mut order: Vec<usize> = (0..batch.len()).collect();
+        order.sort_by_key(|&i| !is_vec(batch[i].tokens.len()));
+        let mut rows = Rows::default();
+        let mut toks: Vec<u8> = Vec::new();
+        let mut tokpos: Vec<u8> = Vec::new();
+        rows.outs = vec![0; batch.len()];
+        for &i in &order {
+            let b = &batch[i];
+            let pos0 = self.kv.len(b.seq);
+            let start = rows.n;
+            for (k, t) in b.tokens.iter().enumerate() {
+                toks.extend_from_slice(&t.to_le_bytes());
+                tokpos.extend_from_slice(&(b.seq as u32).to_le_bytes());
+                tokpos.extend_from_slice(&((pos0 + k) as u32).to_le_bytes());
+            }
+            rows.n += b.tokens.len();
+            rows.outs[i] = rows.n - 1;
+            if is_vec(b.tokens.len()) {
+                rows.n_vec = rows.n;
+                rows.n_vec_segs += 1;
+                rows.max_vec_pos = rows.max_vec_pos.max(pos0 + b.tokens.len() - 1);
+            }
+            rows.segs.push(Seg {
+                seq: b.seq,
+                start,
+                n: b.tokens.len(),
+                pos0,
+            });
+        }
+        self.s.tokens.write_bytes(0, &toks);
+        self.s.tokpos.write_bytes(0, &tokpos);
+        rows
+    }
+
+    /// Validate `batch` and reserve its cache room (nothing changes when it does not fit).
+    fn admit(&mut self, batch: &[SeqTokens]) -> std::result::Result<(), KvFull> {
+        let total: usize = batch.iter().map(|b| b.tokens.len()).sum();
+        assert!(
+            !batch.is_empty() && batch.len() <= self.max_seqs,
+            "{} sequences in one call (this backend holds {})",
+            batch.len(),
+            self.max_seqs
+        );
+        assert!(
+            total <= self.n_batch,
+            "batch of {total} tokens (max {})",
+            self.n_batch
+        );
+        for (i, b) in batch.iter().enumerate() {
+            assert!(
+                !b.tokens.is_empty(),
+                "empty token list for sequence {}",
+                b.seq
+            );
+            assert!(
+                b.seq < self.kv.n_seqs(),
+                "sequence {} of {}",
+                b.seq,
+                self.kv.n_seqs()
+            );
+            assert!(
+                batch[..i].iter().all(|o| o.seq != b.seq),
+                "sequence {} appears twice in one batch",
+                b.seq
+            );
+            assert!(
+                self.kv.len(b.seq) + b.tokens.len() <= self.max_ctx,
+                "context overflow"
+            );
+        }
+        let need: usize = batch
+            .iter()
+            .map(|b| {
+                self.kv
+                    .blocks_needed(b.seq, self.kv.len(b.seq) + b.tokens.len())
+            })
+            .sum();
+        if need > self.kv.free_blocks() {
+            return Err(KvFull {
+                needed: need,
+                free: self.kv.free_blocks(),
+            });
+        }
+        for b in batch {
+            let new_len = self.kv.len(b.seq) + b.tokens.len();
+            match self.kv.reserve(&self.gpu, b.seq, new_len) {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => panic!("Metal KV block allocation failed: {e}"),
+                Err(e) => return Err(e),
+            }
+        }
+        Ok(())
     }
 
     /// GPU seconds of the last forward's command buffer.
@@ -917,35 +1102,69 @@ impl<'a> MetalBackend<'a> {
         self.last_gpu_secs
     }
 
-    /// Run one forward with every kernel in its own command buffer and return the per-dispatch
-    /// (kernel, GPU seconds) list. Advances the cache like `forward`.
+    /// Run one single-sequence forward (slot 0) with every kernel in its own command buffer and
+    /// return the per-dispatch (kernel, GPU seconds) list. Advances the cache like `forward`.
     pub fn profile_forward(&mut self, tokens: &[u32]) -> Result<Vec<(&'static str, f64)>> {
-        let n = self.prepare(tokens);
-        let pos0 = self.kv_len;
+        let batch = [SeqTokens { seq: 0, tokens }];
+        self.admit(&batch)
+            .map_err(|e| MetalError::Device(e.to_string()))?;
+        let rows = self.layout_rows(&batch);
+        let indirect = self.kv.prepare();
         let cmd = self.gpu.begin_profiled()?;
-        self.encode(&cmd, n, pos0)?;
+        cmd.use_indirect(&indirect);
+        self.encode(&cmd, &rows)?;
         let prof = cmd.profile();
         self.last_gpu_secs = cmd.finish()?;
-        self.s.logits.read_f32(0, &mut self.logits);
-        self.kv_len += n;
+        let v = self.spec.n_vocab as usize;
+        self.s.logits.read_f32(0, &mut self.logits[..v]);
+        for sg in &rows.segs {
+            self.kv.set_len(sg.seq, sg.pos0 + sg.n);
+        }
         Ok(prof)
     }
 
-    fn run(&mut self, tokens: &[u32]) -> Result<()> {
-        let n = self.prepare(tokens);
-        let pos0 = self.kv_len;
+    fn run(&mut self, batch: &[SeqTokens]) -> Result<std::result::Result<usize, KvFull>> {
+        if let Err(e) = self.admit(batch) {
+            return Ok(Err(e));
+        }
+        let rows = self.layout_rows(batch);
+        let indirect = self.kv.prepare();
         let cmd = self.gpu.begin()?;
-        self.encode(&cmd, n, pos0)?;
+        cmd.use_indirect(&indirect);
+        self.encode(&cmd, &rows)?;
         self.last_gpu_secs = cmd.finish()?;
-        self.s.logits.read_f32(0, &mut self.logits);
-        self.kv_len += n;
-        Ok(())
+        let m = batch.len() * self.spec.n_vocab as usize;
+        self.s.logits.read_f32(0, &mut self.logits[..m]);
+        for sg in &rows.segs {
+            self.kv.set_len(sg.seq, sg.pos0 + sg.n);
+        }
+        Ok(Ok(m))
     }
+}
+
+/// Placement of one forward's stacked rows.
+#[derive(Default)]
+struct Rows {
+    n: usize,
+    /// Rows `0..n_vec` take the decode attention kernel; they are `segs[..n_vec_segs]`.
+    n_vec: usize,
+    n_vec_segs: usize,
+    max_vec_pos: usize,
+    segs: Vec<Seg>,
+    /// Last row of each batch entry, in batch order.
+    outs: Vec<usize>,
+}
+
+struct Seg {
+    seq: usize,
+    start: usize,
+    n: usize,
+    pos0: usize,
 }
 
 impl Drop for MetalBackend<'_> {
     fn drop(&mut self) {
-        self.gpu.end_residency(self.residency_from);
+        self.gpu.end_residency(self.residency_owner);
     }
 }
 
@@ -959,40 +1178,43 @@ impl ModelBackend for MetalBackend<'_> {
     fn max_ctx(&self) -> usize {
         self.max_ctx
     }
+    fn n_seqs(&self) -> usize {
+        self.kv.n_seqs()
+    }
     fn seq_len(&self, s: usize) -> usize {
-        assert_eq!(s, 0, "the Metal backend holds one sequence");
-        self.kv_len
+        self.kv.len(s)
     }
     fn truncate_seq(&mut self, s: usize, n: usize) {
-        assert_eq!(s, 0, "the Metal backend holds one sequence");
-        self.kv_len = self.kv_len.min(n);
+        self.kv.truncate(s, n);
     }
     fn clear_seq(&mut self, s: usize) {
-        assert_eq!(s, 0, "the Metal backend holds one sequence");
-        self.kv_len = 0;
+        self.kv.clear(s);
     }
     fn max_batch(&self) -> usize {
         self.n_batch
     }
     fn forward_batch(&mut self, batch: &[SeqTokens]) -> std::result::Result<&[f32], KvFull> {
-        assert!(
-            batch.len() == 1 && batch[0].seq == 0,
-            "the Metal backend runs one sequence per call"
-        );
-        if let Err(e) = self.run(batch[0].tokens) {
+        match self.run(batch) {
+            Ok(Ok(m)) => Ok(&self.logits[..m]),
+            Ok(Err(full)) => Err(full),
             // A failed command buffer leaves no usable state behind; surface it loudly rather
             // than return stale logits.
-            panic!("Metal forward failed: {e}");
+            Err(e) => panic!("Metal forward failed: {e}"),
         }
-        Ok(&self.logits)
     }
     fn reserved_bytes(&self) -> u64 {
         self.reserved
     }
     fn kv_in_use_bytes(&self) -> u64 {
-        self.kc.len() as u64 + self.vc.len() as u64
+        self.kv.in_use_bytes()
     }
     fn kv_reserved_bytes(&self) -> u64 {
-        self.kc.len() as u64 + self.vc.len() as u64
+        self.kv.reserved_bytes()
+    }
+    fn kv_type(&self) -> KvType {
+        self.kv.layout.kv_type
+    }
+    fn kv_free_tokens(&self) -> usize {
+        self.kv.free_tokens()
     }
 }

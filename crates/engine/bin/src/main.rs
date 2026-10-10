@@ -6,7 +6,7 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use llmario_engine_formats::GgufFile;
-use llmario_engine_model::{ArchSpec, CpuBackend, ModelBackend};
+use llmario_engine_model::{ArchSpec, CpuBackend, CpuOptions, KvType, ModelBackend};
 use llmario_engine_server::Device;
 use std::path::PathBuf;
 use std::time::Instant;
@@ -55,6 +55,11 @@ enum Cmd {
         /// Self-hosted SearXNG instance for the built-in `web_search` tool (needs `--web`).
         #[arg(long)]
         searxng_url: Option<String>,
+        /// KV cache element type: `auto` (q8_0 when the memory ceiling is 16 GiB or less, else
+        /// f16, and the planner may switch to q8_0 before shortening the context), `f16` or
+        /// `q8_0`.
+        #[arg(long, default_value = "auto", value_parser = parse_kv_type)]
+        kv_type: KvArg,
     },
     /// Report what this build can run (`--json` for the supervisor).
     Probe {
@@ -74,6 +79,9 @@ enum Cmd {
         memory_limit: Option<u64>,
         #[arg(long)]
         json: bool,
+        /// KV cache element type (`auto`, `f16`, `q8_0`).
+        #[arg(long, default_value = "auto", value_parser = parse_kv_type)]
+        kv_type: KvArg,
     },
     /// Tokenize text with the model's tokenizer (development).
     Tokenize {
@@ -100,7 +108,23 @@ enum Cmd {
         /// Backend: `auto`, `cpu` or `metal`.
         #[arg(long, default_value = "auto")]
         device: Device,
+        /// KV cache element type (`f16` or `q8_0`; `auto` means f16 here).
+        #[arg(long, default_value = "f16", value_parser = parse_kv_type)]
+        kv_type: KvArg,
     },
+}
+
+/// `--kv-type` value: `None` = automatic.
+#[derive(Clone, Copy, Debug)]
+struct KvArg(Option<KvType>);
+
+fn parse_kv_type(s: &str) -> std::result::Result<KvArg, String> {
+    if s.eq_ignore_ascii_case("auto") {
+        return Ok(KvArg(None));
+    }
+    KvType::parse(s)
+        .map(|t| KvArg(Some(t)))
+        .ok_or_else(|| format!("unknown KV cache type `{s}` (auto|f16|q8_0)"))
 }
 
 /// Architectures the CPU forward pass covers in this build (M1 dense families + the Qwen3.5 hybrid).
@@ -134,6 +158,7 @@ fn main() -> Result<()> {
             batch,
             memory_limit,
             json,
+            kv_type,
         } => {
             let f = GgufFile::open(&model)?;
             let opts = llmario_engine_server::ServeOptions {
@@ -151,6 +176,7 @@ fn main() -> Result<()> {
                 device: Device::Auto,
                 web: false,
                 searxng_url: None,
+                kv_type: kv_type.0,
             };
             let (plan, _) = llmario_engine_server::plan_for(&f, &opts)?;
             if json {
@@ -189,6 +215,7 @@ fn main() -> Result<()> {
             device,
             web,
             searxng_url,
+            kv_type,
         } => {
             let threads = threads.unwrap_or_else(|| {
                 std::thread::available_parallelism()
@@ -212,6 +239,7 @@ fn main() -> Result<()> {
                 device,
                 web,
                 searxng_url,
+                kv_type: kv_type.0,
             };
             let rt = tokio::runtime::Builder::new_multi_thread()
                 .worker_threads(2)
@@ -226,7 +254,16 @@ fn main() -> Result<()> {
             threads,
             ctx,
             device,
-        } => raw_run(&model, &tokens, n, threads, ctx, device),
+            kv_type,
+        } => raw_run(
+            &model,
+            &tokens,
+            n,
+            threads,
+            ctx,
+            device,
+            kv_type.0.unwrap_or_default(),
+        ),
     }
 }
 
@@ -365,6 +402,7 @@ fn raw_run(
     threads: Option<usize>,
     ctx: usize,
     device: Device,
+    kv_type: KvType,
 ) -> Result<()> {
     let prompt: Vec<u32> = tokens
         .split(',')
@@ -386,27 +424,32 @@ fn raw_run(
         Device::Auto => llmario_engine_server::engine::metal_available(),
     };
     let n_batch = prompt.len().max(1);
+    let cpu_opts = CpuOptions {
+        kv_type,
+        ..CpuOptions::new(threads, ctx, n_batch)
+    };
     let mut backend: Box<dyn ModelBackend> = match (use_metal, device) {
-        (false, _) => Box::new(CpuBackend::new(&f, threads, ctx, n_batch)?),
-        (true, Device::Metal) => Box::new(open_metal(&f, ctx, n_batch)?),
+        (false, _) => Box::new(CpuBackend::with_options(&f, cpu_opts)?),
+        (true, Device::Metal) => Box::new(open_metal(&f, ctx, n_batch, kv_type)?),
         // `auto`: a model the Metal kernels do not cover runs on the CPU, with the reason logged.
-        (true, _) => match open_metal(&f, ctx, n_batch) {
+        (true, _) => match open_metal(&f, ctx, n_batch, kv_type) {
             Ok(b) => Box::new(b),
             Err(e) => {
                 eprintln!("metal backend unavailable for this model ({e}); using the CPU backend");
-                Box::new(CpuBackend::new(&f, threads, ctx, n_batch)?)
+                Box::new(CpuBackend::with_options(&f, cpu_opts)?)
             }
         },
     };
     let spec = backend.spec().clone();
     eprintln!(
-        "loaded {} ({}) in {:.2}s; backend {}; threads {}; kernels {}",
+        "loaded {} ({}) in {:.2}s; backend {}; threads {}; kernels {}; kv {}",
         spec.name.clone().unwrap_or_default(),
         spec.arch,
         t0.elapsed().as_secs_f32(),
         backend.name(),
         threads,
-        llmario_engine_cpu::simd::kernels().name
+        llmario_engine_cpu::simd::kernels().name,
+        backend.kv_type().name()
     );
     let t1 = Instant::now();
     let logits = backend.forward(&prompt);
@@ -468,13 +511,20 @@ fn open_metal(
     f: &GgufFile,
     ctx: usize,
     n_batch: usize,
+    kv_type: KvType,
 ) -> Result<llmario_engine_metal::MetalBackend<'_>> {
-    Ok(llmario_engine_metal::MetalBackend::new(f, ctx, n_batch)?)
+    Ok(llmario_engine_metal::MetalBackend::with_options(
+        f,
+        llmario_engine_metal::MetalOptions {
+            kv_type,
+            ..llmario_engine_metal::MetalOptions::new(ctx, n_batch)
+        },
+    )?)
 }
 
 #[cfg(not(all(feature = "metal", target_os = "macos")))]
-fn open_metal(f: &GgufFile, ctx: usize, n_batch: usize) -> Result<CpuBackend<'_>> {
-    let _ = (ctx, n_batch);
+fn open_metal(f: &GgufFile, ctx: usize, n_batch: usize, kv_type: KvType) -> Result<CpuBackend<'_>> {
+    let _ = (ctx, n_batch, kv_type);
     let _ = f;
     anyhow::bail!("this build has no Metal backend (use --device cpu)")
 }

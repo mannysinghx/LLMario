@@ -2,7 +2,8 @@
 //!
 //! Runs only when `LLMARIO_TEST_GGUF` is set; the first path in it is used (a small model keeps
 //! this fast: CI uses Qwen3.5-0.8B Q4_0). `LLMARIO_E2E_DEVICE` picks the backend (default `cpu`;
-//! `auto` uses Metal where available).
+//! `auto` uses Metal where available); `LLMARIO_E2E_KV` the KV cache type (default `auto`);
+//! `LLMARIO_E2E_SLOTS` the slots (default 2, so concurrent requests share batched steps).
 //!
 //! Covers: readiness, plan and ledger endpoints, non-streaming and streaming chat with usage,
 //! JSON-schema output, a forced tool call, cancellation on client disconnect, two concurrent
@@ -124,6 +125,8 @@ fn start() -> Option<Engine> {
     let model = std::env::var("LLMARIO_TEST_GGUF").ok()?;
     let model = model.split(',').next()?.to_string();
     let device = std::env::var("LLMARIO_E2E_DEVICE").unwrap_or_else(|_| "cpu".into());
+    let kv = std::env::var("LLMARIO_E2E_KV").unwrap_or_else(|_| "auto".into());
+    let slots = std::env::var("LLMARIO_E2E_SLOTS").unwrap_or_else(|_| "2".into());
     let port = free_port();
     // Engine logs go to a file so a startup failure can be shown in the panic message.
     let log_path = std::env::temp_dir().join(format!("llmario-serve-e2e-{port}.log"));
@@ -143,6 +146,10 @@ fn start() -> Option<Engine> {
             &device,
             "--model-id",
             "e2e",
+            "--kv-type",
+            &kv,
+            "--parallel",
+            &slots,
         ])
         .stdout(Stdio::null())
         .stderr(Stdio::from(log.try_clone().unwrap()))
@@ -191,10 +198,22 @@ fn serve_end_to_end() {
     let plan = get_json(port, "/engine/plan");
     eprintln!("plan: {}", plan["plan"]);
     assert_eq!(plan["plan"]["fits"], true);
-    assert_eq!(plan["plan"]["kv_dtype"], "f16");
+    let kv_dtype = plan["plan"]["kv_dtype"].as_str().unwrap().to_string();
+    assert!(
+        kv_dtype == "f16" || kv_dtype == "q8_0",
+        "kv_dtype {kv_dtype}"
+    );
+    let forced = std::env::var("LLMARIO_E2E_KV").unwrap_or_else(|_| "auto".into());
+    if forced != "auto" {
+        assert_eq!(kv_dtype, forced, "the plan ignored --kv-type");
+    }
     let ledger = get_json(port, "/engine/ledger");
     assert!(ledger["devices"].as_array().is_some_and(|d| !d.is_empty()));
     let models = get_json(port, "/v1/models");
+    assert_eq!(
+        models["data"][0]["engine"]["kv_type"], kv_dtype,
+        "the backend runs the plan's KV type"
+    );
     let backend = models["data"][0]["engine"]["device"]
         .as_str()
         .unwrap_or("")
@@ -221,6 +240,24 @@ fn serve_end_to_end() {
     );
     assert!(r["usage"]["prompt_tokens"].as_u64().unwrap() > 0);
     assert!(r["usage"]["completion_tokens"].as_u64().unwrap() > 0);
+    // The paged KV cache holds memory for the cached tokens only, within the reservation.
+    let led = get_json(port, "/engine/ledger");
+    let dev = led["devices"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|d| d["kv_arena_reserved"].as_u64().unwrap_or(0) > 0)
+        .expect("a device with a KV reservation")
+        .clone();
+    let (in_use, reserved) = (
+        dev["kv_arena_in_use"].as_u64().unwrap(),
+        dev["kv_arena_reserved"].as_u64().unwrap(),
+    );
+    eprintln!("kv in use {in_use} of {reserved} bytes reserved");
+    assert!(
+        in_use > 0 && in_use < reserved,
+        "kv in use {in_use} of {reserved}"
+    );
 
     // Streaming chat with usage: the same greedy request must stream exactly the same text.
     let mut streamed_req = question.clone();
@@ -336,21 +373,41 @@ fn serve_end_to_end() {
         std::thread::sleep(Duration::from_millis(200));
     }
 
-    // Two concurrent requests both complete.
-    let a = std::thread::spawn(move || {
-        chat(
-            port,
-            json!({"messages": user("Say hello."), "temperature": 0, "max_tokens": 24, "enable_thinking": false}),
-        )
-    });
-    let b = std::thread::spawn(move || {
-        chat(
-            port,
-            json!({"messages": user("Say goodbye."), "temperature": 0, "max_tokens": 24, "enable_thinking": false}),
-        )
-    });
-    assert_eq!(a.join().unwrap().0, 200);
-    assert_eq!(b.join().unwrap().0, 200);
+    // Concurrent requests all complete with a correct answer; with two or more slots they run
+    // in shared batched steps.
+    let slots = std::env::var("LLMARIO_E2E_SLOTS").unwrap_or_else(|_| "2".into());
+    let steps_before = get_json(port, "/engine/stats")["steps"].as_u64().unwrap();
+    let handles: Vec<_> = (0..3)
+        .map(|_| {
+            std::thread::spawn(move || {
+                chat(
+                    port,
+                    json!({"messages": user("What is the capital of France? One word."),
+                           "temperature": 0, "max_tokens": 64, "enable_thinking": false}),
+                )
+            })
+        })
+        .collect();
+    for h in handles {
+        let (st, r) = h.join().unwrap();
+        assert_eq!(st, 200, "{r}");
+        let c = r["choices"][0]["message"]["content"].as_str().unwrap_or("");
+        assert!(
+            c.to_lowercase().contains("paris"),
+            "concurrent answer: {c:?}"
+        );
+    }
+    let stats = get_json(port, "/engine/stats");
+    eprintln!(
+        "steps {} -> {}, max sequences in one step {}",
+        steps_before, stats["steps"], stats["max_seqs_in_step"]
+    );
+    if slots.parse::<u32>().unwrap_or(1) > 1 {
+        assert!(
+            stats["max_seqs_in_step"].as_u64().unwrap() > 1,
+            "concurrent requests never shared a step: {stats}"
+        );
+    }
 
     // Features the engine does not implement are refused, not silently ignored.
     let (st, r) = chat(

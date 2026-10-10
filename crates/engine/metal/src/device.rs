@@ -15,7 +15,8 @@ use objc2_metal::{
     MTLBarrierScope, MTLBuffer, MTLCommandBuffer, MTLCommandBufferStatus, MTLCommandEncoder,
     MTLCommandQueue, MTLCompileOptions, MTLComputeCommandEncoder, MTLComputePipelineState,
     MTLCreateSystemDefaultDevice, MTLDevice, MTLDispatchType, MTLGPUFamily, MTLLanguageVersion,
-    MTLLibrary, MTLResidencySet, MTLResidencySetDescriptor, MTLResourceOptions, MTLSize,
+    MTLLibrary, MTLResidencySet, MTLResidencySetDescriptor, MTLResourceOptions, MTLResourceUsage,
+    MTLSize,
 };
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -74,14 +75,22 @@ pub const KERNELS: &[&str] = &[
     "gemm_q5_k",
     "gemm_q6_k",
     "rms_norm",
-    "qk_rope_kv",
-    "attn_vec_hd32",
-    "attn_vec_hd64",
-    "attn_vec_hd128",
-    "attn_vec_hd256",
-    "attn_vec_generic",
-    "attn_prefill_hd64",
-    "attn_prefill_hd128",
+    "qk_rope_kv_f16",
+    "qk_rope_kv_q8_0",
+    "attn_vec_hd32_f16",
+    "attn_vec_hd64_f16",
+    "attn_vec_hd128_f16",
+    "attn_vec_hd256_f16",
+    "attn_vec_generic_f16",
+    "attn_vec_hd32_q8_0",
+    "attn_vec_hd64_q8_0",
+    "attn_vec_hd128_q8_0",
+    "attn_vec_hd256_q8_0",
+    "attn_vec_generic_q8_0",
+    "attn_prefill_hd64_f16",
+    "attn_prefill_hd128_f16",
+    "attn_prefill_hd64_q8_0",
+    "attn_prefill_hd128_q8_0",
     "attn_reduce",
     "swiglu",
     "add",
@@ -111,6 +120,10 @@ impl Buf {
     }
     pub fn is_empty(&self) -> bool {
         self.len == 0
+    }
+    /// The buffer's GPU virtual address (Metal 3), for tables that kernels read pointers from.
+    pub fn gpu_address(&self) -> u64 {
+        self.raw.gpuAddress()
     }
     /// The CPU-visible contents (shared storage mode). The caller must not read or write while a
     /// command buffer that uses this buffer is executing; the backend waits on every forward.
@@ -157,7 +170,9 @@ pub struct Gpu {
     queue: Retained<Queue>,
     pipelines: HashMap<&'static str, Retained<Pso>>,
     /// Residency sets kept alive for the queue (macOS 15+; empty when unsupported).
-    residency: Mutex<Vec<ResidencySet>>,
+    /// Residency sets kept alive for the queue, by owner id (several backends can share the
+    /// process-wide device, and they are created and dropped in any order).
+    residency: Mutex<Vec<(u64, ResidencySet)>>,
     pub info: DeviceInfo,
     pub max_buffer_length: usize,
     pub page_size: usize,
@@ -170,6 +185,13 @@ unsafe impl Sync for Gpu {}
 
 pub struct ResidencySet {
     raw: Retained<ProtocolObject<dyn MTLResidencySet>>,
+}
+
+static NEXT_RESIDENCY_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+/// A fresh owner id for [`Gpu::make_resident`] / [`Gpu::end_residency`].
+pub fn residency_owner() -> u64 {
+    NEXT_RESIDENCY_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 
 fn ns_err(e: &objc2_foundation::NSError) -> String {
@@ -345,7 +367,7 @@ impl Gpu {
     }
 
     /// Put `bufs` in a residency set attached to the queue (macOS 15+); no-op elsewhere.
-    pub fn make_resident(&self, label: &str, bufs: &[&Buf]) -> bool {
+    pub fn make_resident(&self, owner: u64, label: &str, bufs: &[&Buf]) -> bool {
         if !self.info.residency_sets || bufs.is_empty() {
             return false;
         }
@@ -369,21 +391,55 @@ impl Gpu {
         self.residency
             .lock()
             .unwrap()
-            .push(ResidencySet { raw: set });
+            .push((owner, ResidencySet { raw: set }));
         true
     }
 
-    /// Release the residency sets a backend created (called on drop; the memory stays mapped).
-    pub fn end_residency(&self, from: usize) {
-        let mut sets = self.residency.lock().unwrap();
-        for s in sets.drain(from..) {
-            self.queue.removeResidencySet(&s.raw);
-            s.raw.endResidency();
+    /// A residency set whose members change over time (the paged KV blocks, which kernels reach
+    /// only through address tables). `None` where residency sets are unsupported; then the
+    /// backend declares the buffers on each command encoder instead (`Cmd::use_indirect`).
+    pub fn dynamic_residency(&self, label: &str) -> Option<DynResidency> {
+        if !self.info.residency_sets {
+            return None;
         }
+        let desc = MTLResidencySetDescriptor::new();
+        desc.setLabel(Some(&NSString::from_str(label)));
+        let set = match self.device.newResidencySetWithDescriptor_error(&desc) {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::warn!(error = %ns_err(&e), "residency set creation failed");
+                return None;
+            }
+        };
+        set.commit();
+        set.requestResidency();
+        self.queue.addResidencySet(&set);
+        Some(DynResidency {
+            raw: set,
+            queue: self.queue.clone(),
+            dirty: false,
+        })
+    }
+
+    /// Release the residency sets `owner` created (called on drop; the memory stays mapped).
+    pub fn end_residency(&self, owner: u64) {
+        let mut sets = self.residency.lock().unwrap_or_else(|e| e.into_inner());
+        sets.retain(|(o, s)| {
+            if *o == owner {
+                self.queue.removeResidencySet(&s.raw);
+                s.raw.endResidency();
+                false
+            } else {
+                true
+            }
+        });
     }
 
     pub fn residency_count(&self) -> usize {
-        self.residency.lock().unwrap().len()
+        self.residency
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .len()
     }
 
     /// Begin one command buffer with one compute encoder (serial dispatch: every kernel sees the
@@ -393,6 +449,7 @@ impl Gpu {
             gpu: self,
             open: RefCell::new(None),
             profile: None,
+            indirect: RefCell::new(Vec::new()),
         })
     }
 
@@ -403,6 +460,7 @@ impl Gpu {
             gpu: self,
             open: RefCell::new(None),
             profile: Some(RefCell::new(Vec::new())),
+            indirect: RefCell::new(Vec::new()),
         })
     }
 
@@ -439,15 +497,87 @@ impl OpenCmd {
     }
 }
 
+/// See [`Gpu::dynamic_residency`]. Changes take effect at the next [`DynResidency::commit`].
+pub struct DynResidency {
+    raw: Retained<ProtocolObject<dyn MTLResidencySet>>,
+    queue: Retained<Queue>,
+    dirty: bool,
+}
+
+// SAFETY: residency sets are thread-safe Metal objects; the backend uses this from its own
+// thread only.
+unsafe impl Send for DynResidency {}
+unsafe impl Sync for DynResidency {}
+
+impl DynResidency {
+    pub fn add(&mut self, b: &Buf) {
+        self.raw.addAllocation(ProtocolObject::from_ref(&*b.raw));
+        self.dirty = true;
+    }
+    pub fn remove(&mut self, b: &Buf) {
+        self.raw.removeAllocation(ProtocolObject::from_ref(&*b.raw));
+        self.dirty = true;
+    }
+    /// Apply pending additions and removals (call before encoding work that uses them).
+    pub fn commit(&mut self) {
+        if self.dirty {
+            self.raw.commit();
+            self.raw.requestResidency();
+            self.dirty = false;
+        }
+    }
+}
+
+impl Drop for DynResidency {
+    fn drop(&mut self) {
+        self.queue.removeResidencySet(&self.raw);
+        self.raw.endResidency();
+    }
+}
+
 /// An open command buffer. Kernels are encoded back to back; `finish` commits and waits.
 pub struct Cmd<'g> {
     gpu: &'g Gpu,
     open: RefCell<Option<OpenCmd>>,
     /// Per-dispatch (kernel, GPU seconds) when profiling.
     profile: Option<RefCell<Vec<(&'static str, f64)>>>,
+    /// Buffers kernels reach only through address tables, declared on every encoder this command
+    /// opens (needed where residency sets are unavailable).
+    indirect: RefCell<Vec<Retained<RawBuffer>>>,
 }
 
 impl Cmd<'_> {
+    /// Declare buffers that kernels read or write only through address tables. Applies to the
+    /// current encoder and to every encoder opened later by this command.
+    pub fn use_indirect(&self, bufs: &[&Buf]) {
+        let mut ind = self.indirect.borrow_mut();
+        ind.clear();
+        ind.extend(bufs.iter().map(|b| b.raw.clone()));
+        if let Some(o) = self.open.borrow().as_ref() {
+            for b in ind.iter() {
+                o.enc.useResource_usage(
+                    ProtocolObject::from_ref(&**b),
+                    MTLResourceUsage::Read | MTLResourceUsage::Write,
+                );
+            }
+        }
+    }
+
+    fn ensure_open(&self) -> Result<()> {
+        let mut open = self.open.borrow_mut();
+        if open.is_none() {
+            let o = self.gpu.open_cb()?;
+            for b in self.indirect.borrow().iter() {
+                o.enc.useResource_usage(
+                    ProtocolObject::from_ref(&**b),
+                    MTLResourceUsage::Read | MTLResourceUsage::Write,
+                );
+            }
+            *open = Some(o);
+        }
+        Ok(())
+    }
+
     /// Encode one dispatch of kernel `name` over `grid` threadgroups of `tg` threads with the
     /// given buffer bindings (index, buffer, byte offset) and an inline parameter struct.
     pub fn dispatch<P: Copy>(
@@ -460,10 +590,8 @@ impl Cmd<'_> {
         tg: (usize, usize, usize),
     ) -> Result<()> {
         let pso = self.gpu.pipeline(name);
+        self.ensure_open()?;
         let mut open = self.open.borrow_mut();
-        if open.is_none() {
-            *open = Some(self.gpu.open_cb()?);
-        }
         let enc = &open.as_ref().unwrap().enc;
         enc.setComputePipelineState(pso);
         for &(i, b, off) in bufs {

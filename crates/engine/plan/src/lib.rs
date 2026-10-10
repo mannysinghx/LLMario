@@ -164,6 +164,13 @@ pub fn plan(
         KvType::Q8_0.supports_head_dim(g.head_dim as usize)
             && KvType::Q8_0.supports_head_dim(g.head_dim_v as usize)
     });
+    // An automatic q8_0 choice falls back to f16 on models whose heads q8_0 blocks cannot tile;
+    // an explicit one is refused below.
+    if kv_type == KvType::Q8_0 && !q8_ok && req.kv_auto {
+        kv_type = KvType::F16;
+    }
+    let kv_type_refusal = (kv_type == KvType::Q8_0 && !q8_ok)
+        .then(|| "the q8_0 KV cache needs head widths that are multiples of 32".to_string());
 
     struct Totals {
         kv: u64,
@@ -224,9 +231,10 @@ pub fn plan(
         t = total(slots, ctx, prompt_cache, kv_type);
     }
     // Step 5 (host offload of experts / layers) arrives with the MoE families.
-    let fits = t.planned <= usable;
-    let refusal = (!fits).then(|| {
-        format!(
+    let fits = t.planned <= usable && kv_type_refusal.is_none();
+    let refusal = kv_type_refusal.or_else(|| {
+        (!fits).then(|| {
+            format!(
             "needs {} on {} but only {} is usable ({} ceiling − {} headroom); weights alone are {}",
             fmt(t.planned),
             budget.device,
@@ -235,6 +243,7 @@ pub fn plan(
             fmt(budget.headroom),
             fmt(weights)
         )
+        })
     });
     let bytes_per_token = weights + (t.layout.paged_bytes_per_token() as u64) * ctx as u64;
     let devices = vec![DeviceTotals {
@@ -353,25 +362,58 @@ mod tests {
             .meta("llama.block_count", MetaValue::U32(2))
             .meta("llama.embedding_length", MetaValue::U32(d as u32))
             .meta("llama.attention.head_count", MetaValue::U32(n_head as u32))
-            .meta("llama.attention.head_count_kv", MetaValue::U32(n_head as u32))
+            .meta(
+                "llama.attention.head_count_kv",
+                MetaValue::U32(n_head as u32),
+            )
             .meta("llama.attention.key_length", MetaValue::U32(hd as u32))
             .meta("llama.attention.value_length", MetaValue::U32(hd as u32))
             .meta("llama.feed_forward_length", MetaValue::U32(n_ff as u32))
             .meta("llama.vocab_size", MetaValue::U32(vocab as u32))
             .meta("llama.context_length", MetaValue::U32(65536));
-        w.tensor("token_embd.weight", &[d, vocab], GgmlType::F32, f32s(d * vocab));
+        w.tensor(
+            "token_embd.weight",
+            &[d, vocab],
+            GgmlType::F32,
+            f32s(d * vocab),
+        );
         w.tensor("output_norm.weight", &[d], GgmlType::F32, f32s(d));
         for l in 0..2 {
             let p = |s: &str| format!("blk.{l}.{s}");
             w.tensor(&p("attn_norm.weight"), &[d], GgmlType::F32, f32s(d));
             for t in ["attn_q", "attn_k", "attn_v"] {
-                w.tensor(&p(&format!("{t}.weight")), &[d, n_head * hd], GgmlType::F32, f32s(d * n_head * hd));
+                w.tensor(
+                    &p(&format!("{t}.weight")),
+                    &[d, n_head * hd],
+                    GgmlType::F32,
+                    f32s(d * n_head * hd),
+                );
             }
-            w.tensor(&p("attn_output.weight"), &[n_head * hd, d], GgmlType::F32, f32s(d * n_head * hd));
+            w.tensor(
+                &p("attn_output.weight"),
+                &[n_head * hd, d],
+                GgmlType::F32,
+                f32s(d * n_head * hd),
+            );
             w.tensor(&p("ffn_norm.weight"), &[d], GgmlType::F32, f32s(d));
-            w.tensor(&p("ffn_gate.weight"), &[d, n_ff], GgmlType::F32, f32s(d * n_ff));
-            w.tensor(&p("ffn_up.weight"), &[d, n_ff], GgmlType::F32, f32s(d * n_ff));
-            w.tensor(&p("ffn_down.weight"), &[n_ff, d], GgmlType::F32, f32s(n_ff * d));
+            w.tensor(
+                &p("ffn_gate.weight"),
+                &[d, n_ff],
+                GgmlType::F32,
+                f32s(d * n_ff),
+            );
+            w.tensor(
+                &p("ffn_up.weight"),
+                &[d, n_ff],
+                GgmlType::F32,
+                f32s(d * n_ff),
+            );
+            w.tensor(
+                &p("ffn_down.weight"),
+                &[n_ff, d],
+                GgmlType::F32,
+                f32s(n_ff * d),
+            );
         }
         let path = dir.join("plan.gguf");
         std::fs::write(&path, w.to_bytes()).unwrap();
@@ -412,7 +454,10 @@ mod tests {
                 &spec,
                 &KvOptions::new(ctx as usize).seqs(slots as usize).kv_type(t),
             );
-            assert_eq!(p.devices[0].kv_cache + p.devices[0].recurrent_state, layout.reserved_bytes());
+            assert_eq!(
+                p.devices[0].kv_cache + p.devices[0].recurrent_state,
+                layout.reserved_bytes()
+            );
             assert_eq!(p.kv_type(), t);
             assert_eq!(
                 p.devices[0].scratch,

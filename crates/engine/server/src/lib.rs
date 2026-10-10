@@ -13,7 +13,8 @@ pub mod toolcall;
 use anyhow::{Context, Result};
 use llmario_engine_core::ledger::{DeviceId, Ledger};
 use llmario_engine_formats::GgufFile;
-use llmario_engine_plan::{DeviceBudget, Plan, PlanRequest};
+use llmario_engine_model::KvType;
+use llmario_engine_plan::{DeviceBudget, Plan, PlanRequest, GIB};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -56,17 +57,44 @@ pub struct ServeOptions {
     pub web: bool,
     /// Self-hosted SearXNG instance for `web_search`.
     pub searxng_url: Option<String>,
+    /// KV cache element type; `None` = automatic (see [`kv_choice`]).
+    pub kv_type: Option<KvType>,
+}
+
+/// Machines (or memory budgets) at or below this size get the q8_0 KV cache by default
+/// (Architecture §8.3: q8_0 is the default on 8 and 16 GB machines).
+pub const SMALL_MACHINE: u64 = 16 * GIB;
+
+/// The KV type to plan with and whether the planner may change it: an explicit type is kept;
+/// automatic picks q8_0 when the memory ceiling is at most [`SMALL_MACHINE`], f16 above, and lets
+/// the ladder switch f16 to q8_0 before it shortens the context.
+pub fn kv_choice(opts: &ServeOptions) -> (KvType, bool) {
+    match opts.kv_type {
+        Some(t) => (t, false),
+        None => {
+            let ceiling = opts.memory_limit.unwrap_or_else(physical_memory);
+            let t = if ceiling <= SMALL_MACHINE {
+                KvType::Q8_0
+            } else {
+                KvType::F16
+            };
+            (t, true)
+        }
+    }
 }
 
 /// Build the plan for `opts` against the memory ceiling (no allocation).
 pub fn plan_for(file: &GgufFile, opts: &ServeOptions) -> Result<(Plan, DeviceBudget)> {
     let ceiling = opts.memory_limit.unwrap_or_else(physical_memory);
     let budget = DeviceBudget::with_default_headroom(DeviceId::Host, ceiling);
+    let (kv_type, kv_auto) = kv_choice(opts);
     let req = PlanRequest {
         slots: opts.parallel.max(1),
         ctx_per_slot: opts.ctx,
         n_batch: opts.batch.max(1),
         threads: opts.threads as u32,
+        kv_type,
+        kv_auto,
         ..Default::default()
     };
     let plan = llmario_engine_plan::plan(file, &opts.model_id, &req, &budget)?;

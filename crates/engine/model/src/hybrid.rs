@@ -688,8 +688,12 @@ mod tests {
         assert_eq!(spec.n_recurrent_layers(), 3);
         // One paged attention layer, not four; recurrent state charged on top. A 16-position
         // context still takes one 32-position block, plus the copy-on-write spare.
-        let kv = KvCache::new(&spec, 16);
+        let mut kv = KvCache::new(&spec, 16);
         assert_eq!(kv.n_layers(), 1);
+        // Recurrent state exists only once the sequence is used.
+        assert!(kv.seq(0).rs.is_empty() && !kv.is_active(0));
+        assert_eq!(kv.in_use_bytes(), 0);
+        kv.reserve(0, 1).unwrap();
         assert_eq!(kv.seq(0).rs.len(), 3);
         assert_eq!(kv.seq(0).rs[0].conv.len(), 3 * 64);
         assert_eq!(kv.seq(0).rs[0].state.len(), 4 * 8 * 8);
@@ -721,16 +725,15 @@ mod tests {
         assert_eq!(kv.len(0), toks.len());
         kv.truncate(0, 3);
         assert_eq!(kv.len(0), 0);
+        // The reset frees the state; it comes back zeroed on the next use.
+        assert!(kv.seq(0).rs.is_empty() && !kv.is_active(0));
+        kv.reserve(0, 1).unwrap();
+        assert_eq!(kv.seq(0).rs.len(), 3);
         assert!(kv
             .seq(0)
             .rs
             .iter()
-            .all(|r| r.state.iter().all(|v| *v == 0.0)));
-        assert!(kv
-            .seq(0)
-            .rs
-            .iter()
-            .all(|r| r.conv.iter().all(|v| *v == 0.0)));
+            .all(|r| r.state.iter().all(|v| *v == 0.0) && r.conv.iter().all(|v| *v == 0.0)));
         // Recomputing from scratch reproduces the same logits (state fully reset).
         let l1 = m.forward(&pool, &mut kv, &toks, &mut s).to_vec();
         kv.clear(0);

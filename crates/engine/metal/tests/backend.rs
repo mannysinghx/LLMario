@@ -50,9 +50,14 @@ fn tiny_model(dir: &std::path::Path) -> std::path::PathBuf {
 }
 
 fn tiny_model_d(dir: &std::path::Path, d: u64) -> std::path::PathBuf {
+    tiny_model_dh(dir, d, 8, 64)
+}
+
+/// Variant with `hd`-wide heads and a `ctx`-position context (hd 64 exercises the prefill flash
+/// kernel and q8_0 rows; contexts past 32 span several KV blocks).
+fn tiny_model_dh(dir: &std::path::Path, d: u64, hd: u64, ctx: u32) -> std::path::PathBuf {
     let n_head = 4u64;
     let n_kv = 2u64;
-    let hd = 8u64;
     let n_ff = 48u64;
     let vocab = 64u64;
     let n_layer = 2u64;
@@ -74,7 +79,7 @@ fn tiny_model_d(dir: &std::path::Path, d: u64) -> std::path::PathBuf {
         .meta("llama.attention.key_length", MetaValue::U32(hd as u32))
         .meta("llama.feed_forward_length", MetaValue::U32(n_ff as u32))
         .meta("llama.vocab_size", MetaValue::U32(vocab as u32))
-        .meta("llama.context_length", MetaValue::U32(64))
+        .meta("llama.context_length", MetaValue::U32(ctx))
         .meta("llama.rope.freq_base", MetaValue::F32(10000.0))
         .meta(
             "llama.attention.layer_norm_rms_epsilon",
@@ -140,7 +145,7 @@ fn tiny_model_d(dir: &std::path::Path, d: u64) -> std::path::PathBuf {
             f32s(n_ff * d, 70 + l),
         );
     }
-    let p = dir.join(format!("tiny-{d}.gguf"));
+    let p = dir.join(format!("tiny-{d}-{hd}.gguf"));
     std::fs::write(&p, w.to_bytes()).unwrap();
     p
 }
@@ -537,4 +542,146 @@ fn real_model_prefill_consistency() {
     eprintln!("prefill vs token-by-token: max abs diff {d:.4}");
     assert!(d <= 0.05, "logits differ by {d}");
     assert_eq!(argmax(&a), argmax(&b));
+}
+
+/// The paged cache on Metal against the CPU's, for f16 and q8_0 rows: a 40-token prompt (the
+/// flash kernel, two KV blocks) then decode steps across the block boundary; prefill of all 40
+/// at once equals token by token.
+#[test]
+fn paged_kv_matches_cpu_f16_and_q8_0() {
+    use llmario_engine_metal::MetalOptions;
+    use llmario_engine_model::{CpuOptions, KvType};
+    if !metal() {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let path = tiny_model_dh(dir.path(), 64, 64, 128);
+    let f = GgufFile::open(&path).unwrap();
+    let toks: Vec<u32> = (0..40).map(|i| (i * 7 + 3) % 64).collect();
+    for kv_type in [KvType::F16, KvType::Q8_0] {
+        let mut cpu = CpuBackend::with_options(
+            &f,
+            CpuOptions {
+                kv_type,
+                ..CpuOptions::new(2, 128, 64)
+            },
+        )
+        .unwrap();
+        let mut gpu = MetalBackend::with_options(
+            &f,
+            MetalOptions {
+                kv_type,
+                ..MetalOptions::new(128, 64)
+            },
+        )
+        .unwrap();
+        assert_eq!(gpu.kv_type(), kv_type);
+        let lc = cpu.forward(&toks).to_vec();
+        let lg = gpu.forward(&toks).to_vec();
+        let tol = if kv_type == KvType::Q8_0 { 2e-2 } else { 2e-3 };
+        assert!(
+            max_abs_diff(&lc, &lg) < tol,
+            "{kv_type:?} prefill differs: {}",
+            max_abs_diff(&lc, &lg)
+        );
+        assert_eq!(argmax(&lc), argmax(&lg));
+        let mut next = argmax(&lc) as u32;
+        for _ in 0..30 {
+            let lc = cpu.forward(&[next]).to_vec();
+            let lg = gpu.forward(&[next]).to_vec();
+            assert!(max_abs_diff(&lc, &lg) < tol, "{kv_type:?} decode differs");
+            assert_eq!(argmax(&lc), argmax(&lg));
+            next = argmax(&lc) as u32;
+        }
+        assert_eq!(gpu.kv_len(), 70);
+        // Prefill vs token by token on the GPU.
+        gpu.clear();
+        let a = gpu.forward(&toks).to_vec();
+        gpu.clear();
+        let mut b = Vec::new();
+        for &t in &toks {
+            b = gpu.forward(&[t]).to_vec();
+        }
+        assert!(
+            max_abs_diff(&a, &b) < tol,
+            "{kv_type:?} prefill vs token-by-token differ"
+        );
+    }
+}
+
+/// Several sequences in one Metal call (a long prompt through the flash kernel, a single token
+/// and a short prompt through the decode kernel, in mixed order) give each sequence the logits
+/// it gets alone, then a batched decode step does too.
+#[test]
+fn batched_sequences_match_separate_runs() {
+    use llmario_engine_metal::MetalOptions;
+    use llmario_engine_model::SeqTokens;
+    if !metal() {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let path = tiny_model_dh(dir.path(), 64, 64, 128);
+    let f = GgufFile::open(&path).unwrap();
+    let long: Vec<u32> = (0..40).map(|i| (i * 5 + 1) % 64).collect();
+    let prompts: [&[u32]; 3] = [&[9], &long, &[4, 8, 15, 16, 23]];
+    let v = 64usize;
+    let mut alone = Vec::new();
+    for p in prompts {
+        let mut gpu = MetalBackend::new(&f, 128, 64).unwrap();
+        let a = gpu.forward(p).to_vec();
+        let b = gpu.forward(&[7]).to_vec();
+        alone.push((a, b));
+    }
+    let mut gpu = MetalBackend::with_options(
+        &f,
+        MetalOptions {
+            n_seqs: 3,
+            ..MetalOptions::new(128, 64)
+        },
+    )
+    .unwrap();
+    assert_eq!(gpu.n_seqs(), 3);
+    let batch: Vec<SeqTokens> = prompts
+        .iter()
+        .enumerate()
+        .map(|(i, p)| SeqTokens { seq: i, tokens: p })
+        .collect();
+    let first = gpu.forward_batch(&batch).unwrap().to_vec();
+    let dec: Vec<SeqTokens> = (0..3)
+        .map(|i| SeqTokens {
+            seq: i,
+            tokens: &[7],
+        })
+        .collect();
+    let next = gpu.forward_batch(&dec).unwrap().to_vec();
+    for (i, (a, b)) in alone.iter().enumerate() {
+        let d1 = max_abs_diff(a, &first[i * v..(i + 1) * v]);
+        let d2 = max_abs_diff(b, &next[i * v..(i + 1) * v]);
+        assert!(d1 < 2e-3 && d2 < 2e-3, "seq {i}: prefill {d1}, decode {d2}");
+        assert_eq!(gpu.seq_len(i), prompts[i].len() + 1);
+    }
+}
+
+/// Metal KV blocks exist only while used: none after load, two after 40 tokens, one after a
+/// truncation to 10, none after clearing.
+#[test]
+fn metal_kv_blocks_follow_use() {
+    if !metal() {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let path = tiny_model_dh(dir.path(), 64, 64, 128);
+    let f = GgufFile::open(&path).unwrap();
+    let mut gpu = MetalBackend::new(&f, 128, 64).unwrap();
+    let table = gpu.kv_in_use_bytes();
+    let toks: Vec<u32> = (0..40).collect();
+    gpu.forward(&toks);
+    let two = gpu.kv_in_use_bytes() - table;
+    assert!(two > 0);
+    gpu.truncate(10);
+    assert_eq!(gpu.kv_in_use_bytes() - table, two / 2);
+    gpu.clear();
+    assert_eq!(gpu.kv_in_use_bytes(), table);
+    // The reservation is the whole context (4 blocks of 32 + the copy-on-write spare).
+    assert_eq!(gpu.kv_reserved_bytes() - table, 5 * (two / 2));
 }
