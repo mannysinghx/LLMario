@@ -171,6 +171,7 @@ const GEMV_NR: usize = 2;
 const GEMV_ROWS_PER_TG: usize = GEMV_NSG * GEMV_NR;
 const GEMM_BM: usize = 64;
 const GEMM_BN: usize = 32;
+const GEMM_BK: usize = 32;
 const ATTN_TG: usize = 128;
 const ATTN_MAX_HD: usize = 512;
 /// Query rows per threadgroup of the prefill (flash) attention kernel; q/attn buffers and the KV
@@ -365,9 +366,12 @@ enum Kind {
     GemvGlu,
     GemvGeglu,
     Gemm,
+    /// The main prefill GEMM (row length a multiple of 32).
+    GemmF,
     GemvId,
     GemvGluId,
     GemmId,
+    GemmIdF,
 }
 
 fn kernel_name(kind: Kind, dtype: GgmlType) -> Result<&'static str> {
@@ -415,6 +419,13 @@ fn kernel_name(kind: Kind, dtype: GgmlType) -> Result<&'static str> {
         (Kind::Gemm, T::Q4_K) => "gemm_q4_k",
         (Kind::Gemm, T::Q5_K) => "gemm_q5_k",
         (Kind::Gemm, T::Q6_K) => "gemm_q6_k",
+        (Kind::GemmF, T::F32) => "gemmf_f32",
+        (Kind::GemmF, T::F16) => "gemmf_f16",
+        (Kind::GemmF, T::Q4_0) => "gemmf_q4_0",
+        (Kind::GemmF, T::Q8_0) => "gemmf_q8_0",
+        (Kind::GemmF, T::Q4_K) => "gemmf_q4_k",
+        (Kind::GemmF, T::Q5_K) => "gemmf_q5_k",
+        (Kind::GemmF, T::Q6_K) => "gemmf_q6_k",
         (Kind::GemvId, T::F32) => "gemv_id_f32",
         (Kind::GemvId, T::F16) => "gemv_id_f16",
         (Kind::GemvId, T::Q4_0) => "gemv_id_q4_0",
@@ -436,6 +447,13 @@ fn kernel_name(kind: Kind, dtype: GgmlType) -> Result<&'static str> {
         (Kind::GemmId, T::Q4_K) => "gemm_id_q4_k",
         (Kind::GemmId, T::Q5_K) => "gemm_id_q5_k",
         (Kind::GemmId, T::Q6_K) => "gemm_id_q6_k",
+        (Kind::GemmIdF, T::F32) => "gemm_idf_f32",
+        (Kind::GemmIdF, T::F16) => "gemm_idf_f16",
+        (Kind::GemmIdF, T::Q4_0) => "gemm_idf_q4_0",
+        (Kind::GemmIdF, T::Q8_0) => "gemm_idf_q8_0",
+        (Kind::GemmIdF, T::Q4_K) => "gemm_idf_q4_k",
+        (Kind::GemmIdF, T::Q5_K) => "gemm_idf_q5_k",
+        (Kind::GemmIdF, T::Q6_K) => "gemm_idf_q6_k",
         (_, other) => {
             return Err(MetalError::Unsupported(format!(
                 "no Metal kernel for tensor type {other}"
@@ -1128,8 +1146,13 @@ impl<'a> MetalBackend<'a> {
                 row_bytes: w.row_bytes as u32,
                 accumulate: acc as u32,
             };
+            let kind = if w.cols % GEMM_BK == 0 {
+                Kind::GemmF
+            } else {
+                Kind::Gemm
+            };
             cmd.dispatch(
-                kernel_name(Kind::Gemm, w.dtype)?,
+                kernel_name(kind, w.dtype)?,
                 &[(0, wbuf, w.off), (1, x, x_off), (2, y, 0)],
                 3,
                 &p,
@@ -1721,8 +1744,13 @@ impl<'a> MetalBackend<'a> {
             )
         };
         let gemm_id = |w: &WRef, eb: usize, x: &Buf, xpp: bool, y: &Buf| {
+            let kind = if w.cols % GEMM_BK == 0 {
+                Kind::GemmIdF
+            } else {
+                Kind::GemmId
+            };
             cmd.dispatch(
-                kernel_name(Kind::GemmId, w.dtype)?,
+                kernel_name(kind, w.dtype)?,
                 &[
                     (0, &self.views[w.view], w.off),
                     (1, x, 0),
