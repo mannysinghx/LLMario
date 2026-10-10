@@ -37,6 +37,8 @@ pub const SHADER_SOURCE: &str = concat!(
     include_str!("shaders/attn_prefill.metal"),
     "\n",
     include_str!("shaders/moe.metal"),
+    "\n",
+    include_str!("shaders/gdn.metal"),
 );
 
 /// Every kernel the backend binds, by `host_name`.
@@ -108,6 +110,9 @@ pub const KERNELS: &[&str] = &[
     "scale_inplace",
     "softcap",
     "rms_norm_add",
+    "attn_gate",
+    "gdn_conv_silu_k4",
+    "gdn_scan_128",
     "add",
     "add_bias",
     "gemv_id_f32",
@@ -208,10 +213,14 @@ pub struct Gpu {
     device: Retained<Device>,
     queue: Retained<Queue>,
     pipelines: HashMap<&'static str, Retained<Pso>>,
-    /// Residency sets kept alive for the queue (macOS 15+; empty when unsupported).
     /// Residency sets kept alive for the queue, by owner id (several backends can share the
     /// process-wide device, and they are created and dropped in any order).
     residency: Mutex<Vec<(u64, ResidencySet)>>,
+    /// Residency sets attached to the queue right now (static and dynamic). Metal aborts the
+    /// process past [`MAX_QUEUE_RESIDENCY_SETS`], so no new set is attached near it: weights and
+    /// scratch are bound directly (resident anyway), and the KV blocks fall back to being
+    /// declared on each command encoder.
+    attached: Arc<std::sync::atomic::AtomicUsize>,
     pub info: DeviceInfo,
     pub max_buffer_length: usize,
     pub page_size: usize,
@@ -225,6 +234,10 @@ unsafe impl Sync for Gpu {}
 pub struct ResidencySet {
     raw: Retained<ProtocolObject<dyn MTLResidencySet>>,
 }
+
+/// Metal's limit is 32 residency sets per command queue ("command queue residency set limit of
+/// 32 exceeded" is a failed assertion that aborts); keep a margin.
+pub const MAX_QUEUE_RESIDENCY_SETS: usize = 28;
 
 static NEXT_RESIDENCY_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
@@ -352,6 +365,7 @@ impl Gpu {
             queue,
             pipelines,
             residency: Mutex::new(Vec::new()),
+            attached: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             info,
         })
     }
@@ -407,7 +421,7 @@ impl Gpu {
 
     /// Put `bufs` in a residency set attached to the queue (macOS 15+); no-op elsewhere.
     pub fn make_resident(&self, owner: u64, label: &str, bufs: &[&Buf]) -> bool {
-        if !self.info.residency_sets || bufs.is_empty() {
+        if !self.info.residency_sets || bufs.is_empty() || !self.reserve_set_slot() {
             return false;
         }
         let desc = MTLResidencySetDescriptor::new();
@@ -418,6 +432,7 @@ impl Gpu {
             Ok(s) => s,
             Err(e) => {
                 tracing::warn!(error = %ns_err(&e), "residency set creation failed");
+                self.release_set_slot();
                 return false;
             }
         };
@@ -438,7 +453,7 @@ impl Gpu {
     /// only through address tables). `None` where residency sets are unsupported; then the
     /// backend declares the buffers on each command encoder instead (`Cmd::use_indirect`).
     pub fn dynamic_residency(&self, label: &str) -> Option<DynResidency> {
-        if !self.info.residency_sets {
+        if !self.info.residency_sets || !self.reserve_set_slot() {
             return None;
         }
         let desc = MTLResidencySetDescriptor::new();
@@ -447,6 +462,7 @@ impl Gpu {
             Ok(s) => s,
             Err(e) => {
                 tracing::warn!(error = %ns_err(&e), "residency set creation failed");
+                self.release_set_slot();
                 return None;
             }
         };
@@ -456,8 +472,29 @@ impl Gpu {
         Some(DynResidency {
             raw: set,
             queue: self.queue.clone(),
+            attached: self.attached.clone(),
             dirty: false,
         })
+    }
+
+    /// Claim room for one more residency set on the queue; `false` near Metal's limit.
+    fn reserve_set_slot(&self) -> bool {
+        use std::sync::atomic::Ordering;
+        let ok = self
+            .attached
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| {
+                (n < MAX_QUEUE_RESIDENCY_SETS).then_some(n + 1)
+            })
+            .is_ok();
+        if !ok {
+            tracing::debug!("queue residency set limit reached; buffers are declared per command");
+        }
+        ok
+    }
+
+    fn release_set_slot(&self) {
+        self.attached
+            .fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
     }
 
     /// Release the residency sets `owner` created (called on drop; the memory stays mapped).
@@ -467,6 +504,7 @@ impl Gpu {
             if *o == owner {
                 self.queue.removeResidencySet(&s.raw);
                 s.raw.endResidency();
+                self.release_set_slot();
                 false
             } else {
                 true
@@ -540,6 +578,7 @@ impl OpenCmd {
 pub struct DynResidency {
     raw: Retained<ProtocolObject<dyn MTLResidencySet>>,
     queue: Retained<Queue>,
+    attached: Arc<std::sync::atomic::AtomicUsize>,
     dirty: bool,
 }
 
@@ -571,6 +610,8 @@ impl Drop for DynResidency {
     fn drop(&mut self) {
         self.queue.removeResidencySet(&self.raw);
         self.raw.endResidency();
+        self.attached
+            .fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
     }
 }
 
