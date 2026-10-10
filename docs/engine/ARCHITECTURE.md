@@ -432,6 +432,11 @@ Algorithm:
    5. placement → move routed experts to host; then whole layers from the input side so the final layers and the
       output head stay on the fastest device;
    6. refuse with a structured error listing the shortfall per device and the nearest configuration that fits.
+
+   As built (2026-10-09): KV precision (step 4) runs before context halving (step 3), because q8_0 is
+   near-lossless while a shorter context removes capability. On unified memory step 5 leaves routed experts to
+   the page cache (streamed from the model file) and keeps a resident share; when the weights alone exceed the
+   budget it runs before context halving, since a shorter context cannot make the weights fit.
 7. **Emit** the plan (JSON and a rendered table), store it under `$LLMARIO_HOME/run/plans/<hash>.json`, and print
    the per-device speed-of-light next to it.
 8. **Verify after load**: record the measured peak (Section 5.2 enforcement column), compare with the plan, log the
@@ -448,7 +453,7 @@ returns it.
 | Weights (default) | read-only shared `mmap` of the model file (`PROT_READ, MAP_SHARED`; `FILE_MAP_READ` on Windows); bounded prefault of the tensors the plan marks hot (`madvise(MADV_WILLNEED)` / `MADV_POPULATE_READ` on Linux ≥ 5.14, `PrefetchVirtualMemory` on Windows); on macOS Metal buffers are created over the mapping with `newBufferWithBytesNoCopy` in shared storage mode (page-aligned views, each ≤ `maxBufferLength`) and kept resident with `MTLResidencySet`s | one mapping per file, shared through the page cache with any other process using the same file; no private copies unless the plan says `private`; `mlock`/`VirtualLock` only for explicitly marked latency-critical regions and only via `MLOCK_ONFAULT` where available |
 | Weights (cold GPU load, discrete GPU) | direct I/O (`O_DIRECT`/`FILE_FLAG_NO_BUFFERING`, io_uring on Linux) straight into device buffers | used only when the plan places a tensor group on a discrete device and the file is cold; measured 10× faster cold loads on NVMe, but slower warm loads on Macs, so never the default on unified memory (Report §Memory governance) |
 | Weights (repacked / in-situ quantised) | a derived cache file under `$LLMARIO_HOME/cache/packed/<model-digest>/<layout-id>.bin`, itself mmapped | generated in the background after first load, only for tensors the prefill GEMM path uses; deletable at any time; counted as `repack_cache_mapped`; never produced as anonymous memory at load (llama.cpp's load-time repack costs 17 → 77 s on Phi-4 and defeats page-cache sharing) |
-| KV arena | one reservation per device at admission: `MTLHeap` (placement heap) on Metal, one device-local `VkDeviceMemory` block per plan on Vulkan, sub-allocated by the engine (sparse binding to grow in fixed chunks where the device supports it; ggml-cuda's reserve-once-grow-in-chunks pattern), one anonymous mapping (`MADV_HUGEPAGE` where available) on CPU | carved into fixed blocks (Section 8.2); freed by index; never grown by reallocation; recurrent state in a separate pool with its own block size |
+| KV arena | one reservation per device at admission: `MTLHeap` (placement heap) on Metal, one device-local `VkDeviceMemory` block per plan on Vulkan, sub-allocated by the engine (sparse binding to grow in fixed chunks where the device supports it; ggml-cuda's reserve-once-grow-in-chunks pattern), one anonymous mapping (`MADV_HUGEPAGE` where available) on CPU | carved into fixed blocks (Section 8.2); freed by index; never grown by reallocation; recurrent state in a separate pool with its own block size. As built (2026-10-09): the block count is fixed by the plan, but each block is backed only while a sequence uses it (an anonymous mapping per block on the CPU, one shared `MTLBuffer` per block on Metal, reached through per-sequence tables of GPU addresses), because Metal charged a buffer's whole size to the process at creation and the up-front reservation held 3.9 GiB for Qwen3-1.7B at 32K before any request |
 | Scratch / activations | static per-graph plan with ggml-alloc-style lifetimes (best-fit over free blocks, in-place reuse only for a whitelisted op set, inputs never overwritten, outputs never freed), reserved once per graph shape from the same heap/arena family | the plan's scratch number is exact because it is the allocator's own simulation |
 | Caches | size-bucketed buffer cache with an explicit byte limit from the plan, purged on pressure; prompt cache (RAM) with a byte limit; grammar cache with an entry limit | nothing is "bounded only by the memory limit" |
 | Small objects | `mimalloc` (MIT) as the global allocator for metadata, strings, JSON, tokens | never for weights, KV or scratch, which bypass `malloc` entirely so they can be aligned, locked and accounted individually |
@@ -849,6 +854,13 @@ pays off whenever `bytes / disk_bandwidth < prefill_time`, true on most consumer
 ≥ 16K tokens (a 27B at 100K context went from > 1 minute to ≈ 0.2 s per message with slot restore; 1–4.4 GB per
 session). Persistence is a setting (default: RAM tier on, SSD tier on for the desktop app, off for `serve` unless
 enabled) and plaintext KV never leaves the app data directory (KV files are invertible to prompts).
+
+As built (2026-10-09): the SSD tier writes a slot's state when it is about to be dropped (another request takes
+the slot, or the pool is full), not at every turn end. Files carry a model key (engine version, tensor table,
+sampled weight bytes) and a layout fingerprint (KV types, block size, layer geometry); there is no per-client
+salt, because the engine serves one local user on loopback. Window and recurrent caches are restored only when
+the whole saved state is a prefix of the prompt. Turn-end checkpoints and a RAM tier beyond the idle slots are
+not built yet.
 
 ### 8.7 Context handling
 
