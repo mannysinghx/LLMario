@@ -24,8 +24,8 @@ Windows; LLMario's adapter reports it unavailable there and models run on llama.
 | Criterion | Target | Measured | Status |
 |---|---|---|---|
 | Greedy golden match vs llama.cpp | identical first 16 characters on the fixture prompts | 30 of 30 comparisons (five models × three prompts × CPU and `auto`) | pass (test `crates/engine/bin/tests/llama_cpp_golden.rs`; details below) |
-| Decode ≥ 0.6 × roofline | 546 GB/s ÷ 1.1 GB/token ≈ 496 tok/s roofline → ≥ 298 tok/s | 68–97 tok/s (NEON int8 kernels, 12 threads, 512 tokens in the cache) | not yet. Correction (2026-10-10): this row used to say the engine beats llama.cpp's CPU path by 1.7×, against a 36.7 tok/s baseline that understated llama.cpp. Re-measured strictly on the CPU, llama.cpp decodes 82–117 tok/s, so the engine is 17–27 % slower on this dense model (and faster on Qwen3 MoE, see M4) |
-| Prefill ≥ 0.7 × llama.cpp CPU | ≥ 0.7 × 263–300 tok/s (pp512) | 221–248 tok/s | pass (0.75–0.86×; llama.cpp's CPU prefill uses Apple's Accelerate BLAS, which this engine does not use) |
+| Decode ≥ 0.6 × roofline | 546 GB/s ÷ 1.1 GB/token ≈ 496 tok/s roofline → ≥ 298 tok/s | 109–113 tok/s (NEON int8 kernels, 12 threads, 512 tokens in the cache; 68–97 before the attention fixes below) | not yet against the roofline; against llama.cpp's CPU path (117–126 tok/s, strictly on the CPU) the engine is at 0.89–0.96×. Correction (2026-10-10): this row used to say the engine beats llama.cpp's CPU path by 1.7×, against a 36.7 tok/s baseline that understated llama.cpp |
+| Prefill ≥ 0.7 × llama.cpp CPU | ≥ 0.7 × 278–309 tok/s (pp512) | 270–277 tok/s | pass (0.87–0.99×; llama.cpp's CPU prefill uses Apple's Accelerate BLAS, which this engine does not use) |
 | Plan bound | measured ≤ planned | 1.1 GiB ≤ 3.1 GiB | pass |
 | Plan tightness | planned ≤ 1.15 × measured | 2.84× | fail (expected: KV reserved but untouched; revisit with the arena in M3) |
 | Warm load ≤ 1.2 × llama.cpp | — | 0.05 s load + warm-up | pass |
@@ -152,6 +152,15 @@ weight tile dequantised before the barrier). At Qwen3-1.7B's shapes it went from
 1,360–1,387 (1,624–1,627, the expert GEMM ported too). Greedy parity unchanged on all five models.
 GEMM is still 63–95 % of prompt time; the DeltaNet scan is 23 % on the 0.8B (token by token).
 
+CPU attention (2026-10-10): the score dot product was one running sum (128 dependent adds per key
+and head, which the compiler may not reorder) and is now 16 independent lanes; and a decode step's
+8 (row, KV head) tasks on 12 threads used to take no key split (`12 / 8 = 1`), leaving 4 threads
+idle, now each task's keys are cut so every thread gets two items. Qwen3-1.7B on 12 threads: decode
+after a 512-token prompt 92–95 → 109–113 tok/s (llama.cpp strictly on the CPU: 117–126), a
+1,500-token decode 77–79 → 99–100 tok/s average, 512-token prefill 236–250 → 270–277 (llama.cpp
+with Accelerate: 278–309). Qwen3.5-9B: decode 34–35 vs llama.cpp 27–29, prefill 55–57 vs 68–71;
+Qwen3-Coder-30B-A3B: decode 50–54, prefill 82–86 vs 96–99. CPU greedy parity unchanged (15 of 15).
+
 CPU decode also got faster for every model (Qwen3-1.7B: 91.6–97.9 vs 70.6–72.7 tok/s, 12 threads,
 interleaved A/B against `main`): decode attention splits a task's keys across threads when there
 are fewer (row, KV head) tasks than threads, and the thread pool hands work over with less
@@ -189,7 +198,8 @@ waiting. With the paged cache Metal prefill is unchanged and decode is about 2 %
   prefix reuse help them only when the whole saved state is a prefix of the next prompt; turn-end
   checkpoints (Architecture §8.6) are not built yet.
 - CPU prefill at 4K tokens is 0.69 × llama.cpp's Accelerate-backed CPU path (84 vs 122 tok/s).
-- CPU decode on dense models is 17–27 % behind llama.cpp's CPU path (Qwen3-1.7B, 2026-10-10).
+- CPU decode on dense models is 4–11 % behind llama.cpp's CPU path (Qwen3-1.7B, after the attention
+  fixes of 2026-10-10; it was 17–27 %); the Qwen3.5 hybrid decodes faster than llama.cpp on the CPU.
 - Metal is verified on Qwen3, SmolLM3, Qwen3 MoE, Gemma 4 and Qwen3.5. It accepts the other
   attention-only families (llama, mistral3, qwen2) but has not been run on them. Its DeltaNet
   kernels cover 128-wide heads and a 4-tap conv (Qwen3.5's geometry); other hybrids are refused.
