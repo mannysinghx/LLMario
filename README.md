@@ -427,7 +427,7 @@ extra_args = []
 |---|---|---|
 | macOS, Apple Silicon | MLX-LM | ✅ validated (M4 Max, macOS 27) |
 | macOS, Apple Silicon | llama.cpp (Metal) | ✅ validated (build 11146) |
-| macOS, Apple Silicon (CPU and Metal) | LLMario engine (native, preview) | 🟡 preview: greedy output identical to llama.cpp on five models, full chat through the app's gateway; 76–92 % less memory than llama.cpp for conversations that do not fill the context (Gemma 4 12B and Qwen3.5 9B: 37–63 % less); still slower than llama.cpp on dense models (Metal decode 0.91–0.95×, CPU decode 0.73–0.83×); Qwen3 MoE decodes as fast as llama.cpp on Metal and faster on the CPU (`docs/engine/STATUS.md`) |
+| macOS, Apple Silicon (CPU and Metal) | LLMario engine (native, preview) | 🟡 preview: greedy output identical to llama.cpp on five models, full chat through the app's gateway; 76–92 % less memory than llama.cpp for conversations that do not fill the context (Gemma 4 12B and Qwen3.5 9B: 37–63 % less); still slower than llama.cpp on dense models (Metal decode 0.91–0.95×, CPU decode 0.89–0.96×); Qwen3 MoE decodes as fast as llama.cpp on Metal and faster on the CPU (`docs/engine/STATUS.md`) |
 | Linux, CPU | LLMario engine (native, preview) | 🔬 end-to-end serve test passes in CI (Ubuntu, x86-64); no performance numbers yet. Not supported on Windows |
 | Linux x86_64 + NVIDIA | llama.cpp (CUDA) | 🔬 implemented: `nvidia-smi` detection, hybrid CPU/GPU offload planning. Unvalidated |
 | Linux / macOS, CPU only | llama.cpp | 🔬 implemented, unvalidated |
