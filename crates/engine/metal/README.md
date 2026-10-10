@@ -2,9 +2,11 @@
 
 Metal GPU backend of the native engine (Architecture §7.4, milestone M2). It implements
 `llmario_engine_model::ModelBackend` for the dense GQA families (`llama`, `mistral3`, `qwen2`,
-`qwen3`, `smollm3`) and is selected by `--device auto|metal` in `llmario-engine serve` and
-`raw-run`. Hybrid families (Gated DeltaNet) are refused with `MetalError::Unsupported`; with
-`--device auto` the server logs the reason and loads the CPU backend instead.
+`qwen3`, `smollm3`) and the routed mixture-of-experts family (`qwen3moe`), and is selected by
+`--device auto|metal` in `llmario-engine serve` and `raw-run`. Hybrid families (Gated DeltaNet) and
+Gemma 4 are refused with `MetalError::Unsupported`; with `--device auto` the server logs the reason
+and loads the CPU backend instead. The server also keeps a plan that streams MoE experts from disk
+on the CPU, because this backend keeps every weight resident.
 
 Open-source-only: the crate talks to the OS Metal framework through `objc2-metal` /
 `objc2-foundation` / `objc2` (Zlib OR Apache-2.0 OR MIT). Kernels are MSL source embedded in the
@@ -39,6 +41,10 @@ The ledger rows for the Metal device: `DeviceId::Gpu(0)` carries `kv_arena_reser
 | `attn_vec_hd{32,64,128,256}_{f16,q8_0}`, `attn_vec_generic_{f16,q8_0}` | Decode attention: one threadgroup per (query, head, split), each query reading its own sequence's blocks; each simdgroup walks a contiguous key range eight keys at a time with an fp32 online softmax; GQA head mapping; split-K across threadgroups for long contexts with `attn_reduce` merging the partials. |
 | `attn_prefill_hd{64,128}_{f16,q8_0}` | Prefill attention with simdgroup matrices, one dispatch per prompt in the batch: 32 queries per threadgroup, 8 per simdgroup; `S = Q·Kᵀ` from the cache (q8_0 tiles dequantised cooperatively into threadgroup memory), causal mask, fp32 online softmax, `O = diag(corr)·O + P·V`. Used from 8 tokens; other head dims use the per-query kernel. |
 | `swiglu`, `add`, `add_bias` | Element-wise (the GEMM path still uses `swiglu`; biases for Qwen2). |
+| `moe_route` | Routed MoE (`qwen3moe`): one simdgroup per row computes the router softmax and picks the top-k experts in descending order (ties to the lower id), weights renormalised like the CPU path. |
+| `gemv_id_<type>`, `gemv_glu_id_<type>` | Expert matvecs for up to 4 rows: one grid row per (row, expert) pair, the expert's matrix found at `expert · expert_bytes` in the 3-D tensor; gate and up fused with SwiGLU. |
+| `moe_group`, `gemm_id_<type>` | Prompts: `moe_group` lists each expert's pairs (threadgroup atomics), then one GEMM grid per expert multiplies its matrix once over the gathered rows and scatters the outputs. |
+| `moe_combine` | `x += Σ_j w_j · out_j` in selection order. |
 
 Block layouts are written from `crates/engine/core/src/dequant.rs`, the scalar reference every
 kernel is tested against.

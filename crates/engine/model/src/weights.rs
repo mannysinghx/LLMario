@@ -59,6 +59,11 @@ impl<'a> ExpertMats<'a> {
     pub fn expert_bytes(&self) -> usize {
         self.rows * self.dtype.row_bytes(self.cols)
     }
+    /// Every expert's matrix as one `(n_expert · rows) × cols` view (expert `e` starts at row
+    /// `e · rows`), for backends that address experts by offset.
+    pub fn all(&self) -> QMat<'a> {
+        QMat::new(self.dtype, self.n_expert * self.rows, self.cols, self.data)
+    }
 }
 
 /// A routed mixture-of-experts FFN: the router and the gate / up / down expert tensors.

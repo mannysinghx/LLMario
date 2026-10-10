@@ -1,7 +1,8 @@
-//! `MetalBackend`: the dense forward pass of `llmario_engine_model::forward` executed with the
-//! Metal kernels. The math (pre-norm, QKV projection with optional biases, per-head QK-norm, RoPE,
-//! GQA attention with fp32 accumulation, SwiGLU, residuals, final norm, output head) is the same
-//! op for op; only the storage (f16 KV cache, shared buffers) and the execution differ.
+//! `MetalBackend`: the forward pass of `llmario_engine_model::forward` executed with the Metal
+//! kernels, for the dense families and the routed mixture-of-experts family (`qwen3moe`). The math
+//! (pre-norm, QKV projection with optional biases, per-head QK-norm, RoPE, GQA attention with fp32
+//! accumulation, SwiGLU or routed SwiGLU experts, residuals, final norm, output head) is the same
+//! op for op; only the storage (paged KV cache, shared buffers) and the execution differ.
 
 use crate::device::{groups, Buf, Cmd, Gpu};
 use crate::kv::{MetalKv, BLOCK_TOKENS};
@@ -40,10 +41,44 @@ struct LayerRefs {
     wk: WRef,
     wv: WRef,
     wo: WRef,
-    w_gate: WRef,
-    w_up: WRef,
-    w_down: WRef,
+    ffn: Ffn,
     c: LayerConsts,
+}
+
+enum Ffn {
+    Dense {
+        gate: WRef,
+        up: WRef,
+        down: WRef,
+    },
+    /// Routed experts: `gate` / `up` / `down` address expert 0 and are `rows` of one expert;
+    /// expert `e` starts `e · expert_bytes` further into the same view.
+    Moe {
+        router: WRef,
+        gate: WRef,
+        up: WRef,
+        down: WRef,
+        gate_expert_bytes: usize,
+        down_expert_bytes: usize,
+    },
+}
+
+/// Buffers of the routed FFN, sized for `n_batch` rows × `k` experts.
+struct MoeScratch {
+    /// `[n][n_expert]` router logits.
+    router: Buf,
+    /// `[n·k]` selected experts (u32) and their weights.
+    sel: Buf,
+    w: Buf,
+    /// `[n·k][n_ff_exp]` gate (then the SwiGLU product) and up rows per pair.
+    gate: Buf,
+    up: Buf,
+    /// `[n·k][d]` expert outputs per pair.
+    out: Buf,
+    /// `[n_expert]` pairs per expert and `[n_expert][cap]` their pair ids (prefill path).
+    counts: Buf,
+    ids: Buf,
+    cap: usize,
 }
 
 /// Activation buffers sized once for `n_batch` tokens.
@@ -62,6 +97,7 @@ struct Scratch {
     /// `(sequence, position)` of each row, `[n_batch][2]` u32.
     tokpos: Buf,
     part: Buf,
+    moe: Option<MoeScratch>,
 }
 
 /// Threadgroup geometry shared with the shaders.
@@ -83,6 +119,12 @@ const ATTN_SPLIT_PAIRS: usize = 64;
 const ATTN_MAX_SPLIT: usize = 16;
 const ATTN_SPLIT_KEYS: usize = 128;
 const ELEM_TG: usize = 256;
+/// Up to this many rows the routed FFN runs one expert matvec per (row, expert) pair; above it,
+/// pairs are grouped by expert and each expert runs one GEMM.
+const MOE_GEMV_MAX_ROWS: usize = 4;
+const MOE_MAX_EXPERTS: usize = 1024;
+const MOE_GROUP_TG: usize = 256;
+const ROUTE_TG: usize = 32;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -167,6 +209,54 @@ struct ElemParams {
     n: u32,
     rows: u32,
 }
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct MoeRouteParams {
+    n_expert: u32,
+    k: u32,
+    norm: u32,
+    pad: u32,
+}
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct GemvIdParams {
+    rows: u32,
+    cols: u32,
+    expert_bytes: u32,
+    k: u32,
+    x_per_pair: u32,
+    pad0: u32,
+    pad1: u32,
+    pad2: u32,
+}
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct MoeGroupParams {
+    n_pairs: u32,
+    n_expert: u32,
+    cap: u32,
+    pad: u32,
+}
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct GemmIdParams {
+    rows: u32,
+    cols: u32,
+    row_bytes: u32,
+    expert_bytes: u32,
+    k: u32,
+    x_per_pair: u32,
+    cap: u32,
+    pad: u32,
+}
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct MoeCombineParams {
+    n: u32,
+    d: u32,
+    k: u32,
+    pad: u32,
+}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Kind {
@@ -175,6 +265,9 @@ enum Kind {
     GemvAcc,
     GemvGlu,
     Gemm,
+    GemvId,
+    GemvGluId,
+    GemmId,
 }
 
 fn kernel_name(kind: Kind, dtype: GgmlType) -> Result<&'static str> {
@@ -215,6 +308,27 @@ fn kernel_name(kind: Kind, dtype: GgmlType) -> Result<&'static str> {
         (Kind::Gemm, T::Q4_K) => "gemm_q4_k",
         (Kind::Gemm, T::Q5_K) => "gemm_q5_k",
         (Kind::Gemm, T::Q6_K) => "gemm_q6_k",
+        (Kind::GemvId, T::F32) => "gemv_id_f32",
+        (Kind::GemvId, T::F16) => "gemv_id_f16",
+        (Kind::GemvId, T::Q4_0) => "gemv_id_q4_0",
+        (Kind::GemvId, T::Q8_0) => "gemv_id_q8_0",
+        (Kind::GemvId, T::Q4_K) => "gemv_id_q4_k",
+        (Kind::GemvId, T::Q5_K) => "gemv_id_q5_k",
+        (Kind::GemvId, T::Q6_K) => "gemv_id_q6_k",
+        (Kind::GemvGluId, T::F32) => "gemv_glu_id_f32",
+        (Kind::GemvGluId, T::F16) => "gemv_glu_id_f16",
+        (Kind::GemvGluId, T::Q4_0) => "gemv_glu_id_q4_0",
+        (Kind::GemvGluId, T::Q8_0) => "gemv_glu_id_q8_0",
+        (Kind::GemvGluId, T::Q4_K) => "gemv_glu_id_q4_k",
+        (Kind::GemvGluId, T::Q5_K) => "gemv_glu_id_q5_k",
+        (Kind::GemvGluId, T::Q6_K) => "gemv_glu_id_q6_k",
+        (Kind::GemmId, T::F32) => "gemm_id_f32",
+        (Kind::GemmId, T::F16) => "gemm_id_f16",
+        (Kind::GemmId, T::Q4_0) => "gemm_id_q4_0",
+        (Kind::GemmId, T::Q8_0) => "gemm_id_q8_0",
+        (Kind::GemmId, T::Q4_K) => "gemm_id_q4_k",
+        (Kind::GemmId, T::Q5_K) => "gemm_id_q5_k",
+        (Kind::GemmId, T::Q6_K) => "gemm_id_q6_k",
         (_, other) => {
             return Err(MetalError::Unsupported(format!(
                 "no Metal kernel for tensor type {other}"
@@ -280,11 +394,13 @@ impl<'a> MetalBackend<'a> {
         let (max_ctx, n_batch, kv_type) = (o.max_ctx, o.n_batch, o.kv_type);
         let gpu = Gpu::get()?;
         let spec = ArchSpec::from_gguf(file)?;
-        if spec.moe.is_some() {
-            return Err(MetalError::Unsupported(format!(
-                "family {:?} (mixture-of-experts layers) is CPU-only in this build",
-                spec.family
-            )));
+        if let Some(m) = &spec.moe {
+            if m.n_expert as usize > MOE_MAX_EXPERTS || m.n_expert_used == 0 {
+                return Err(MetalError::Unsupported(format!(
+                    "{} experts with {} used per token (the Metal router handles up to {MOE_MAX_EXPERTS})",
+                    m.n_expert, m.n_expert_used
+                )));
+            }
         }
         if spec.gdn.is_some() || spec.n_attn_layers() != spec.n_layer {
             return Err(MetalError::Unsupported(format!(
@@ -419,14 +535,35 @@ impl<'a> MetalBackend<'a> {
                 bk: l.bk.as_deref().map(&mut push),
                 bv: l.bv.as_deref().map(&mut push),
             };
+            let ffn = match &l.moe {
+                Some(mw) => {
+                    // Locate each 3-D tensor whole (one view), then address expert 0.
+                    let expert0 = |all: WRef, rows: usize| WRef { rows, ..all };
+                    let (gb, db) = (mw.gate.expert_bytes(), mw.down.expert_bytes());
+                    if gb > u32::MAX as usize || db > u32::MAX as usize {
+                        return Err(MetalError::Unsupported("expert matrix over 4 GiB".into()));
+                    }
+                    Ffn::Moe {
+                        router: locate(&mw.gate_inp)?,
+                        gate: expert0(locate(&mw.gate.all())?, mw.gate.rows),
+                        up: expert0(locate(&mw.up.all())?, mw.up.rows),
+                        down: expert0(locate(&mw.down.all())?, mw.down.rows),
+                        gate_expert_bytes: gb,
+                        down_expert_bytes: db,
+                    }
+                }
+                None => Ffn::Dense {
+                    gate: locate(&l.w_gate)?,
+                    up: locate(&l.w_up)?,
+                    down: locate(&l.w_down)?,
+                },
+            };
             layers.push(LayerRefs {
                 wq: locate(&l.wq)?,
                 wk: locate(&l.wk)?,
                 wv: locate(&l.wv)?,
                 wo: locate(&l.wo)?,
-                w_gate: locate(&l.w_gate)?,
-                w_up: locate(&l.w_up)?,
-                w_down: locate(&l.w_down)?,
+                ffn,
                 c,
             });
         }
@@ -457,33 +594,64 @@ impl<'a> MetalBackend<'a> {
             tokens: gpu.alloc(nb * 4)?,
             tokpos: gpu.alloc(nb * 8)?,
             part: gpu.alloc(ATTN_SPLIT_PAIRS * ATTN_MAX_SPLIT * (hdv + 2) * 4)?,
+            moe: match &spec.moe {
+                Some(m) => {
+                    let (ne, k, ff) = (
+                        m.n_expert as usize,
+                        m.n_expert_used as usize,
+                        m.n_ff_exp as usize,
+                    );
+                    Some(MoeScratch {
+                        router: gpu.alloc(nb * ne * 4)?,
+                        sel: gpu.alloc(nb * k * 4)?,
+                        w: gpu.alloc(nb * k * 4)?,
+                        gate: gpu.alloc(nb * k * ff * 4)?,
+                        up: gpu.alloc(nb * k * ff * 4)?,
+                        out: gpu.alloc(nb * k * d * 4)?,
+                        counts: gpu.alloc(ne * 4)?,
+                        ids: gpu.alloc(ne * nb * 4)?,
+                        cap: nb,
+                    })
+                }
+                None => None,
+            },
         };
-        let scratch_bytes: u64 = [
-            &s.x,
-            &s.h,
-            &s.q,
-            &s.k,
-            &s.v,
-            &s.attn,
-            &s.gate,
-            &s.up,
-            &s.ffn,
-            &s.logits,
-            &s.tokens,
-            &s.tokpos,
-            &s.part,
-            &consts_buf,
-        ]
-        .iter()
-        .map(|b| b.len() as u64)
-        .sum();
+        let moe_bufs: Vec<&Buf> = s
+            .moe
+            .iter()
+            .flat_map(|m| {
+                [
+                    &m.router, &m.sel, &m.w, &m.gate, &m.up, &m.out, &m.counts, &m.ids,
+                ]
+            })
+            .collect();
+        let scratch_bytes: u64 = moe_bufs.iter().map(|b| b.len() as u64).sum::<u64>()
+            + [
+                &s.x,
+                &s.h,
+                &s.q,
+                &s.k,
+                &s.v,
+                &s.attn,
+                &s.gate,
+                &s.up,
+                &s.ffn,
+                &s.logits,
+                &s.tokens,
+                &s.tokpos,
+                &s.part,
+                &consts_buf,
+            ]
+            .iter()
+            .map(|b| b.len() as u64)
+            .sum::<u64>();
         let reserved = scratch_bytes + kv.reserved_bytes();
 
         // --- Residency (macOS 15+).
         let residency_owner = crate::device::residency_owner();
         let weight_refs: Vec<&Buf> = views.iter().collect();
         let wired = gpu.make_resident(residency_owner, "llmario-weights", &weight_refs);
-        let kv_refs: Vec<&Buf> = vec![
+        let mut kv_refs: Vec<&Buf> = vec![
             &kv.table,
             &s.x,
             &s.h,
@@ -500,6 +668,7 @@ impl<'a> MetalBackend<'a> {
             &s.part,
             &consts_buf,
         ];
+        kv_refs.extend(moe_bufs.iter().copied());
         gpu.make_resident(residency_owner, "llmario-scratch", &kv_refs);
         tracing::info!(
             device = %gpu.info.name,
@@ -951,18 +1120,203 @@ impl<'a> MetalBackend<'a> {
         let s = &self.s;
         self.rms_norm(cmd, &s.x, 0, layer.c.ffn_norm, &s.h, n, d)?;
         cmd.barrier();
-        if n == 1 && layer.w_gate.dtype == layer.w_up.dtype {
-            self.project_glu(cmd, &layer.w_gate, &layer.w_up, &s.h, &s.gate)?;
+        let (gate, up, down) = match &layer.ffn {
+            Ffn::Dense { gate, up, down } => (gate, up, down),
+            Ffn::Moe { .. } => return self.moe_block(cmd, &layer.ffn, n),
+        };
+        if n == 1 && gate.dtype == up.dtype {
+            self.project_glu(cmd, gate, up, &s.h, &s.gate)?;
             cmd.barrier();
         } else {
-            self.project(cmd, &layer.w_gate, &s.h, 0, n, &s.gate, false)?;
-            self.project(cmd, &layer.w_up, &s.h, 0, n, &s.up, false)?;
+            self.project(cmd, gate, &s.h, 0, n, &s.gate, false)?;
+            self.project(cmd, up, &s.h, 0, n, &s.up, false)?;
             cmd.barrier();
             self.elem(cmd, "swiglu", &s.gate, &s.up, n * n_ff)?;
             cmd.barrier();
         }
         // x += Wd gate
-        self.project(cmd, &layer.w_down, &s.gate, 0, n, &s.x, true)?;
+        self.project(cmd, down, &s.gate, 0, n, &s.x, true)?;
+        cmd.barrier();
+        Ok(())
+    }
+
+    /// `x += MoE(h)` for `n` rows (`h` holds the normed residual): router, top-k selection,
+    /// expert SwiGLU per (row, expert) pair, weighted sum in selection order.
+    fn moe_block(&self, cmd: &Cmd, ffn: &Ffn, n: usize) -> Result<()> {
+        let Ffn::Moe {
+            router,
+            gate,
+            up,
+            down,
+            gate_expert_bytes,
+            down_expert_bytes,
+        } = ffn
+        else {
+            unreachable!("moe_block on a dense layer")
+        };
+        let m = self.spec.moe.as_ref().expect("MoE spec");
+        let ms = self.s.moe.as_ref().expect("MoE scratch");
+        let s = &self.s;
+        let d = self.spec.d_model as usize;
+        let (ne, k, ff) = (
+            m.n_expert as usize,
+            m.n_expert_used as usize,
+            m.n_ff_exp as usize,
+        );
+        let pairs = n * k;
+
+        self.project(cmd, router, &s.h, 0, n, &ms.router, false)?;
+        cmd.barrier();
+        let rp = MoeRouteParams {
+            n_expert: ne as u32,
+            k: k as u32,
+            norm: m.norm_topk as u32,
+            pad: 0,
+        };
+        cmd.dispatch(
+            "moe_route",
+            &[(0, &ms.router, 0), (1, &ms.sel, 0), (2, &ms.w, 0)],
+            3,
+            &rp,
+            (n, 1, 1),
+            (ROUTE_TG, 1, 1),
+        )?;
+        cmd.barrier();
+
+        let gv = |w: &WRef, eb: usize, x_per_pair: bool| GemvIdParams {
+            rows: w.rows as u32,
+            cols: w.cols as u32,
+            expert_bytes: eb as u32,
+            k: k as u32,
+            x_per_pair: x_per_pair as u32,
+            pad0: 0,
+            pad1: 0,
+            pad2: 0,
+        };
+        let gm = |w: &WRef, eb: usize, x_per_pair: bool| GemmIdParams {
+            rows: w.rows as u32,
+            cols: w.cols as u32,
+            row_bytes: w.row_bytes as u32,
+            expert_bytes: eb as u32,
+            k: k as u32,
+            x_per_pair: x_per_pair as u32,
+            cap: ms.cap as u32,
+            pad: 0,
+        };
+        let gemv_id = |kind: Kind, w: &WRef, w2: &WRef, eb: usize, x: &Buf, xpp: bool, y: &Buf| {
+            cmd.dispatch(
+                kernel_name(kind, w.dtype)?,
+                &[
+                    (0, &self.views[w.view], w.off),
+                    (1, x, 0),
+                    (2, y, 0),
+                    (4, &self.views[w2.view], w2.off),
+                    (5, &ms.sel, 0),
+                ],
+                3,
+                &gv(w, eb, xpp),
+                (groups(w.rows, GEMV_ROWS_PER_TG), pairs, 1),
+                (GEMV_NSG * 32, 1, 1),
+            )
+        };
+        let gemm_id = |w: &WRef, eb: usize, x: &Buf, xpp: bool, y: &Buf| {
+            cmd.dispatch(
+                kernel_name(Kind::GemmId, w.dtype)?,
+                &[
+                    (0, &self.views[w.view], w.off),
+                    (1, x, 0),
+                    (2, y, 0),
+                    (4, &ms.counts, 0),
+                    (5, &ms.ids, 0),
+                ],
+                3,
+                &gm(w, eb, xpp),
+                (groups(n, GEMM_BN), groups(w.rows, GEMM_BM), ne),
+                (128, 1, 1),
+            )
+        };
+
+        if n <= MOE_GEMV_MAX_ROWS {
+            if gate.dtype == up.dtype {
+                gemv_id(
+                    Kind::GemvGluId,
+                    gate,
+                    up,
+                    *gate_expert_bytes,
+                    &s.h,
+                    false,
+                    &ms.gate,
+                )?;
+            } else {
+                gemv_id(
+                    Kind::GemvId,
+                    gate,
+                    gate,
+                    *gate_expert_bytes,
+                    &s.h,
+                    false,
+                    &ms.gate,
+                )?;
+                gemv_id(
+                    Kind::GemvId,
+                    up,
+                    up,
+                    *gate_expert_bytes,
+                    &s.h,
+                    false,
+                    &ms.up,
+                )?;
+                cmd.barrier();
+                self.elem(cmd, "swiglu", &ms.gate, &ms.up, pairs * ff)?;
+            }
+            cmd.barrier();
+            gemv_id(
+                Kind::GemvId,
+                down,
+                down,
+                *down_expert_bytes,
+                &ms.gate,
+                true,
+                &ms.out,
+            )?;
+        } else {
+            let gp = MoeGroupParams {
+                n_pairs: pairs as u32,
+                n_expert: ne as u32,
+                cap: ms.cap as u32,
+                pad: 0,
+            };
+            cmd.dispatch(
+                "moe_group",
+                &[(0, &ms.sel, 0), (1, &ms.counts, 0), (2, &ms.ids, 0)],
+                3,
+                &gp,
+                (1, 1, 1),
+                (MOE_GROUP_TG, 1, 1),
+            )?;
+            cmd.barrier();
+            gemm_id(gate, *gate_expert_bytes, &s.h, false, &ms.gate)?;
+            gemm_id(up, *gate_expert_bytes, &s.h, false, &ms.up)?;
+            cmd.barrier();
+            self.elem(cmd, "swiglu", &ms.gate, &ms.up, pairs * ff)?;
+            cmd.barrier();
+            gemm_id(down, *down_expert_bytes, &ms.gate, true, &ms.out)?;
+        }
+        cmd.barrier();
+        let cp = MoeCombineParams {
+            n: n as u32,
+            d: d as u32,
+            k: k as u32,
+            pad: 0,
+        };
+        cmd.dispatch(
+            "moe_combine",
+            &[(0, &s.x, 0), (1, &ms.out, 0), (2, &ms.w, 0)],
+            3,
+            &cp,
+            (groups(n * d, ELEM_TG), 1, 1),
+            (ELEM_TG, 1, 1),
+        )?;
         cmd.barrier();
         Ok(())
     }

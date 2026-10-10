@@ -357,6 +357,12 @@ pub fn plan(
 
 impl Plan {
     /// The KV element type the plan settled on.
+    /// Bytes of routed experts the plan leaves on disk (read through the page cache when a token
+    /// needs them); 0 when every weight is planned resident.
+    pub fn weights_streamed(&self) -> u64 {
+        self.devices.iter().map(|d| d.weights_streamed).sum()
+    }
+
     pub fn kv_type(&self) -> KvType {
         KvType::parse(&self.kv_dtype).unwrap_or_default()
     }
