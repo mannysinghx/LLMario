@@ -210,13 +210,24 @@ pub struct MemoryPlan {
     pub comfortable_bytes: Option<u64>,
     /// Fits the budget but is above the comfortable target: other apps may be squeezed.
     pub tight: bool,
+    /// LLMario's own engine with a mixture-of-experts model that exceeds the budget: these expert
+    /// bytes are not planned to stay in memory and are read from disk when a token needs them.
+    pub streamed_expert_bytes: u64,
     pub notes: Vec<String>,
 }
 
 impl MemoryPlan {
     pub fn explain(&self) -> String {
+        let streamed = if self.streamed_expert_bytes > 0 {
+            format!(
+                ", of which {} of expert weights stream from disk",
+                fmt_bytes(self.streamed_expert_bytes)
+            )
+        } else {
+            String::new()
+        };
         format!(
-            "needs ~{} (weights {} + KV cache {} for {} tokens + overhead {}); budget {} ({})",
+            "needs ~{} (weights {} + KV cache {} for {} tokens + overhead {}{streamed}); budget {} ({})",
             fmt_bytes(self.total_bytes),
             fmt_bytes(self.weights_bytes),
             fmt_bytes(self.kv_cache_bytes),
@@ -409,7 +420,20 @@ pub fn estimate(
     let offload =
         backend == BackendKind::LlamaCpp && cfg.backends.llamacpp.offload == Offload::Auto;
     let mut cpu_moe_layers = None;
+    // LLMario's own engine runs mixture-of-experts models on the CPU from mapped system memory,
+    // so the GPU working-set limit does not apply to them.
+    let native_moe =
+        backend == BackendKind::Native && model.shape.as_ref().is_some_and(|s| s.expert_bytes > 0);
     let (mut budget, mut source, mut gpu_layers) = match gpu {
+        Some(_) if native_moe => (
+            ram_budget,
+            format!(
+                "system RAM {} − headroom {} (LLMario's engine runs mixture-of-experts models on the CPU)",
+                fmt_bytes(hw.total_memory_bytes),
+                fmt_bytes(headroom)
+            ),
+            Some(0),
+        ),
         Some(g) if g.api == GpuApi::Metal => {
             let detected = g.memory_total_bytes.unwrap_or(ram_budget);
             let ws = gpu_cap.map_or(detected, |c| c.min(detected));
@@ -518,16 +542,38 @@ pub fn estimate(
         gpu_layers = Some(0);
     }
 
-    let fits = total <= budget;
+    let mut fits = total <= budget;
+    // Last resort for LLMario's engine with a mixture-of-experts model: plan the dense weights
+    // and a resident share of the experts (a quarter, or four tokens' worth of active experts if
+    // that is more) and read the rest from disk when needed — the engine's planner applies the
+    // same rule (`ExpertsStreamed`).
+    let mut streamed_expert_bytes = 0;
+    if !fits && native_moe {
+        let s = model.shape.as_ref().expect("native_moe has a shape");
+        let share = (s.expert_bytes / 4)
+            .max(4 * s.active_expert_bytes)
+            .min(s.expert_bytes);
+        let streamed = s.expert_bytes - share;
+        if streamed > 0 && total - streamed <= budget {
+            fits = true;
+            streamed_expert_bytes = streamed;
+            notes.push(format!(
+                "streams experts: {} of the {} of expert weights stay in memory, the rest is read from disk when a token needs it (slower replies)",
+                fmt_bytes(share),
+                fmt_bytes(s.expert_bytes)
+            ));
+        }
+    }
+    let resident_total = total - streamed_expert_bytes;
     let max_ctx = {
         // Only full-attention layers grow with the context; the rest is counted at its cap.
-        let avail = budget.saturating_sub(weights + overhead + kvp.bounded);
+        let avail = budget.saturating_sub(weights - streamed_expert_bytes + overhead + kvp.bounded);
         let per_slot_tokens = avail / (kv_per_token.max(1) * profile.parallel.max(1) as u64);
         let c = (per_slot_tokens / 256 * 256).min(u32::MAX as u64) as u32;
         (c > 0).then_some(c)
     };
     let comfortable = comfortable_bytes(hw);
-    let tight = fits && comfortable.is_some_and(|c| total > c);
+    let tight = fits && comfortable.is_some_and(|c| resident_total > c);
     if let (true, Some(c)) = (tight, comfortable) {
         notes.push(format!(
             "tight: above the comfortable {} for a computer with {} of memory; close other apps before loading",
@@ -535,7 +581,7 @@ pub fn estimate(
             fmt_bytes(hw.total_memory_bytes)
         ));
     }
-    if hw.available_memory_bytes + reserved_by_others < total && fits {
+    if hw.available_memory_bytes + reserved_by_others < resident_total && fits {
         notes.push(format!(
             "only {} is currently available; the OS may compress or swap other apps while loading",
             fmt_bytes(hw.available_memory_bytes)
@@ -557,6 +603,7 @@ pub fn estimate(
         max_ctx_per_slot_that_fits: max_ctx,
         comfortable_bytes: comfortable,
         tight,
+        streamed_expert_bytes,
         notes,
     }
 }
@@ -960,6 +1007,43 @@ pub(crate) mod tests {
         let mut gpu = metal(0);
         gpu.memory_total_bytes = Some(16 * GIB * 2 / 3);
         hw(16, Some(gpu))
+    }
+
+    /// LLMario's own engine runs mixture-of-experts models on the CPU: on a 16 GB Mac it budgets
+    /// them against RAM (not the GPU limit), and a model larger than RAM streams its experts.
+    #[test]
+    fn native_engine_moe_on_a_16_gb_mac() {
+        let h = mac16();
+        let p = latency();
+        let cfg = Config::default();
+        // An 11.3 GiB MoE: over the GPU limit (refused for llama.cpp without offload), within RAM
+        // for the native engine, nothing streamed.
+        let m = moe_model();
+        let ll = estimate(&m, &p, BackendKind::LlamaCpp, &h, &cfg, 256 * MIB_, 0);
+        assert!(!ll.fits);
+        let nat = estimate(&m, &p, BackendKind::Native, &h, &cfg, 256 * MIB_, 0);
+        assert!(nat.fits, "{}", nat.explain());
+        assert_eq!(nat.streamed_expert_bytes, 0);
+        assert!(nat.budget_source.contains("mixture-of-experts"));
+        // Qwen3-Coder-30B-A3B (17.3 GiB, 17.55 GB of experts, 1.10 GB active per token): larger
+        // than RAM, so a quarter of the experts stay planned and the rest stream.
+        let mut big = moe_model();
+        let w = 18_556_689_568u64;
+        big.files[0].size = w;
+        big.size_bytes = w;
+        let sh = big.shape.as_mut().unwrap();
+        sh.expert_bytes = 17_553_162_240;
+        sh.active_expert_bytes = 1_097_072_640;
+        let nat = estimate(&big, &p, BackendKind::Native, &h, &cfg, 256 * MIB_, 0);
+        assert!(nat.fits, "{}", nat.explain());
+        assert_eq!(
+            nat.streamed_expert_bytes,
+            17_553_162_240 - 17_553_162_240 / 4
+        );
+        assert!(nat.notes.iter().any(|n| n.contains("streams experts")));
+        // llama.cpp without offload still refuses it.
+        let ll = estimate(&big, &p, BackendKind::LlamaCpp, &h, &cfg, 256 * MIB_, 0);
+        assert!(!ll.fits);
     }
 
     /// Phase 7: with `offload = "auto"`, a model over the GPU limit but within RAM keeps some
