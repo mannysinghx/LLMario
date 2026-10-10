@@ -449,8 +449,14 @@ fn raw_run(
         Device::Auto => llmario_engine_server::engine::metal_available(),
     };
     let n_batch = prompt.len().max(1);
+    // Expert streaming for measurements (the server turns it on when its plan streams
+    // experts): LLMARIO_EXPERT_PREFETCH=1.
     let cpu_opts = CpuOptions {
         kv_type,
+        stream: llmario_engine_model::StreamOptions {
+            prefetch: std::env::var("LLMARIO_EXPERT_PREFETCH").is_ok_and(|v| v == "1"),
+            sim_resident: None,
+        },
         ..CpuOptions::new(threads, ctx, n_batch)
     };
     let mut backend: Box<dyn ModelBackend> = match (use_metal, device) {

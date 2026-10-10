@@ -2631,6 +2631,7 @@ dependencies = [
  "llmario-engine-cpu",
  "llmario-engine-formats",
  "llmario-engine-kv",
+ "memmap2",
  "serde",
  "tempfile",
  "thiserror 2.0.21",

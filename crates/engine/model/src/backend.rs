@@ -118,6 +118,8 @@ pub struct CpuOptions {
     pub kv_type: KvType,
     /// Positions the shared pool holds across slots (`None`: every slot can hold `max_ctx`).
     pub pool_tokens: Option<usize>,
+    /// Routed-expert reads for MoE models whose experts stream from disk (see `stream.rs`).
+    pub stream: crate::StreamOptions,
 }
 
 impl CpuOptions {
@@ -129,6 +131,7 @@ impl CpuOptions {
             n_seqs: 1,
             kv_type: KvType::F16,
             pool_tokens: None,
+            stream: crate::StreamOptions::default(),
         }
     }
 
@@ -197,7 +200,18 @@ impl<'a> CpuBackend<'a> {
         };
         let reserved = o.reserved_bytes(spec);
         let kv = KvCache::with_options(spec, o.kv_options());
-        let scratch = Scratch::with_seqs(spec, n_batch, n_seqs);
+        let mut scratch = Scratch::with_seqs(spec, n_batch, n_seqs);
+        if let (Some(ms), Some(m)) = (scratch.moe.as_mut(), spec.moe.as_ref()) {
+            let mut stream = o.stream;
+            // Test hook: simulate a page cache that holds only this share of the experts' bytes.
+            if let Some(f) = std::env::var("LLMARIO_SIM_EXPERT_RESIDENT")
+                .ok()
+                .and_then(|v| v.parse::<f32>().ok())
+            {
+                stream.sim_resident = Some(f);
+            }
+            ms.set_stream(stream, file, m, &model.weights.layers);
+        }
         Ok(CpuBackend {
             pool: ThreadPool::new(o.threads.max(1)),
             model,
@@ -214,6 +228,20 @@ impl<'a> CpuBackend<'a> {
 
     pub fn kv(&self) -> &KvCache {
         &self.kv
+    }
+}
+
+impl Drop for CpuBackend<'_> {
+    fn drop(&mut self) {
+        if let Some(sim) = self.scratch.moe.as_ref().and_then(|ms| ms.sim.as_ref()) {
+            eprintln!(
+                "expert residency simulation: {:.1} MB read per decode step over {} steps; \
+                 {:.3}s spent evicting (exclude from timings)",
+                sim.decode_miss as f64 / sim.decode_steps.max(1) as f64 / 1e6,
+                sim.decode_steps,
+                sim.evict_secs
+            );
+        }
     }
 }
 
