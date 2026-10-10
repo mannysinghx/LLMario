@@ -1,17 +1,20 @@
 //! Forward pass for the dense GQA families on the CPU backend (the hybrid family's layers are in
-//! `hybrid.rs`; embeddings, the output head and the scratch set are shared here).
+//! `hybrid.rs`, Gemma 4's in `gemma4.rs`; embeddings, the output head, the batch layout and the
+//! scratch set are shared here).
 //!
-//! Explicit, layer-by-layer execution with a scratch set sized once from the model shape and the
-//! batch size (`Scratch::bytes` is what the plan charges). Prefill processes `n` tokens at once
-//! through the matmul path; decode processes one token through the matvec path. Attention runs
-//! per head in parallel over the pool with fp32 accumulation.
-
-use half::slice::HalfFloatSliceExt;
+//! One call runs a **batch of sequences**: each [`SeqTokens`] appends its tokens to its own
+//! sequence in the [`KvCache`]. The rows of every sequence are stacked, so the projections and
+//! the FFN run once over all of them (the matmul path for more than one row, the matvec path for
+//! exactly one); RoPE, the K/V writes and attention use each row's own sequence and position
+//! ([`Rows`]); recurrent layers scan each sequence's rows with that sequence's state. A batch
+//! with one sequence is exactly the single-sequence pass. The scratch set is sized once from the
+//! model shape, the token budget and the number of sequences (`Scratch::bytes` is what the plan
+//! charges). Attention runs per (token, KV head) in parallel with fp32 accumulation.
 
 use crate::arch::{ArchSpec, Family};
 use crate::gemma4;
 use crate::hybrid::{self, HybridScratch};
-use crate::kv::KvCache;
+use crate::kv::{KvCache, KvFull};
 use crate::weights::{LayerWeights, Weights};
 use llmario_engine_cpu::ops::{add_inplace, dot, swiglu_inplace, RopeParams};
 use llmario_engine_cpu::{dequant_row, matmul, matvec, rms_norm, rope, softmax, ThreadPool};
@@ -22,9 +25,69 @@ pub struct Model<'a> {
     pub weights: Weights<'a>,
 }
 
-/// Working buffers for a batch of up to `n_batch` tokens.
+/// One sequence's share of a forward call: `tokens` are appended to sequence `seq` at its
+/// current length.
+#[derive(Clone, Copy, Debug)]
+pub struct SeqTokens<'a> {
+    pub seq: usize,
+    pub tokens: &'a [u32],
+}
+
+/// A contiguous run of rows that belong to one sequence.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Seg {
+    pub seq: usize,
+    /// First row of the run in the stacked batch.
+    pub start: usize,
+    pub n: usize,
+    /// Position of the first row.
+    pub pos0: usize,
+}
+
+/// Placement of the stacked rows of one pass through the layers.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct Rows {
+    /// Sequence of row `t`.
+    pub seq: Vec<usize>,
+    /// Absolute position of row `t` in its sequence.
+    pub pos: Vec<usize>,
+    /// Index into `segs` of row `t`.
+    pub seg_of: Vec<usize>,
+    pub segs: Vec<Seg>,
+}
+
+impl Rows {
+    pub fn n(&self) -> usize {
+        self.pos.len()
+    }
+    fn push(&mut self, seq: usize, pos0: usize, n: usize) {
+        let start = self.n();
+        let si = self.segs.len();
+        self.segs.push(Seg {
+            seq,
+            start,
+            n,
+            pos0,
+        });
+        for i in 0..n {
+            self.seq.push(seq);
+            self.pos.push(pos0 + i);
+            self.seg_of.push(si);
+        }
+    }
+    /// One sequence `seq`, `n` rows from position `pos0`.
+    #[cfg(test)]
+    pub fn single(seq: usize, pos0: usize, n: usize) -> Rows {
+        let mut r = Rows::default();
+        r.push(seq, pos0, n);
+        r
+    }
+}
+
+/// Working buffers for up to `n_batch` stacked rows and `max_seqs` sequences per call.
 pub struct Scratch {
     pub(crate) n_batch: usize,
+    pub(crate) max_seqs: usize,
     pub(crate) x: Vec<f32>,
     pub(crate) h: Vec<f32>,
     pub(crate) q: Vec<f32>,
@@ -34,19 +97,29 @@ pub struct Scratch {
     pub(crate) gate: Vec<f32>,
     pub(crate) up: Vec<f32>,
     pub(crate) ffn: Vec<f32>,
+    /// Last hidden row of each sequence of the call (`[max_seqs][d_model]`).
+    pub(crate) last: Vec<f32>,
+    /// Logits of each sequence's last token (`[max_seqs][n_vocab]`).
     pub(crate) logits: Vec<f32>,
     /// Extra buffers of the hybrid family (`None` for the dense families).
     pub(crate) hybrid: Option<HybridScratch>,
 }
 
 impl Scratch {
+    /// Scratch for single-sequence calls of up to `n_batch` tokens.
     pub fn new(spec: &ArchSpec, n_batch: usize) -> Scratch {
+        Self::with_seqs(spec, n_batch, 1)
+    }
+
+    pub fn with_seqs(spec: &ArchSpec, n_batch: usize, max_seqs: usize) -> Scratch {
         let d = spec.d_model as usize;
         let n = n_batch.max(1);
+        let m = max_seqs.clamp(1, n);
         // Q/K/V/attention widths are the largest over the layers (they differ per layer only in
         // Gemma 4, whose global layers have wider heads and fewer KV heads than its local ones).
         Scratch {
             n_batch: n,
+            max_seqs: m,
             x: vec![0.0; n * d],
             h: vec![0.0; n * d],
             q: vec![0.0; n * spec.max_q_dim() as usize],
@@ -56,14 +129,20 @@ impl Scratch {
             gate: vec![0.0; n * spec.n_ff as usize],
             up: vec![0.0; n * spec.n_ff as usize],
             ffn: vec![0.0; n * d],
-            logits: vec![0.0; spec.n_vocab as usize],
+            last: vec![0.0; m * d],
+            logits: vec![0.0; m * spec.n_vocab as usize],
             hybrid: spec.gdn.as_ref().map(|g| HybridScratch::new(spec, g, n)),
         }
     }
 
-    /// Bytes of scratch for `n_batch` tokens (charged by the plan).
+    /// Bytes of scratch for single-sequence calls of `n_batch` tokens (charged by the plan).
     pub fn bytes(spec: &ArchSpec, n_batch: usize) -> u64 {
+        Self::bytes_with_seqs(spec, n_batch, 1)
+    }
+
+    pub fn bytes_with_seqs(spec: &ArchSpec, n_batch: usize, max_seqs: usize) -> u64 {
         let n = n_batch.max(1) as u64;
+        let m = max_seqs.clamp(1, n_batch.max(1)) as u64;
         let d = spec.d_model as u64;
         let per_tok = 2 * d
             + spec.max_q_dim() as u64
@@ -77,7 +156,16 @@ impl Scratch {
             .as_ref()
             .map(|g| HybridScratch::bytes(spec, g, n as usize))
             .unwrap_or(0);
-        (n * per_tok + spec.n_vocab as u64) * 4 + hybrid
+        (n * per_tok + m * (d + spec.n_vocab as u64)) * 4 + hybrid
+    }
+
+    /// Rows one call may stack.
+    pub fn n_batch(&self) -> usize {
+        self.n_batch
+    }
+    /// Sequences one call may carry.
+    pub fn max_seqs(&self) -> usize {
+        self.max_seqs
     }
 }
 
@@ -88,8 +176,9 @@ impl<'a> Model<'a> {
         Ok(Model { spec, weights })
     }
 
-    /// Run `tokens` (positions `kv.len..kv.len + tokens.len()`), append their K/V to `kv`, and
-    /// return the logits of the last token in `scratch.logits`.
+    /// Run `tokens` on sequence 0 (positions `kv.len(0)..`), append their K/V, and return the
+    /// logits of the last token. Panics when the cache cannot grow (a single-sequence cache is
+    /// sized for its whole context, so this means a context overflow).
     pub fn forward<'s>(
         &self,
         pool: &ThreadPool,
@@ -97,54 +186,145 @@ impl<'a> Model<'a> {
         tokens: &[u32],
         scratch: &'s mut Scratch,
     ) -> &'s [f32] {
-        let n = tokens.len();
-        assert!(n >= 1 && n <= scratch.n_batch, "batch of {n} tokens");
-        assert!(kv.len + n <= kv.max_ctx, "context overflow");
+        match self.forward_batch(pool, kv, &[SeqTokens { seq: 0, tokens }], scratch) {
+            Ok(l) => l,
+            Err(e) => panic!("{e}"),
+        }
+    }
+
+    /// Run a batch: every entry appends its tokens to its own sequence. Returns the logits of
+    /// each entry's last token, `[batch.len()][n_vocab]` in batch order. Fails without changing
+    /// anything when the cache cannot hold the new tokens.
+    pub fn forward_batch<'s>(
+        &self,
+        pool: &ThreadPool,
+        kv: &mut KvCache,
+        batch: &[SeqTokens],
+        scratch: &'s mut Scratch,
+    ) -> Result<&'s [f32], KvFull> {
         let spec = &self.spec;
         let d = spec.d_model as usize;
-
-        // A sliding-window ring bounds how many tokens one pass may append (see `kv.rs`), so a
-        // larger batch runs the layer stack in consecutive chunks; `usize::MAX` for the other
-        // families, i.e. one chunk.
-        let chunk = kv.max_batch().max(1);
-        let mut done = 0;
-        let mut last = 0;
-        while done < n {
-            let m = (n - done).min(chunk);
-            self.run_layers(pool, kv, &tokens[done..done + m], scratch);
-            done += m;
-            last = m;
+        let vocab = spec.n_vocab as usize;
+        let total: usize = batch.iter().map(|b| b.tokens.len()).sum();
+        assert!(
+            !batch.is_empty() && batch.len() <= scratch.max_seqs,
+            "{} sequences in one call (scratch holds {})",
+            batch.len(),
+            scratch.max_seqs
+        );
+        assert!(
+            total <= scratch.n_batch,
+            "batch of {total} tokens (scratch holds {})",
+            scratch.n_batch
+        );
+        for (i, b) in batch.iter().enumerate() {
+            assert!(
+                !b.tokens.is_empty(),
+                "empty token list for sequence {}",
+                b.seq
+            );
+            assert!(
+                batch[..i].iter().all(|o| o.seq != b.seq),
+                "sequence {} appears twice in one batch",
+                b.seq
+            );
+            assert!(
+                kv.len(b.seq) + b.tokens.len() <= kv.max_ctx(),
+                "context overflow"
+            );
+        }
+        // Check every sequence's room first, so a batch that does not fit changes nothing.
+        let need: usize = batch
+            .iter()
+            .map(|b| kv.blocks_needed(b.seq, kv.len(b.seq) + b.tokens.len()))
+            .sum();
+        if need > kv.pool().free_blocks() {
+            return Err(KvFull {
+                needed: need,
+                free: kv.pool().free_blocks(),
+            });
+        }
+        for b in batch {
+            let len = kv.len(b.seq);
+            kv.reserve(b.seq, len + b.tokens.len())?;
         }
 
-        // Final norm + output head on the last token only.
-        let x_last = &scratch.x[(last - 1) * d..last * d];
-        let h = &mut scratch.h[..d];
-        rms_norm(x_last, &self.weights.output_norm, spec.rms_eps, h);
+        // A sliding-window ring bounds how many tokens one pass may append per sequence (see
+        // `kv.rs`), so long runs go through the layer stack in consecutive passes; for the other
+        // families the bound is `usize::MAX`, i.e. one pass.
+        let chunk = kv.max_batch().max(1);
+        let mut done = vec![0usize; batch.len()];
+        loop {
+            let mut rows = Rows::default();
+            let mut toks = Vec::new();
+            let mut finishing = Vec::new();
+            for (i, b) in batch.iter().enumerate() {
+                let left = b.tokens.len() - done[i];
+                if left == 0 {
+                    continue;
+                }
+                let m = left.min(chunk);
+                rows.push(b.seq, kv.len(b.seq), m);
+                toks.extend_from_slice(&b.tokens[done[i]..done[i] + m]);
+                done[i] += m;
+                if done[i] == b.tokens.len() {
+                    finishing.push((i, rows.n() - 1));
+                }
+            }
+            if rows.n() == 0 {
+                break;
+            }
+            self.run_layers(pool, kv, &toks, &rows, scratch);
+            for (i, row) in finishing {
+                scratch.last[i * d..(i + 1) * d]
+                    .copy_from_slice(&scratch.x[row * d..(row + 1) * d]);
+            }
+        }
+
+        // Final norm + output head on each sequence's last row.
+        let m = batch.len();
+        for i in 0..m {
+            rms_norm(
+                &scratch.last[i * d..(i + 1) * d],
+                &self.weights.output_norm,
+                spec.rms_eps,
+                &mut scratch.h[i * d..(i + 1) * d],
+            );
+        }
         let head = self
             .weights
             .output
             .as_ref()
             .unwrap_or(&self.weights.token_embd);
-        matvec(pool, head, h, &mut scratch.logits);
+        project(
+            pool,
+            head,
+            &scratch.h,
+            m,
+            d,
+            &mut scratch.logits[..m * vocab],
+            None,
+        );
         if let Some(g) = &spec.gemma4 {
-            gemma4::softcap_inplace(&mut scratch.logits, g.final_logit_softcap);
+            gemma4::softcap_inplace(&mut scratch.logits[..m * vocab], g.final_logit_softcap);
         }
-        &scratch.logits
+        Ok(&scratch.logits[..m * vocab])
     }
 
-    /// Embed `tokens` at positions `kv.len..` into `scratch.x` and run every layer over them,
-    /// appending their K/V (`kv.len` advances by `tokens.len()`).
+    /// Embed `tokens` into `scratch.x` and run every layer over the stacked rows described by
+    /// `rows`, appending their K/V (each sequence's length advances by its row count).
     fn run_layers(
         &self,
         pool: &ThreadPool,
         kv: &mut KvCache,
         tokens: &[u32],
+        rows: &Rows,
         scratch: &mut Scratch,
     ) {
         let n = tokens.len();
+        debug_assert_eq!(n, rows.n());
         let spec = &self.spec;
         let d = spec.d_model as usize;
-        let pos0 = kv.len;
 
         // Embeddings.
         for (t, &tok) in tokens.iter().enumerate() {
@@ -156,30 +336,31 @@ impl<'a> Model<'a> {
         }
 
         if let Some(g) = &self.weights.gemma4 {
-            gemma4::forward_layers(spec, g, pool, kv, n, pos0, scratch);
+            gemma4::forward_layers(spec, g, pool, kv, rows, scratch);
         } else if let Some(h) = &self.weights.hybrid {
-            hybrid::forward_layers(spec, h, pool, kv, n, pos0, scratch);
+            hybrid::forward_layers(spec, h, pool, kv, rows, scratch);
         } else {
             for (l, layer) in self.weights.layers.iter().enumerate() {
-                self.attention_block(pool, kv, l, layer, n, pos0, scratch);
+                self.attention_block(pool, kv, l, layer, rows, scratch);
                 self.ffn_block(pool, layer, n, scratch);
             }
         }
-        kv.len += n;
+        for sg in &rows.segs {
+            kv.seq_mut(sg.seq).len += sg.n;
+        }
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn attention_block(
         &self,
         pool: &ThreadPool,
         kv: &mut KvCache,
         l: usize,
         layer: &LayerWeights,
-        n: usize,
-        pos0: usize,
+        rows: &Rows,
         s: &mut Scratch,
     ) {
         let spec = &self.spec;
+        let n = rows.n();
         let d = spec.d_model as usize;
         let n_head = spec.n_head as usize;
         let n_kv = spec.n_kv_head as usize;
@@ -238,6 +419,7 @@ impl<'a> Model<'a> {
             attn_factor: spec.rope.attn_factor,
         };
         for t in 0..n {
+            let (seq, pos) = (rows.seq[t], rows.pos[t]);
             let q = &mut s.q[t * q_dim..(t + 1) * q_dim];
             let k = &mut s.k[t * kv_dim..(t + 1) * kv_dim];
             if let Some(w) = &layer.q_norm {
@@ -247,19 +429,18 @@ impl<'a> Model<'a> {
                 per_head_norm(k, hd, w, spec.rms_eps);
             }
             if use_rope {
-                rope(q, n_head, (pos0 + t) as u32, &rp);
-                rope(k, n_kv, (pos0 + t) as u32, &rp);
+                rope(q, n_head, pos as u32, &rp);
+                rope(k, n_kv, pos as u32, &rp);
             }
-            kv.store_k(l, pos0 + t, k);
-            kv.store_v(l, pos0 + t, &s.v[t * v_dim..(t + 1) * v_dim]);
+            kv.store_k(seq, l, pos, k);
+            kv.store_v(seq, l, pos, &s.v[t * v_dim..(t + 1) * v_dim]);
         }
 
         attend(
             pool,
             kv,
             l,
-            n,
-            pos0,
+            rows,
             &s.q[..n * q_dim],
             Attend {
                 n_head,
@@ -346,19 +527,17 @@ pub(crate) struct Attend {
     pub window: Option<usize>,
 }
 
-/// Causal softmax attention of `n` query tokens (positions `pos0..pos0 + n`) against the K/V
-/// slab `l` of `kv`, which must already hold positions `0..pos0 + n` (or the window's worth of
-/// them for a ring slab): for each token and head, `softmax(scale · q·K) · V` over the visible
-/// positions ≤ t, written to `attn[t][head][hdv]`. Positions are mapped to slab slots with
-/// [`KvCache::slot`] (identity for full-attention layers). Runs per (token, head) in parallel
-/// over the pool with fp32 accumulation.
-#[allow(clippy::too_many_arguments)]
+/// Causal softmax attention of the stacked rows against attention layer `l`: row `t` (sequence
+/// `rows.seq[t]`, position `rows.pos[t]`) attends to the visible positions ≤ its own of its own
+/// sequence, which the cache must already hold (this pass's rows included): for each row and
+/// head, `softmax(scale · q·K) · V`, written to `attn[t][head][hdv]`. Runs per (row, KV head)
+/// in parallel over the pool with fp32 accumulation; each cached row is decoded once per task
+/// and used by every query head of its group (GQA).
 pub(crate) fn attend(
     pool: &ThreadPool,
     kv: &KvCache,
     l: usize,
-    n: usize,
-    pos0: usize,
+    rows: &Rows,
     q_all: &[f32],
     a: Attend,
     attn: &mut [f32],
@@ -371,21 +550,17 @@ pub(crate) fn attend(
         scale,
         window,
     } = a;
+    let n = rows.n();
     let q_dim = n_head * hd;
-    let layer = kv.layers[l];
-    let (kv_dim, v_dim, cap) = (layer.kv_dim, layer.v_dim, layer.cap);
-    debug_assert_eq!(kv_dim, n_kv * hd);
-    debug_assert_eq!(v_dim, n_kv * hdv);
+    debug_assert_eq!(kv.layer(l).kv_dim, n_kv * hd);
+    debug_assert_eq!(kv.layer(l).v_dim, n_kv * hdv);
     let group = n_head / n_kv;
-    let n_ctx = pos0 + n;
-    let k_all = kv.k_slab(l);
-    let v_all = kv.v_slab(l);
+    let readers: Vec<_> = rows.segs.iter().map(|sg| kv.reader(sg.seq, l)).collect();
     let attn_dim = n_head * hdv;
     // Longest score row any query in this batch needs.
+    let n_ctx = rows.pos.iter().copied().max().unwrap_or(0) + 1;
     let span = window.map(|w| w.min(n_ctx)).unwrap_or(n_ctx);
     let out_ptr = SendPtr(attn.as_mut_ptr());
-    // One task per (token, KV head): each cached f16 row is converted once and used by every
-    // query head of the group (GQA), instead of once per query head.
     pool.parallel_for(n * n_kv, None, |start, end| {
         let mut scores = vec![0f32; group * span];
         let mut row = vec![0f32; hd.max(hdv)];
@@ -393,13 +568,12 @@ pub(crate) fn attend(
         for idx in start..end {
             let t = idx / n_kv;
             let kvh = idx % n_kv;
-            let t_abs = pos0 + t;
+            let rd = &readers[rows.seg_of[t]];
+            let t_abs = rows.pos[t];
             let p_lo = window.map(|w| (t_abs + 1).saturating_sub(w)).unwrap_or(0);
             let n_pos = t_abs + 1 - p_lo;
             for (i, p) in (p_lo..=t_abs).enumerate() {
-                let s = p % cap;
-                k_all[s * kv_dim + kvh * hd..s * kv_dim + (kvh + 1) * hd]
-                    .convert_to_f32_slice(&mut row[..hd]);
+                rd.load_k(p, kvh * hd, &mut row[..hd]);
                 for g in 0..group {
                     let h = kvh * group + g;
                     let q = &q_all[t * q_dim + h * hd..t * q_dim + (h + 1) * hd];
@@ -411,9 +585,7 @@ pub(crate) fn attend(
             }
             acc.iter_mut().for_each(|a| *a = 0.0);
             for (i, p) in (p_lo..=t_abs).enumerate() {
-                let s = p % cap;
-                v_all[s * v_dim + kvh * hdv..s * v_dim + (kvh + 1) * hdv]
-                    .convert_to_f32_slice(&mut row[..hdv]);
+                rd.load_v(p, kvh * hdv, &mut row[..hdv]);
                 for g in 0..group {
                     let w = scores[g * span + i];
                     let a = &mut acc[g * hdv..(g + 1) * hdv];
@@ -423,7 +595,7 @@ pub(crate) fn attend(
                 }
             }
             // SAFETY: each (t, kvh) writes the disjoint hdv-wide slices of its own query heads
-            // kvh*group .. (kvh+1)*group in token t's row of `attn`.
+            // kvh*group .. (kvh+1)*group in row t of `attn`.
             unsafe {
                 std::ptr::copy_nonoverlapping(
                     acc.as_ptr(),
@@ -488,10 +660,14 @@ mod tests {
     /// A tiny random llama-family model written as a GGUF in memory, so the forward pass can be
     /// exercised in CI without model files.
     fn tiny_model(dir: &std::path::Path) -> std::path::PathBuf {
+        tiny_model_hd(dir, 8)
+    }
+
+    /// The tiny model with `hd`-wide heads (32 for the q8_0 cache, whose blocks span 32 values).
+    fn tiny_model_hd(dir: &std::path::Path, hd: u64) -> std::path::PathBuf {
         let d = 32u64;
         let n_head = 4u64;
         let n_kv = 2u64;
-        let hd = 8u64;
         let n_ff = 48u64;
         let vocab = 64u64;
         let n_layer = 2u64;
@@ -510,6 +686,8 @@ mod tests {
             .meta("llama.embedding_length", MetaValue::U32(d as u32))
             .meta("llama.attention.head_count", MetaValue::U32(n_head as u32))
             .meta("llama.attention.head_count_kv", MetaValue::U32(n_kv as u32))
+            .meta("llama.attention.key_length", MetaValue::U32(hd as u32))
+            .meta("llama.attention.value_length", MetaValue::U32(hd as u32))
             .meta("llama.feed_forward_length", MetaValue::U32(n_ff as u32))
             .meta("llama.vocab_size", MetaValue::U32(vocab as u32))
             .meta("llama.context_length", MetaValue::U32(64))
@@ -578,7 +756,7 @@ mod tests {
                 f32s(n_ff * d, 70 + l),
             );
         }
-        let p = dir.join("tiny.gguf");
+        let p = dir.join(format!("tiny_hd{hd}.gguf"));
         std::fs::write(&p, w.to_bytes()).unwrap();
         p
     }
@@ -605,26 +783,166 @@ mod tests {
         for &t in &toks {
             lb = m.forward(&pool, &mut kv_b, &[t], &mut s_b).to_vec();
         }
-        assert_eq!(kv_a.len, 5);
-        assert_eq!(kv_b.len, 5);
+        assert_eq!(kv_a.len(0), 5);
+        assert_eq!(kv_b.len(0), 5);
         for (a, b) in la.iter().zip(&lb) {
             assert!((a - b).abs() < 1e-4, "{a} vs {b}");
         }
         // Scratch accounting is consistent with the allocation.
-        assert_eq!(
-            Scratch::bytes(&m.spec, 8),
-            (s_a.x.len()
-                + s_a.h.len()
-                + s_a.q.len()
-                + s_a.k.len()
-                + s_a.v.len()
-                + s_a.attn.len()
-                + s_a.gate.len()
-                + s_a.up.len()
-                + s_a.ffn.len()
-                + s_a.logits.len()) as u64
+        let floats = |s: &Scratch| {
+            (s.x.len()
+                + s.h.len()
+                + s.q.len()
+                + s.k.len()
+                + s.v.len()
+                + s.attn.len()
+                + s.gate.len()
+                + s.up.len()
+                + s.ffn.len()
+                + s.last.len()
+                + s.logits.len()) as u64
                 * 4
-        );
+        };
+        assert_eq!(Scratch::bytes(&m.spec, 8), floats(&s_a));
+        let s3 = Scratch::with_seqs(&m.spec, 8, 3);
+        assert_eq!(Scratch::bytes_with_seqs(&m.spec, 8, 3), floats(&s3));
         let _ = EngineError::Format(String::new());
+    }
+
+    /// A batch of several sequences gives each sequence exactly the logits it gets alone, and
+    /// leaves each sequence's cache as if it had run alone (checked by continuing to decode).
+    #[test]
+    fn batched_sequences_equal_separate_runs() {
+        use crate::kv::{KvOptions, KvType};
+        let dir = tempfile::tempdir().unwrap();
+        let path = tiny_model_hd(dir.path(), 32);
+        let f = GgufFile::open(&path).unwrap();
+        let m = Model::load(&f).unwrap();
+        let pool = ThreadPool::new(2);
+        let prompts: [&[u32]; 3] = [
+            &[3, 17, 5, 42, 9],
+            &[8, 1],
+            &[60, 61, 62, 63, 0, 2, 4, 6, 8],
+        ];
+        for kv_type in [KvType::F16, KvType::Q8_0] {
+            // Alone, each in its own single-sequence cache (block size 4 forces several blocks).
+            let opts = KvOptions::new(32).kv_type(kv_type).block_tokens(4);
+            let mut alone = Vec::new();
+            for p in prompts {
+                let mut kv = KvCache::with_options(&m.spec, opts);
+                let mut s = Scratch::new(&m.spec, 16);
+                let first = m.forward(&pool, &mut kv, p, &mut s).to_vec();
+                let next = m.forward(&pool, &mut kv, &[7], &mut s).to_vec();
+                alone.push((first, next));
+            }
+            // Together: one prefill call with all three, then one decode call with all three.
+            let mut kv = KvCache::with_options(&m.spec, opts.seqs(3));
+            let mut s = Scratch::with_seqs(&m.spec, 16, 3);
+            let batch: Vec<SeqTokens> = prompts
+                .iter()
+                .enumerate()
+                .map(|(i, p)| SeqTokens { seq: i, tokens: p })
+                .collect();
+            let first = m
+                .forward_batch(&pool, &mut kv, &batch, &mut s)
+                .unwrap()
+                .to_vec();
+            let dec: Vec<SeqTokens> = (0..3)
+                .map(|i| SeqTokens {
+                    seq: i,
+                    tokens: &[7],
+                })
+                .collect();
+            let next = m
+                .forward_batch(&pool, &mut kv, &dec, &mut s)
+                .unwrap()
+                .to_vec();
+            let vocab = m.spec.n_vocab as usize;
+            for (i, (fa, na)) in alone.iter().enumerate() {
+                for (a, b) in fa.iter().zip(&first[i * vocab..(i + 1) * vocab]) {
+                    assert!(
+                        (a - b).abs() < 1e-5,
+                        "{kv_type:?} prefill seq {i}: {a} vs {b}"
+                    );
+                }
+                for (a, b) in na.iter().zip(&next[i * vocab..(i + 1) * vocab]) {
+                    assert!(
+                        (a - b).abs() < 1e-5,
+                        "{kv_type:?} decode seq {i}: {a} vs {b}"
+                    );
+                }
+                assert_eq!(kv.len(i), prompts[i].len() + 1);
+            }
+        }
+    }
+
+    /// Blocks are backed only while used: growth maps them, truncation and clearing give them
+    /// back, and a full shared pool refuses a batch without changing any sequence.
+    #[test]
+    fn blocks_follow_use_and_full_pool_refuses_cleanly() {
+        use crate::kv::KvOptions;
+        let dir = tempfile::tempdir().unwrap();
+        let path = tiny_model(dir.path());
+        let f = GgufFile::open(&path).unwrap();
+        let m = Model::load(&f).unwrap();
+        let pool = ThreadPool::new(2);
+        // Two sequences of up to 16 positions sharing a pool of 16 positions: 4 blocks of 4,
+        // plus one copy-on-write spare per sequence = 6 blocks.
+        let opts = KvOptions::new(16).block_tokens(4).seqs(2).pool_tokens(16);
+        let mut kv = KvCache::with_options(&m.spec, opts);
+        assert_eq!(kv.layout.pool_blocks, 6);
+        let mut s = Scratch::with_seqs(&m.spec, 16, 2);
+        assert_eq!(
+            kv.resident_blocks(),
+            0,
+            "nothing is backed before the first token"
+        );
+        m.forward(&pool, &mut kv, &[1, 2, 3, 4, 5], &mut s);
+        assert_eq!(kv.resident_blocks(), 2);
+        kv.truncate(0, 4);
+        assert_eq!(kv.resident_blocks(), 1);
+        kv.clear(0);
+        assert_eq!(kv.resident_blocks(), 0);
+        // Sequence 0 takes the whole context (4 blocks); sequence 1 cannot get 4 more.
+        let full: Vec<u32> = (0..16).collect();
+        m.forward(&pool, &mut kv, &full, &mut s);
+        assert_eq!(kv.pool().free_blocks(), 2);
+        let both = [
+            SeqTokens {
+                seq: 0,
+                tokens: &[9],
+            },
+            SeqTokens {
+                seq: 1,
+                tokens: &full,
+            },
+        ];
+        let err = m
+            .forward_batch(&pool, &mut kv, &both[1..], &mut s)
+            .unwrap_err();
+        assert_eq!(err.needed, 4);
+        assert_eq!(
+            (kv.len(0), kv.len(1)),
+            (16, 0),
+            "a refused batch changes nothing"
+        );
+        assert_eq!(kv.pool().free_blocks(), 2);
+        assert_eq!(kv.resident_blocks(), 4);
+        // Half of it fits.
+        m.forward_batch(
+            &pool,
+            &mut kv,
+            &[SeqTokens {
+                seq: 1,
+                tokens: &full[..8],
+            }],
+            &mut s,
+        )
+        .unwrap();
+        assert_eq!(kv.pool().free_blocks(), 0);
+        kv.clear(1);
+        assert_eq!(kv.pool().free_blocks(), 2);
+        assert_eq!(kv.resident_blocks(), 4);
+        let _ = both[0];
     }
 }

@@ -65,19 +65,21 @@
 //!
 //! # Cache
 //!
-//! Sliding layers keep a ring of `n_swa + 512` positions in [`KvCache`] (see `kv.rs`), global
-//! layers the whole context. K=V global layers still store K and V separately: the cached K is
-//! `attn_k_norm` + RoPE of the shared projection and V its weightless RMS norm, so they differ.
-//! 12B at f32: 8 global layers × (512 + 512) × 4 B = 32 KiB per token, plus 40 sliding layers ×
-//! 8 × (256 + 256) × 4 B = 640 KiB per ring position × 1,536 = 960 MiB fixed per sequence
-//! (672 KiB per token if the sliding layers were cached over the whole context).
+//! Sliding layers keep a ring of `n_swa + 512` positions per sequence in [`KvCache`] (see
+//! `kv.rs`), global layers are paged over the whole context. K=V global layers still store K and
+//! V separately: the cached K is `attn_k_norm` + RoPE of the shared projection and V its
+//! weightless RMS norm, so they differ. 12B at f16: 8 global layers × (512 + 512) × 2 B =
+//! 16 KiB per token, plus 40 sliding layers × 8 × (256 + 256) × 2 B = 320 KiB per ring position
+//! × 1,536 = 480 MiB per sequence at most (336 KiB per token if the sliding layers were cached
+//! over the whole context); the ring is lazily backed, so a conversation shorter than the ring
+//! holds only the positions it wrote.
 //!
 //! The E-series' per-layer embeddings (`embedding_length_per_layer_input`) and cross-layer KV
 //! sharing (`attention.shared_kv_layers`) and the 26B-A4B's MoE block are rejected in
 //! `ArchSpec::from_gguf` (follow-ups).
 
 use crate::arch::{ArchSpec, Gemma4Spec};
-use crate::forward::{attend, per_head_norm, project, Attend, Scratch};
+use crate::forward::{attend, per_head_norm, project, Attend, Rows, Scratch};
 use crate::kv::KvCache;
 use crate::weights::{mat, vec1};
 use crate::Result;
@@ -180,24 +182,24 @@ impl<'a> Gemma4Weights<'a> {
     }
 }
 
-/// Run every layer over the `n` embedded tokens in `s.x` (positions `pos0..`), K/V appended to
-/// `kv` (attention slab `l` for layer `l`: every Gemma 4 layer is an attention layer).
-pub fn forward_layers(
+/// Run every layer over the embedded stacked rows in `s.x` (placement in `rows`), K/V appended
+/// to `kv` (attention layer `l` for layer `l`: every Gemma 4 layer is an attention layer).
+pub(crate) fn forward_layers(
     spec: &ArchSpec,
     w: &Gemma4Weights,
     pool: &ThreadPool,
     kv: &mut KvCache,
-    n: usize,
-    pos0: usize,
+    rows: &Rows,
     s: &mut Scratch,
 ) {
     let g = spec.gemma4.as_ref().expect("Gemma 4 spec");
+    let n = rows.n();
     let d = spec.d_model as usize;
     for v in &mut s.x[..n * d] {
         *v *= g.embed_scale;
     }
     for (l, layer) in w.layers.iter().enumerate() {
-        attention(spec, g, w, layer, l, pool, kv, n, pos0, s);
+        attention(spec, g, w, layer, l, pool, kv, rows, s);
         ffn(spec, layer, pool, n, s);
         if let Some(sc) = layer.out_scale {
             for v in &mut s.x[..n * d] {
@@ -216,10 +218,10 @@ fn attention(
     l: usize,
     pool: &ThreadPool,
     kv: &mut KvCache,
-    n: usize,
-    pos0: usize,
+    rows: &Rows,
     s: &mut Scratch,
 ) {
+    let n = rows.n();
     let d = spec.d_model as usize;
     let geom = spec.attn_geom(l);
     let n_head = geom.n_head as usize;
@@ -262,7 +264,8 @@ fn attention(
     };
     let mut cs = Vec::with_capacity(n_dims);
     for t in 0..n {
-        let pos = (pos0 + t) as u32;
+        let (seq, pos_abs) = (rows.seq[t], rows.pos[t]);
+        let pos = pos_abs as u32;
         let q = &mut s.q[t * q_dim..(t + 1) * q_dim];
         let k = &mut s.k[t * kv_dim..(t + 1) * kv_dim];
         let v = &mut s.v[t * v_dim..(t + 1) * v_dim];
@@ -272,15 +275,14 @@ fn attention(
         rope_cache(&mut cs, n_dims, pos, theta, ff);
         rope_apply(q, n_head, hd, &cs);
         rope_apply(k, n_kv, hd, &cs);
-        kv.store_k(l, pos0 + t, k);
-        kv.store_v(l, pos0 + t, v);
+        kv.store_k(seq, l, pos_abs, k);
+        kv.store_v(seq, l, pos_abs, v);
     }
     attend(
         pool,
         kv,
         l,
-        n,
-        pos0,
+        rows,
         &s.q[..n * q_dim],
         Attend {
             n_head,
@@ -546,7 +548,7 @@ fn f16_to_f32(h: u16) -> f32 {
 mod tests {
     use super::*;
     use crate::forward::{Model, Scratch};
-    use crate::kv::SWA_RING_BATCH;
+    use crate::kv::{KvOptions, SWA_RING_BATCH};
     use crate::weights::Weights;
     use crate::{ArchSpec, BlockKind, Family, KvCache};
     use llmario_engine_formats::gguf::writer::GgufWriter;
@@ -775,27 +777,33 @@ mod tests {
 
         // Cache: the global layer holds max_ctx positions, each sliding layer a ring of
         // min(max_ctx, n_swa + n_batch).
-        let kv = KvCache::with_batch(&spec, 64, 4);
-        assert_eq!(kv.n_layer, 4);
-        assert_eq!(kv.layers[0].cap, 8);
-        assert_eq!(kv.layers[0].window, Some(4));
-        assert_eq!(kv.layers[2].cap, 64);
-        assert_eq!(kv.layers[2].window, None);
+        let kv = KvCache::with_options(&spec, KvOptions::new(64).ring_batch(4));
+        assert_eq!(kv.n_layers(), 4);
+        assert_eq!(kv.layer(0).cap, 8);
+        assert_eq!(kv.layer(0).window, Some(4));
+        assert_eq!(kv.layer(2).cap, 64);
+        assert_eq!(kv.layer(2).window, None);
         assert_eq!(kv.slot(0, 13), 5);
         assert_eq!(kv.slot(2, 13), 13);
         assert_eq!(kv.max_batch(), 5);
         // Marginal per-token bytes count the global layer only; the rings are fixed.
         assert_eq!(spec.kv_bytes_per_token(4.0), (16 + 16) * 4);
         assert_eq!(spec.window_bytes(4.0, 64, 4), 3 * (16 + 16) * 4 * 8);
+        assert_eq!(kv.layout.paged_bytes_per_token(), (16 + 16) * 2);
+        // Paged global layer: 64 positions = 2 blocks of 32, plus the copy-on-write spare;
+        // three rings of 8 positions.
         assert_eq!(
-            KvCache::bytes_with_batch(&spec, 64, 4),
-            (16 + 16) * 2 * 64 + 3 * (16 + 16) * 2 * 8
+            kv.layout.reserved_bytes(),
+            (2 + 1) * 32 * (16 + 16) * 2 + 3 * (16 + 16) * 2 * 8
         );
         // Default headroom: 4 + 512 > 64, so the rings do not wrap and no batch limit applies.
         let kv = KvCache::new(&spec, 64);
-        assert_eq!(kv.layers[0].cap, 64);
+        assert_eq!(kv.layer(0).cap, 64);
         assert_eq!(kv.max_batch(), usize::MAX);
-        assert_eq!(KvCache::bytes(&spec, 64), 4 * (16 + 16) * 2 * 64);
+        assert_eq!(
+            KvCache::bytes(&spec, 64),
+            (2 + 1) * 32 * (16 + 16) * 2 + 3 * (16 + 16) * 2 * 64
+        );
         // Scratch accounting matches the allocation with the per-layer maxima.
         let s = Scratch::new(&spec, 8);
         assert_eq!(
@@ -809,6 +817,7 @@ mod tests {
                 + s.gate.len()
                 + s.up.len()
                 + s.ffn.len()
+                + s.last.len()
                 + s.logits.len()) as u64
                 * 4
         );
@@ -839,15 +848,16 @@ mod tests {
         let m = Model::load(&f).unwrap();
         let pool = ThreadPool::new(3);
         let toks = [3u32, 17, 5, 42, 9, 61, 2, 33, 12, 7, 50, 28];
-        let mut kv_a = KvCache::with_batch(&m.spec, 64, 4);
+        let ring4 = KvOptions::new(64).ring_batch(4);
+        let mut kv_a = KvCache::with_options(&m.spec, ring4);
         let la = run(&m, &pool, &mut kv_a, &toks, toks.len());
-        let mut kv_b = KvCache::with_batch(&m.spec, 64, 4);
+        let mut kv_b = KvCache::with_options(&m.spec, ring4);
         let mut lb = vec![];
         for &t in &toks {
             lb = run(&m, &pool, &mut kv_b, &[t], 1);
         }
-        assert_eq!(kv_a.len, toks.len());
-        assert_eq!(kv_b.len, toks.len());
+        assert_eq!(kv_a.len(0), toks.len());
+        assert_eq!(kv_b.len(0), toks.len());
         let max_abs = la.iter().map(|v| v.abs()).fold(0f32, f32::max);
         assert!(
             max_abs > 0.0 && max_abs <= 30.0,
@@ -924,18 +934,19 @@ mod tests {
             geom.head_dim as usize,
         );
         for n_batch in [4usize, 512] {
-            let mut kv = KvCache::with_batch(&spec, 64, n_batch);
+            let mut kv = KvCache::with_options(&spec, KvOptions::new(64).ring_batch(n_batch));
             // Keys: position p has key e_{p mod 8} scaled so q·k is huge where they match; values
             // are the position number broadcast.
             for p in 0..7 {
-                let mut k = vec![0f32; kv.layers[0].kv_dim];
+                let mut k = vec![0f32; kv.layer(0).kv_dim];
                 for kvh in 0..n_kv {
                     k[kvh * hd + (p % hd)] = 50.0;
                 }
-                kv.store_k(0, p, &k);
-                kv.store_v(0, p, &vec![p as f32; kv.layers[0].v_dim]);
+                kv.store_k(0, 0, p, &k);
+                kv.store_v(0, 0, p, &vec![p as f32; kv.layer(0).v_dim]);
             }
-            kv.len = 7;
+            kv.seq_mut(0).len = 7;
+            let rows = crate::forward::Rows::single(0, 6, 1);
             // Query of position 6 pointing at the evicted position 2 and (less strongly) at the
             // oldest visible position 3.
             let mut q = vec![0f32; n_head * hd];
@@ -948,8 +959,7 @@ mod tests {
                 &pool,
                 &kv,
                 0,
-                1,
-                6,
+                &rows,
                 &q,
                 Attend {
                     n_head,
@@ -974,8 +984,7 @@ mod tests {
                     &pool,
                     &kv,
                     0,
-                    1,
-                    6,
+                    &rows,
                     &q,
                     Attend {
                         n_head,
@@ -998,17 +1007,17 @@ mod tests {
         let f = GgufFile::open(&tiny_gemma4_model(dir.path())).unwrap();
         let spec = ArchSpec::from_gguf(&f).unwrap();
         // Ring of 8 with window 4: rewinding by ≤ 5 keeps the needed positions, by 6 does not.
-        let mut kv = KvCache::with_batch(&spec, 64, 4);
-        kv.len = 20;
-        kv.truncate(15);
-        assert_eq!(kv.len, 15);
-        kv.truncate(9);
-        assert_eq!(kv.len, 0);
+        let mut kv = KvCache::with_options(&spec, KvOptions::new(64).ring_batch(4));
+        kv.seq_mut(0).len = 20;
+        kv.truncate(0, 15);
+        assert_eq!(kv.len(0), 15);
+        kv.truncate(0, 9);
+        assert_eq!(kv.len(0), 0);
         // Rings that never wrap never lose anything.
         let mut kv = KvCache::new(&spec, 64);
-        kv.len = 20;
-        kv.truncate(1);
-        assert_eq!(kv.len, 1);
+        kv.seq_mut(0).len = 20;
+        kv.truncate(0, 1);
+        assert_eq!(kv.len(0), 1);
     }
 
     #[test]
@@ -1107,9 +1116,10 @@ mod tests {
             return;
         };
         let check = |m: &Model, pool: &ThreadPool, toks: &[u32], ring_batch: usize| {
-            let mut kv_a = KvCache::with_batch(&m.spec, 64, ring_batch);
+            let opts = KvOptions::new(64).ring_batch(ring_batch);
+            let mut kv_a = KvCache::with_options(&m.spec, opts);
             let la = run(m, pool, &mut kv_a, toks, toks.len());
-            let mut kv_b = KvCache::with_batch(&m.spec, 64, ring_batch);
+            let mut kv_b = KvCache::with_options(&m.spec, opts);
             let mut lb = vec![];
             for &t in toks {
                 lb = run(m, pool, &mut kv_b, &[t], 1);

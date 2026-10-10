@@ -149,6 +149,30 @@ impl BlockPool {
     pub fn refs(&self, b: BlockId) -> u32 {
         self.meta[b as usize].refs
     }
+
+    /// Whether block `b` holds a published (hashed) full block that another sequence could
+    /// reclaim. A backend keeps the memory of a free block only while this is true.
+    pub fn is_cached(&self, b: BlockId) -> bool {
+        self.meta[b as usize].hash.is_some()
+    }
+
+    /// Forget block `b`'s content hash (its owner is about to overwrite it), so no other
+    /// sequence can reclaim stale content.
+    pub fn clear_hash(&mut self, b: BlockId) {
+        if let Some(h) = self.meta[b as usize].hash.take() {
+            if self.by_hash.get(&h) == Some(&b) {
+                self.by_hash.remove(&h);
+            }
+        }
+    }
+
+    /// Free blocks that hold no cached content (their memory can be returned to the OS).
+    pub fn free_uncached(&self) -> impl Iterator<Item = BlockId> + '_ {
+        self.free
+            .iter()
+            .copied()
+            .filter(|&b| self.meta[b as usize].hash.is_none())
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -404,6 +428,27 @@ mod tests {
             ..key(b"")
         };
         assert_ne!(chain_hashes(&[1, 2, 3, 4], 4, &k2)[0], h1[0]);
+    }
+
+    #[test]
+    fn cached_state_and_clear_hash() {
+        let mut p = BlockPool::new(4, 4, 64);
+        let k = key(b"");
+        let toks: Vec<u32> = (0..8).collect();
+        let (mut s, _) = Sequence::acquire(&mut p, &toks, 8, &k).unwrap();
+        s.publish(&mut p, &toks, &k);
+        let (b0, b1) = (s.table.blocks[0], s.table.blocks[1]);
+        assert!(p.is_cached(b0) && p.is_cached(b1));
+        p.clear_hash(b1);
+        assert!(!p.is_cached(b1));
+        s.release(&mut p);
+        // Two never-used blocks plus b1 (hash cleared) hold nothing reusable; b0 does.
+        let uncached: Vec<BlockId> = p.free_uncached().collect();
+        assert_eq!(uncached.len(), 3);
+        assert!(!uncached.contains(&b0));
+        // The cleared block cannot be reclaimed by hash any more.
+        let (_, acq) = Sequence::acquire(&mut p, &toks, 8, &k).unwrap();
+        assert_eq!(acq.cached_tokens, 4);
     }
 
     #[test]

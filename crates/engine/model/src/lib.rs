@@ -22,9 +22,9 @@ pub mod kv;
 pub mod weights;
 
 pub use arch::{ArchSpec, AttnGeom, BlockKind, Family, GdnSpec, Gemma4Spec};
-pub use backend::{CpuBackend, ModelBackend};
-pub use forward::Model;
-pub use kv::KvCache;
+pub use backend::{CpuBackend, CpuOptions, ModelBackend};
+pub use forward::{Model, SeqTokens};
+pub use kv::{KvCache, KvFull, KvOptions, KvType};
 
 #[derive(thiserror::Error, Debug)]
 pub enum ModelError {

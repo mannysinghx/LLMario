@@ -11,9 +11,13 @@ rust-version.workspace = true
 llmario-engine-core = { workspace = true }
 llmario-engine-formats = { workspace = true }
 llmario-engine-cpu = { workspace = true }
+llmario-engine-kv = { workspace = true }
 half = { workspace = true }
 serde = { workspace = true }
 thiserror = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

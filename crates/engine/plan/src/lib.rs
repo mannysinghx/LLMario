@@ -7,13 +7,16 @@
 //! the steps it took and a content hash. The engine charges exactly these numbers to the ledger
 //! and verifies the measured peak against `planned_peak` after load.
 //!
-//! M1 scope: one device (host), f32 KV, dense families. Placement across devices, the three
-//! cache classes and KV precision steps plug into the same ladder in M2–M4.
+//! The KV numbers come from the same [`KvLayout`] the engine allocates (paged full-attention
+//! layers rounded up to whole blocks plus one copy-on-write spare per slot, window rings and
+//! recurrent state per slot), so the plan and the cache cannot drift apart. Placement across
+//! devices plugs into the same ladder in M4.
 
 use llmario_engine_core::ledger::DeviceId;
 use llmario_engine_formats::GgufFile;
 use llmario_engine_model::forward::Scratch;
-use llmario_engine_model::{ArchSpec, KvCache};
+use llmario_engine_model::kv::KvLayout;
+use llmario_engine_model::{ArchSpec, KvOptions, KvType};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -60,6 +63,13 @@ pub struct PlanRequest {
     /// Byte limit for the RAM prompt cache (0 = off).
     pub prompt_cache_bytes: u64,
     pub runtime_fixed: u64,
+    /// Element type of the KV cache.
+    #[serde(default)]
+    pub kv_type: KvType,
+    /// The ladder may switch an f16 cache to q8_0 (Architecture §8.3: near-lossless) before it
+    /// shortens the context.
+    #[serde(default)]
+    pub kv_auto: bool,
 }
 
 impl Default for PlanRequest {
@@ -71,6 +81,8 @@ impl Default for PlanRequest {
             threads: 0,
             prompt_cache_bytes: 0,
             runtime_fixed: RUNTIME_FIXED_DEFAULT,
+            kv_type: KvType::F16,
+            kv_auto: false,
         }
     }
 }
@@ -80,6 +92,7 @@ impl Default for PlanRequest {
 pub enum DegradationStep {
     PromptCacheDropped { before: u64 },
     SlotsReduced { from: u32, to: u32 },
+    KvPrecisionReduced { from: KvType, to: KvType },
     ContextReduced { from: u32, to: u32 },
 }
 
@@ -126,6 +139,11 @@ pub enum PlanError {
 
 /// Compute the plan for `file` on `budget`, degrading per the ladder until it fits or every step
 /// is exhausted (then `fits == false` with a refusal naming the shortfall).
+///
+/// Ladder order: prompt cache → slots (16 → 4 → 1) → KV precision (f16 → q8_0, only with
+/// `kv_auto` and when every head width is a multiple of 32) → context (halving toward
+/// [`CONTEXT_FLOOR`]). The architecture lists precision after context; it runs first here
+/// because q8_0 is near-lossless while a shorter context loses the conversation's start.
 pub fn plan(
     file: &GgufFile,
     model_name: &str,
@@ -137,48 +155,80 @@ pub fn plan(
     let mut slots = req.slots.max(1);
     let mut ctx = req.ctx_per_slot.max(1).min(spec.context_length.max(1));
     let mut prompt_cache = req.prompt_cache_bytes;
+    let mut kv_type = req.kv_type;
     let n_batch = req.n_batch.max(1);
     let mut steps = Vec::new();
     let usable = budget.usable();
+    let q8_ok = (0..spec.n_layer as usize).all(|l| {
+        let g = spec.attn_geom(l);
+        KvType::Q8_0.supports_head_dim(g.head_dim as usize)
+            && KvType::Q8_0.supports_head_dim(g.head_dim_v as usize)
+    });
 
-    let recurrent = KvCache::recurrent_bytes(&spec);
-    let total = |slots: u32, ctx: u32, prompt_cache: u64| -> (u64, u64, u64) {
-        let kv = (KvCache::bytes(&spec, ctx as usize) - recurrent) * slots as u64;
-        let scratch = Scratch::bytes(&spec, n_batch as usize) + Scratch::bytes(&spec, 1);
-        let planned =
-            weights + kv + recurrent * slots as u64 + scratch + prompt_cache + req.runtime_fixed;
-        (kv, scratch, planned)
+    struct Totals {
+        kv: u64,
+        recurrent: u64,
+        scratch: u64,
+        planned: u64,
+        layout: KvLayout,
+    }
+    let total = |slots: u32, ctx: u32, prompt_cache: u64, kv_type: KvType| -> Totals {
+        let layout = KvLayout::new(
+            &spec,
+            &KvOptions::new(ctx as usize)
+                .seqs(slots as usize)
+                .kv_type(kv_type),
+        );
+        let recurrent = (layout.recurrent_bytes * slots as usize) as u64;
+        let kv = layout.reserved_bytes() - recurrent;
+        let scratch = Scratch::bytes_with_seqs(&spec, n_batch as usize, slots as usize);
+        Totals {
+            kv,
+            recurrent,
+            scratch,
+            planned: weights + kv + recurrent + scratch + prompt_cache + req.runtime_fixed,
+            layout,
+        }
     };
 
-    let (mut kv, mut scratch, mut planned) = total(slots, ctx, prompt_cache);
+    let mut t = total(slots, ctx, prompt_cache, kv_type);
     // Ladder step 1: caches.
-    if planned > usable && prompt_cache > 0 {
+    if t.planned > usable && prompt_cache > 0 {
         steps.push(DegradationStep::PromptCacheDropped {
             before: prompt_cache,
         });
         prompt_cache = 0;
-        (kv, scratch, planned) = total(slots, ctx, prompt_cache);
+        t = total(slots, ctx, prompt_cache, kv_type);
     }
     // Step 2: slots (16 → 4 → 1).
-    while planned > usable && slots > 1 {
+    while t.planned > usable && slots > 1 {
         let to = if slots > 4 { 4 } else { 1 };
         steps.push(DegradationStep::SlotsReduced { from: slots, to });
         slots = to;
-        (kv, scratch, planned) = total(slots, ctx, prompt_cache);
+        t = total(slots, ctx, prompt_cache, kv_type);
     }
-    // Step 3: context, halving toward the floor.
-    while planned > usable && ctx > CONTEXT_FLOOR {
+    // Step 3: KV precision.
+    if t.planned > usable && req.kv_auto && kv_type == KvType::F16 && q8_ok {
+        steps.push(DegradationStep::KvPrecisionReduced {
+            from: kv_type,
+            to: KvType::Q8_0,
+        });
+        kv_type = KvType::Q8_0;
+        t = total(slots, ctx, prompt_cache, kv_type);
+    }
+    // Step 4: context, halving toward the floor.
+    while t.planned > usable && ctx > CONTEXT_FLOOR {
         let to = (ctx / 2).max(CONTEXT_FLOOR);
         steps.push(DegradationStep::ContextReduced { from: ctx, to });
         ctx = to;
-        (kv, scratch, planned) = total(slots, ctx, prompt_cache);
+        t = total(slots, ctx, prompt_cache, kv_type);
     }
-    // Steps 4–5 (KV precision, host offload) arrive with the backends that support them.
-    let fits = planned <= usable;
+    // Step 5 (host offload of experts / layers) arrives with the MoE families.
+    let fits = t.planned <= usable;
     let refusal = (!fits).then(|| {
         format!(
             "needs {} on {} but only {} is usable ({} ceiling − {} headroom); weights alone are {}",
-            fmt(planned),
+            fmt(t.planned),
             budget.device,
             fmt(usable),
             fmt(budget.ceiling),
@@ -186,17 +236,16 @@ pub fn plan(
             fmt(weights)
         )
     });
-    let bytes_per_token =
-        weights + spec.kv_bytes_per_token(llmario_engine_model::kv::KV_ELEM_BYTES) * ctx as u64;
+    let bytes_per_token = weights + (t.layout.paged_bytes_per_token() as u64) * ctx as u64;
     let devices = vec![DeviceTotals {
         device: budget.device,
         weights_mapped: weights,
-        kv_cache: kv,
-        recurrent_state: recurrent * slots as u64,
-        scratch,
+        kv_cache: t.kv,
+        recurrent_state: t.recurrent,
+        scratch: t.scratch,
         prompt_cache,
         runtime_fixed: req.runtime_fixed,
-        planned,
+        planned: t.planned,
         budget: budget.ceiling,
         headroom: budget.headroom,
     }];
@@ -208,9 +257,9 @@ pub fn plan(
         slots,
         ctx_per_slot: ctx,
         n_batch,
-        kv_dtype: "f16".into(),
+        kv_dtype: kv_type.name().into(),
         devices,
-        planned_peak: planned,
+        planned_peak: t.planned,
         degradations: steps,
         bytes_per_token,
         fits,
@@ -220,6 +269,13 @@ pub fn plan(
     h.update(serde_json::to_vec(&p).unwrap());
     p.hash = hex::encode(&h.finalize()[..16]);
     Ok(p)
+}
+
+impl Plan {
+    /// The KV element type the plan settled on.
+    pub fn kv_type(&self) -> KvType {
+        KvType::parse(&self.kv_dtype).unwrap_or_default()
+    }
 }
 
 /// Human-readable table for logs and `GET /engine/plan`.
@@ -278,4 +334,133 @@ pub fn speed_of_light(p: &Plan, bandwidth_gbs: f64) -> f64 {
         return 0.0;
     }
     bandwidth_gbs * 1e9 / p.bytes_per_token as f64
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use llmario_engine_core::GgmlType;
+    use llmario_engine_formats::gguf::writer::GgufWriter;
+    use llmario_engine_formats::MetaValue;
+
+    /// A small llama-family file (two layers, 32-wide heads so q8_0 applies, 64K context) whose
+    /// KV cache dominates the plan.
+    fn model(dir: &std::path::Path) -> GgufFile {
+        let (d, n_head, hd, n_ff, vocab) = (64u64, 2u64, 32u64, 96u64, 64u64);
+        let f32s = |n: u64| -> Vec<u8> { (0..n).flat_map(|_| 0.01f32.to_le_bytes()).collect() };
+        let mut w = GgufWriter::new();
+        w.meta("general.architecture", MetaValue::Str("llama".into()))
+            .meta("llama.block_count", MetaValue::U32(2))
+            .meta("llama.embedding_length", MetaValue::U32(d as u32))
+            .meta("llama.attention.head_count", MetaValue::U32(n_head as u32))
+            .meta("llama.attention.head_count_kv", MetaValue::U32(n_head as u32))
+            .meta("llama.attention.key_length", MetaValue::U32(hd as u32))
+            .meta("llama.attention.value_length", MetaValue::U32(hd as u32))
+            .meta("llama.feed_forward_length", MetaValue::U32(n_ff as u32))
+            .meta("llama.vocab_size", MetaValue::U32(vocab as u32))
+            .meta("llama.context_length", MetaValue::U32(65536));
+        w.tensor("token_embd.weight", &[d, vocab], GgmlType::F32, f32s(d * vocab));
+        w.tensor("output_norm.weight", &[d], GgmlType::F32, f32s(d));
+        for l in 0..2 {
+            let p = |s: &str| format!("blk.{l}.{s}");
+            w.tensor(&p("attn_norm.weight"), &[d], GgmlType::F32, f32s(d));
+            for t in ["attn_q", "attn_k", "attn_v"] {
+                w.tensor(&p(&format!("{t}.weight")), &[d, n_head * hd], GgmlType::F32, f32s(d * n_head * hd));
+            }
+            w.tensor(&p("attn_output.weight"), &[n_head * hd, d], GgmlType::F32, f32s(d * n_head * hd));
+            w.tensor(&p("ffn_norm.weight"), &[d], GgmlType::F32, f32s(d));
+            w.tensor(&p("ffn_gate.weight"), &[d, n_ff], GgmlType::F32, f32s(d * n_ff));
+            w.tensor(&p("ffn_up.weight"), &[d, n_ff], GgmlType::F32, f32s(d * n_ff));
+            w.tensor(&p("ffn_down.weight"), &[n_ff, d], GgmlType::F32, f32s(n_ff * d));
+        }
+        let path = dir.join("plan.gguf");
+        std::fs::write(&path, w.to_bytes()).unwrap();
+        GgufFile::open(&path).unwrap()
+    }
+
+    fn req(ctx: u32, kv_auto: bool) -> PlanRequest {
+        PlanRequest {
+            ctx_per_slot: ctx,
+            n_batch: 8,
+            runtime_fixed: 0,
+            kv_auto,
+            ..Default::default()
+        }
+    }
+
+    fn budget(bytes: u64) -> DeviceBudget {
+        DeviceBudget {
+            device: DeviceId::Host,
+            ceiling: bytes,
+            headroom: 0,
+        }
+    }
+
+    #[test]
+    fn kv_numbers_are_the_engines_own_layout() {
+        let dir = tempfile::tempdir().unwrap();
+        let f = model(dir.path());
+        let spec = ArchSpec::from_gguf(&f).unwrap();
+        for (slots, ctx, t) in [(1u32, 4096u32, KvType::F16), (4, 1000, KvType::Q8_0)] {
+            let r = PlanRequest {
+                slots,
+                kv_type: t,
+                ..req(ctx, false)
+            };
+            let p = plan(&f, "m", &r, &budget(u64::MAX / 4)).unwrap();
+            let layout = KvLayout::new(
+                &spec,
+                &KvOptions::new(ctx as usize).seqs(slots as usize).kv_type(t),
+            );
+            assert_eq!(p.devices[0].kv_cache + p.devices[0].recurrent_state, layout.reserved_bytes());
+            assert_eq!(p.kv_type(), t);
+            assert_eq!(
+                p.devices[0].scratch,
+                Scratch::bytes_with_seqs(&spec, 8, slots as usize)
+            );
+            assert!(p.fits && p.degradations.is_empty());
+        }
+    }
+
+    #[test]
+    fn ladder_prefers_q8_0_over_a_shorter_context() {
+        let dir = tempfile::tempdir().unwrap();
+        let f = model(dir.path());
+        let full = plan(&f, "m", &req(65536, false), &budget(u64::MAX / 4)).unwrap();
+        let kv_f16 = full.devices[0].kv_cache;
+        // A budget that holds the q8_0 cache (53 % of f16) but not the f16 one.
+        let b = budget(full.planned_peak - kv_f16 / 3);
+        let p = plan(&f, "m", &req(65536, true), &b).unwrap();
+        assert!(p.fits, "{:?}", p.refusal);
+        assert_eq!(p.kv_dtype, "q8_0");
+        assert_eq!(p.ctx_per_slot, 65536);
+        assert_eq!(
+            p.degradations,
+            vec![DegradationStep::KvPrecisionReduced {
+                from: KvType::F16,
+                to: KvType::Q8_0
+            }]
+        );
+        // Without permission to change the cache type the context shrinks instead.
+        let p = plan(&f, "m", &req(65536, false), &b).unwrap();
+        assert!(p.fits);
+        assert_eq!(p.kv_dtype, "f16");
+        assert_eq!(p.ctx_per_slot, 32768);
+        assert!(matches!(
+            p.degradations[..],
+            [DegradationStep::ContextReduced {
+                from: 65536,
+                to: 32768
+            }]
+        ));
+    }
+
+    #[test]
+    fn refuses_when_weights_alone_do_not_fit() {
+        let dir = tempfile::tempdir().unwrap();
+        let f = model(dir.path());
+        let p = plan(&f, "m", &req(4096, true), &budget(1024)).unwrap();
+        assert!(!p.fits);
+        assert!(p.refusal.unwrap().contains("weights alone"));
+    }
 }
