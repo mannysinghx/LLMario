@@ -2,11 +2,12 @@
 
 Metal GPU backend of the native engine (Architecture §7.4, milestone M2). It implements
 `llmario_engine_model::ModelBackend` for the dense GQA families (`llama`, `mistral3`, `qwen2`,
-`qwen3`, `smollm3`) and the routed mixture-of-experts family (`qwen3moe`), and is selected by
-`--device auto|metal` in `llmario-engine serve` and `raw-run`. Hybrid families (Gated DeltaNet) and
-Gemma 4 are refused with `MetalError::Unsupported`; with `--device auto` the server logs the reason
-and loads the CPU backend instead. The server also keeps a plan that streams MoE experts from disk
-on the CPU, because this backend keeps every weight resident.
+`qwen3`, `smollm3`), the routed mixture-of-experts family (`qwen3moe`) and Gemma 4 (`gemma4`:
+per-layer head geometry, sliding-window and K=V global layers, GeGLU, post-norms, logit
+soft-capping), and is selected by `--device auto|metal` in `llmario-engine serve` and `raw-run`.
+Hybrid families (Gated DeltaNet) are refused with `MetalError::Unsupported`; with `--device auto`
+the server logs the reason and loads the CPU backend instead. The server also keeps a plan that
+streams MoE experts from disk on the CPU, because this backend keeps every weight resident.
 
 Open-source-only: the crate talks to the OS Metal framework through `objc2-metal` /
 `objc2-foundation` / `objc2` (Zlib OR Apache-2.0 OR MIT). Kernels are MSL source embedded in the
@@ -20,6 +21,7 @@ binary and compiled at runtime with `newLibraryWithSource:options:error:` (Metal
 |---|---|
 | Weights | Zero-copy. Each GGUF part's mapping is wrapped with `newBufferWithBytesNoCopy` in `MTLResourceStorageModeShared` (page-aligned base, length rounded up to the page, capped at `maxBufferLength`; a larger mapping gets overlapping page-aligned views sized so every tensor lies inside one view, as ggml-metal does). Tensors are addressed as (view, byte offset) found by pointer arithmetic from the `QMat` slices the model crate already resolved. Nothing is copied. |
 | Norm weights and biases | One small shared buffer, uploaded once at load. |
+| Window layers | Gemma 4's sliding-window layers keep their rows in a second pool of 32-position blocks with its own address table (absolute block numbers). A block is released once no future query can see it, so the window layers hold at most `window + batch` positions and a short conversation only what it wrote (a ring buffer would be charged in full at creation). Snapshots carry the paged blocks plus the window blocks the next query can see. |
 | KV cache | Paged (`src/kv.rs`): blocks of 32 positions holding every layer's K and V rows (f16 or q8_0), each a shared `MTLBuffer` created when a sequence first reaches it and released when no sequence uses it, so GPU memory follows the cached tokens (Metal charges a buffer's whole size at creation; the old up-front cache held 3.9 GiB for Qwen3-1.7B at 32K). Kernels find blocks through a table of 64-bit GPU addresses, one row per sequence (Metal 3). Block ids, reference counts, the LRU and copy-on-write follow the CPU cache. Blocks are kept resident by a dynamic residency set on macOS 15+, otherwise declared on each encoder. A sequence's blocks can be written to and read from a file (the server's disk tier). |
 | Activations | A fixed set of shared buffers sized from the model shape and `n_batch` (x, h, q, k, v, attn, gate, up, logits, token ids, attention partials). No per-token allocation. Logits are read back as f32 after the command buffer completes. |
 | Execution | One command buffer per `forward`, one compute encoder with `MTLDispatchTypeConcurrent`; the backend places `memoryBarrierWithScope(Buffers)` between dependent stages so independent kernels (Q/K/V projections) overlap. The inference thread is the only thread that touches Metal objects; the device, queue and pipelines are process-wide and compiled once. |
@@ -41,6 +43,8 @@ The ledger rows for the Metal device: `DeviceId::Gpu(0)` carries `kv_arena_reser
 | `attn_vec_hd{32,64,128,256}_{f16,q8_0}`, `attn_vec_generic_{f16,q8_0}` | Decode attention: one threadgroup per (query, head, split), each query reading its own sequence's blocks; each simdgroup walks a contiguous key range eight keys at a time with an fp32 online softmax; GQA head mapping; split-K across threadgroups for long contexts with `attn_reduce` merging the partials. |
 | `attn_prefill_hd{64,128}_{f16,q8_0}` | Prefill attention with simdgroup matrices, one dispatch per prompt in the batch: 32 queries per threadgroup, 8 per simdgroup; `S = Q·Kᵀ` from the cache (q8_0 tiles dequantised cooperatively into threadgroup memory), causal mask, fp32 online softmax, `O = diag(corr)·O + P·V`. Used from 8 tokens; other head dims use the per-query kernel. |
 | `swiglu`, `add`, `add_bias` | Element-wise (the GEMM path still uses `swiglu`; biases for Qwen2). |
+| `attn_vec_hd512_*`, window mask | Gemma 4's 512-wide global heads; every decode attention kernel takes a window (`t − p < window`) and the K=V layers store the raw K projection (normalised without a gain) as V. |
+| `rms_norm_add`, `geglu`, `gemv_geglu_<type>`, `scale_inplace`, `softcap` | Gemma 4: post-norm + residual in one pass, GeGLU with ggml-cpu's fp16 GELU, embedding and layer-output scales, final logit soft-capping. |
 | `moe_route` | Routed MoE (`qwen3moe`): one simdgroup per row computes the router softmax and picks the top-k experts in descending order (ties to the lower id), weights renormalised like the CPU path. |
 | `gemv_id_<type>`, `gemv_glu_id_<type>` | Expert matvecs for up to 4 rows: one grid row per (row, expert) pair, the expert's matrix found at `expert · expert_bytes` in the 3-D tensor; gate and up fused with SwiGLU. |
 | `moe_group`, `gemm_id_<type>` | Prompts: `moe_group` lists each expert's pairs (threadgroup atomics), then one GEMM grid per expert multiplies its matrix once over the gathered rows and scatters the outputs. |

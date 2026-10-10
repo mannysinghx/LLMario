@@ -9,6 +9,12 @@
 //! 3.9 GiB for Qwen3-1.7B at 32K before any request). Kernels reach blocks through a table of GPU
 //! addresses (one row of `blocks_per_seq` entries per sequence), so the blocks are kept resident
 //! through a dynamic residency set (macOS 15+) or declared on each command encoder.
+//!
+//! Sliding-window layers (Gemma 4) keep their rows in a second pool of blocks of the same 32
+//! positions, addressed by absolute block number through their own table. A window block is
+//! released once no future query can see it (every position in it is at least `window` behind the
+//! next token), so the window layers hold at most `window + batch` positions and a short
+//! conversation holds only what it wrote; a ring buffer would be charged in full at creation.
 
 use crate::device::{Buf, DynResidency, Gpu};
 use crate::Result;
@@ -22,7 +28,22 @@ pub const BLOCK_TOKENS: usize = 32;
 
 struct Seq {
     blocks: Vec<BlockId>,
+    /// Window blocks by absolute block number (`None`: released or never written).
+    wblocks: Vec<Option<BlockId>>,
     len: usize,
+}
+
+/// The sliding-window layers' block pool.
+pub(crate) struct WindowPool {
+    pub window: usize,
+    block_bytes: usize,
+    /// Per attention layer: `(k_base, v_base)` inside a window block (`None` for paged layers).
+    bases: Vec<Option<(usize, usize)>>,
+    pool: BlockPool,
+    backing: Vec<Option<Buf>>,
+    /// `[n_seqs][bps]` u64 GPU addresses by absolute block number.
+    pub table: Buf,
+    pub bps: usize,
 }
 
 pub(crate) struct MetalKv {
@@ -32,15 +53,18 @@ pub(crate) struct MetalKv {
     seqs: Vec<Seq>,
     /// `[n_seqs][blocks_per_seq]` u64 GPU addresses of each sequence's blocks.
     pub table: Buf,
+    pub win: Option<WindowPool>,
     resid: Option<DynResidency>,
 }
 
 impl MetalKv {
+    /// `n_batch`: most positions one call appends (bounds the live window blocks).
     pub fn new(
         gpu: &Gpu,
         spec: &ArchSpec,
         max_ctx: usize,
         n_seqs: usize,
+        n_batch: usize,
         kv_type: KvType,
     ) -> Result<MetalKv> {
         let layout = KvLayout::new(
@@ -52,19 +76,69 @@ impl MetalKv {
         );
         let n_blocks = layout.pool_blocks;
         let table = gpu.alloc(layout.n_seqs * layout.blocks_per_seq.max(1) * 8)?;
+        let win = Self::window_pool(gpu, &layout, n_batch)?;
         Ok(MetalKv {
             pool: BlockPool::new(n_blocks, BLOCK_TOKENS, layout.block_bytes as u64),
             backing: (0..n_blocks).map(|_| None).collect(),
             seqs: (0..layout.n_seqs)
                 .map(|_| Seq {
                     blocks: Vec::new(),
+                    wblocks: Vec::new(),
                     len: 0,
                 })
                 .collect(),
             resid: gpu.dynamic_residency("llmario-kv-blocks"),
             table,
+            win,
             layout,
         })
+    }
+
+    /// The window layers' pool, laid out like a paged block (each window layer's K rows then V
+    /// rows, 32 positions); `None` without window layers.
+    fn window_pool(gpu: &Gpu, layout: &KvLayout, n_batch: usize) -> Result<Option<WindowPool>> {
+        let mut window = None;
+        let mut off = 0;
+        let mut bases = Vec::with_capacity(layout.layers.len());
+        for l in &layout.layers {
+            match l.window {
+                Some(w) => {
+                    if window.is_some_and(|x| x != w) {
+                        return Err(crate::MetalError::Unsupported(
+                            "sliding-window layers with different widths".into(),
+                        ));
+                    }
+                    window = Some(w);
+                    let k = off;
+                    off += BLOCK_TOKENS * l.k_row;
+                    bases.push(Some((k, off)));
+                    off += BLOCK_TOKENS * l.v_row;
+                }
+                None => bases.push(None),
+            }
+        }
+        let Some(window) = window else {
+            return Ok(None);
+        };
+        let bps = layout.max_ctx.div_ceil(BLOCK_TOKENS);
+        // Live blocks of one sequence: the window behind the first new token plus one call's
+        // tokens, and a partial block at each end.
+        let per_seq = ((window + n_batch).div_ceil(BLOCK_TOKENS) + 1).min(bps);
+        let n = layout.n_seqs * per_seq;
+        Ok(Some(WindowPool {
+            window,
+            block_bytes: off,
+            bases,
+            pool: BlockPool::new(n, BLOCK_TOKENS, off as u64),
+            backing: (0..n).map(|_| None).collect(),
+            table: gpu.alloc(layout.n_seqs * bps * 8)?,
+            bps,
+        }))
+    }
+
+    /// `(k_base, v_base)` of window layer `l` inside a window block.
+    pub fn window_bases(&self, l: usize) -> Option<(usize, usize)> {
+        self.win.as_ref().and_then(|w| w.bases[l])
     }
 
     pub fn n_seqs(&self) -> usize {
@@ -83,10 +157,19 @@ impl MetalKv {
         self.backing.iter().filter(|b| b.is_some()).count()
     }
     pub fn in_use_bytes(&self) -> u64 {
-        (self.resident_blocks() * self.layout.block_bytes) as u64 + self.table.len() as u64
+        let win = self.win.as_ref().map_or(0, |w| {
+            (w.backing.iter().filter(|b| b.is_some()).count() * w.block_bytes + w.table.len())
+                as u64
+        });
+        (self.resident_blocks() * self.layout.block_bytes) as u64 + self.table.len() as u64 + win
     }
     pub fn reserved_bytes(&self) -> u64 {
-        self.layout.reserved_bytes() + self.table.len() as u64
+        // The window layers live in the window pool, not in rings.
+        let rings = (self.layout.n_seqs * self.layout.ring_bytes) as u64;
+        let win = self.win.as_ref().map_or(0, |w| {
+            (w.backing.len() * w.block_bytes + w.table.len()) as u64
+        });
+        self.layout.reserved_bytes() - rings + self.table.len() as u64 + win
     }
 
     fn write_entry(&self, s: usize, i: usize, b: BlockId) {
@@ -155,7 +238,80 @@ impl MetalKv {
                 free: self.pool.free_blocks(),
             });
         }
+        if let Err(e) = self.reserve_window(gpu, s, len, new_len) {
+            return Ok(Err(e));
+        }
         Ok(self.reserve_checked(gpu, s, len, new_len, missing, wanted > missing))
+    }
+
+    /// Absolute window blocks `[first, end)` a query after `len` cached positions can see.
+    fn window_span(&self, len: usize) -> (usize, usize) {
+        match &self.win {
+            Some(w) => {
+                let first = (len + 1).saturating_sub(w.window) / BLOCK_TOKENS;
+                (first, len.div_ceil(BLOCK_TOKENS).max(first))
+            }
+            None => (0, 0),
+        }
+    }
+
+    /// Release the window blocks no query from position `len` on can see, then back the blocks
+    /// up to `new_len`.
+    fn reserve_window(&mut self, gpu: &Gpu, s: usize, len: usize, new_len: usize) -> Result<()> {
+        let Some(w) = self.win.as_mut() else {
+            return Ok(());
+        };
+        // The query at `len` sees keys p > len − window.
+        let first_live = (len + 1).saturating_sub(w.window) / BLOCK_TOKENS;
+        let seq = &mut self.seqs[s];
+        for slot in seq.wblocks.iter_mut().take(first_live) {
+            if let Some(b) = slot.take() {
+                w.pool.release(b);
+                if let Some(buf) = w.backing[b as usize].take() {
+                    if let Some(r) = &mut self.resid {
+                        r.remove(&buf);
+                    }
+                }
+            }
+        }
+        let need = new_len.div_ceil(BLOCK_TOKENS);
+        while seq.wblocks.len() < need {
+            let i = seq.wblocks.len();
+            let b = w
+                .pool
+                .alloc(1)
+                .ok_or_else(|| crate::MetalError::Device("window block pool exhausted".into()))?[0];
+            if w.backing[b as usize].is_none() {
+                let buf = gpu.alloc(w.block_bytes)?;
+                if let Some(r) = &mut self.resid {
+                    r.add(&buf);
+                }
+                w.backing[b as usize] = Some(buf);
+            }
+            let addr = w.backing[b as usize].as_ref().unwrap().gpu_address();
+            w.table
+                .write_bytes((s * w.bps + i) * 8, &addr.to_le_bytes());
+            seq.wblocks.push(Some(b));
+        }
+        Ok(())
+    }
+
+    /// Release sequence `s`'s window blocks from absolute block `from` on.
+    fn release_window_from(&mut self, s: usize, from: usize) {
+        let Some(w) = self.win.as_mut() else {
+            return;
+        };
+        let seq = &mut self.seqs[s];
+        while seq.wblocks.len() > from {
+            if let Some(b) = seq.wblocks.pop().unwrap() {
+                w.pool.release(b);
+                if let Some(buf) = w.backing[b as usize].take() {
+                    if let Some(r) = &mut self.resid {
+                        r.remove(&buf);
+                    }
+                }
+            }
+        }
     }
 
     fn reserve_checked(
@@ -195,14 +351,27 @@ impl MetalKv {
         Ok(())
     }
 
-    pub fn truncate(&mut self, s: usize, n: usize) {
-        let n = n.min(self.seqs[s].len);
+    /// Keep the first `n` positions of sequence `s`. When a window block the next query would
+    /// need was already released, the whole sequence is cleared instead (read `len` afterwards).
+    pub fn truncate(&mut self, s: usize, mut n: usize) {
+        n = n.min(self.seqs[s].len);
+        if let Some(w) = &self.win {
+            let first_needed = (n + 1).saturating_sub(w.window) / BLOCK_TOKENS;
+            let last = n.div_ceil(BLOCK_TOKENS);
+            if n > 0
+                && (first_needed..last)
+                    .any(|i| self.seqs[s].wblocks.get(i).map_or(true, |b| b.is_none()))
+            {
+                n = 0;
+            }
+        }
         self.seqs[s].len = n;
         let keep = n.div_ceil(BLOCK_TOKENS);
         while self.seqs[s].blocks.len() > keep {
             let b = self.seqs[s].blocks.pop().unwrap();
             self.release_block(b);
         }
+        self.release_window_from(s, keep);
     }
 
     pub fn clear(&mut self, s: usize) {
@@ -223,25 +392,41 @@ impl MetalKv {
         for l in &self.layout.layers {
             (l.kv_dim, l.v_dim, l.k_row, l.v_row, l.k_base(), l.v_base()).hash(&mut h);
         }
+        if let Some(w) = &self.win {
+            (w.window, w.block_bytes, &w.bases).hash(&mut h);
+        }
         h.finish()
     }
 
-    /// Bytes of a snapshot of `len` tokens (blocks only: Metal runs the dense families).
+    /// Bytes of a snapshot of `len` tokens: the paged blocks, then the window blocks a query
+    /// after `len` can still see.
     pub fn snapshot_bytes(&self, len: usize) -> usize {
-        len.div_ceil(BLOCK_TOKENS) * self.layout.block_bytes
+        let (first, end) = self.window_span(len);
+        let wb = self.win.as_ref().map_or(0, |w| w.block_bytes);
+        len.div_ceil(BLOCK_TOKENS) * self.layout.block_bytes + (end - first) * wb
     }
 
     /// Write sequence `s`'s blocks straight from the shared buffers (no GPU work may be in
     /// flight).
     pub fn write_seq(&self, s: usize, w: &mut dyn std::io::Write) -> std::io::Result<()> {
-        let nb = self.seqs[s].len.div_ceil(BLOCK_TOKENS);
-        for &b in &self.seqs[s].blocks[..nb] {
-            w.write_all(
-                self.backing[b as usize]
-                    .as_ref()
-                    .expect("backed")
-                    .as_slice(),
-            )?;
+        let len = self.seqs[s].len;
+        let nb = len.div_ceil(BLOCK_TOKENS);
+        if self.layout.block_bytes > 0 {
+            for &b in &self.seqs[s].blocks[..nb] {
+                w.write_all(
+                    self.backing[b as usize]
+                        .as_ref()
+                        .expect("backed")
+                        .as_slice(),
+                )?;
+            }
+        }
+        if let Some(win) = &self.win {
+            let (first, end) = self.window_span(len);
+            for i in first..end {
+                let b = self.seqs[s].wblocks[i].expect("a visible window block is live");
+                w.write_all(win.backing[b as usize].as_ref().expect("backed").as_slice())?;
+            }
         }
         Ok(())
     }
@@ -250,8 +435,12 @@ impl MetalKv {
     /// changed) when the size is wrong or the pool cannot hold it.
     pub fn read_seq(&mut self, gpu: &Gpu, s: usize, len: usize, bytes: &[u8]) -> Result<bool> {
         let bb = self.layout.block_bytes;
-        let nb = len.div_ceil(BLOCK_TOKENS);
-        if len > self.layout.max_ctx || bytes.len() != nb * bb {
+        let nb = if bb > 0 {
+            len.div_ceil(BLOCK_TOKENS)
+        } else {
+            0
+        };
+        if len > self.layout.max_ctx || bytes.len() != self.snapshot_bytes(len) {
             return Ok(false);
         }
         let own = self.seqs[s]
@@ -263,16 +452,38 @@ impl MetalKv {
             return Ok(false);
         }
         self.clear(s);
-        match self.reserve(gpu, s, len) {
-            Ok(r) => r?,
-            Err(_) => return Ok(false),
-        }
+        // Paged blocks only: the window blocks are placed below, at their absolute numbers.
+        self.reserve_checked(gpu, s, 0, len, nb, false)?;
         for i in 0..nb {
             let b = self.seqs[s].blocks[i];
             self.backing[b as usize]
                 .as_ref()
                 .expect("reserved")
                 .write_bytes(0, &bytes[i * bb..(i + 1) * bb]);
+        }
+        let (first, end) = self.window_span(len);
+        if let Some(w) = self.win.as_mut() {
+            let wb = w.block_bytes;
+            let seq = &mut self.seqs[s];
+            seq.wblocks = vec![None; first];
+            for (k, i) in (first..end).enumerate() {
+                let b = w.pool.alloc(1).ok_or_else(|| {
+                    crate::MetalError::Device("window block pool exhausted".into())
+                })?[0];
+                if w.backing[b as usize].is_none() {
+                    let buf = gpu.alloc(wb)?;
+                    if let Some(r) = &mut self.resid {
+                        r.add(&buf);
+                    }
+                    w.backing[b as usize] = Some(buf);
+                }
+                let buf = w.backing[b as usize].as_ref().unwrap();
+                let at = nb * bb + k * wb;
+                buf.write_bytes(0, &bytes[at..at + wb]);
+                w.table
+                    .write_bytes((s * w.bps + i) * 8, &buf.gpu_address().to_le_bytes());
+                seq.wblocks.push(Some(b));
+            }
         }
         self.seqs[s].len = len;
         Ok(true)
@@ -286,7 +497,10 @@ impl MetalKv {
                 r.commit();
                 Vec::new()
             }
-            None => self.backing.iter().flatten().collect(),
+            None => {
+                let win = self.win.iter().flat_map(|w| w.backing.iter().flatten());
+                self.backing.iter().flatten().chain(win).collect()
+            }
         }
     }
 }
