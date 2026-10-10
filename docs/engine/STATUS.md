@@ -142,6 +142,16 @@ with commit 832094c, same metric): 167–183 MiB after load, 403–641 MiB after
   every run. For comparison, `llama-bench -ngl 0 -t 8 -p 4096` gives 122 tok/s on the CPU (with
   Apple's Accelerate BLAS, which this engine does not use) against about 84 tok/s here.
 
+Metal prompt speed (2026-10-10): the prefill GEMM now follows ggml-metal's `kernel_mul_mm` structure
+(8 KiB of threadgroup memory, contiguous 8×8 operand tiles, no transposed loads or stores, the next
+weight tile dequantised before the barrier). At Qwen3-1.7B's shapes it went from 10.9 to 12.4 TFLOPS
+(Q4_K) and 9.1 to 10.8 (Q6_K) (`cargo test --release -p llmario-engine-metal --test gemm_bench --
+--ignored --nocapture`); 512-token prompts, before → after (llama.cpp Metal): Qwen3-1.7B ~3,250 →
+3,630 tok/s (4,100), Gemma 4 12B 445–457 → 515–517 (556–588), Qwen3.5-9B 636–689 → 778–780
+(808–822), Qwen3.5-0.8B 4,160–5,197 → 6,768–6,786 (8,806–8,843), Qwen3-Coder-30B-A3B 1,187–1,243 →
+1,360–1,387 (1,624–1,627, the expert GEMM ported too). Greedy parity unchanged on all five models.
+GEMM is still 63–95 % of prompt time; the DeltaNet scan is 23 % on the 0.8B (token by token).
+
 CPU decode also got faster for every model (Qwen3-1.7B: 91.6–97.9 vs 70.6–72.7 tok/s, 12 threads,
 interleaved A/B against `main`): decode attention splits a task's keys across threads when there
 are fewer (row, KV head) tasks than threads, and the thread pool hands work over with less
