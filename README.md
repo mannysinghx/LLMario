@@ -427,8 +427,8 @@ extra_args = []
 |---|---|---|
 | macOS, Apple Silicon | MLX-LM | ✅ validated (M4 Max, macOS 27) |
 | macOS, Apple Silicon | llama.cpp (Metal) | ✅ validated (build 11146) |
-| macOS, Apple Silicon, CPU | LLMario engine (native, preview) | 🟡 preview: greedy output identical to llama.cpp on Qwen3-1.7B, full chat through the app's gateway; CPU decode 1.7× llama.cpp's CPU path (`docs/engine/STATUS.md`); Metal backend in progress |
-| Linux / Windows, CPU | LLMario engine (native, preview) | 🔬 compiles and passes unit tests in CI; not run on real hardware |
+| macOS, Apple Silicon (CPU and Metal) | LLMario engine (native, preview) | 🟡 preview: greedy output identical to llama.cpp on five models, full chat through the app's gateway; 76–92 % less memory than llama.cpp for conversations that do not fill the context; still slower than llama.cpp on dense models (Metal decode 0.91–0.95×, CPU decode 0.73–0.83×), faster on Qwen3 MoE CPU decode (`docs/engine/STATUS.md`) |
+| Linux, CPU | LLMario engine (native, preview) | 🔬 end-to-end serve test passes in CI (Ubuntu, x86-64); no performance numbers yet. Not supported on Windows |
 | Linux x86_64 + NVIDIA | llama.cpp (CUDA) | 🔬 implemented: `nvidia-smi` detection, hybrid CPU/GPU offload planning. Unvalidated |
 | Linux / macOS, CPU only | llama.cpp | 🔬 implemented, unvalidated |
 | Windows x64, CPU | llama.cpp | 🟡 preview: download, chat and engine cleanup pass in CI (Windows Server 2025, build 11146); not benchmarked or used day to day |
