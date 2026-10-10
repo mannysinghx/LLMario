@@ -317,6 +317,10 @@ impl<'a> Model<'a> {
         if let Some(g) = &spec.gemma4 {
             gemma4::softcap_inplace(&mut scratch.logits[..m * vocab], g.final_logit_softcap);
         }
+        if let (Some(ms), Some(mspec)) = (scratch.moe.as_mut(), spec.moe.as_ref()) {
+            let rows = batch.iter().map(|b| b.tokens.len()).sum();
+            ms.end_step(mspec, &self.weights.layers, rows);
+        }
         Ok(&scratch.logits[..m * vocab])
     }
 
@@ -352,7 +356,7 @@ impl<'a> Model<'a> {
             for (l, layer) in self.weights.layers.iter().enumerate() {
                 self.attention_block(pool, kv, l, layer, rows, scratch);
                 match &layer.moe {
-                    Some(mw) => self.moe_block(pool, layer, mw, n, scratch),
+                    Some(mw) => self.moe_block(pool, l, layer, mw, n, scratch),
                     None => self.ffn_block(pool, layer, n, scratch),
                 }
             }
@@ -532,9 +536,11 @@ impl<'a> Model<'a> {
 
 impl Model<'_> {
     /// Pre-norm and the routed experts of a mixture-of-experts layer (see `moe.rs`).
+    #[allow(clippy::too_many_arguments)]
     fn moe_block(
         &self,
         pool: &ThreadPool,
+        l: usize,
         layer: &LayerWeights,
         mw: &crate::weights::MoeWeights,
         n: usize,
@@ -552,7 +558,7 @@ impl Model<'_> {
             );
         }
         let ms = s.moe.as_mut().expect("MoE scratch");
-        moe::moe_ffn(spec, m, mw, pool, n, &s.h, &mut s.x, ms);
+        moe::moe_ffn(spec, m, mw, pool, l, n, &s.h, &mut s.x, ms);
     }
 }
 
