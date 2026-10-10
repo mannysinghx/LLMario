@@ -480,12 +480,21 @@ impl Gpu {
     /// Claim room for one more residency set on the queue; `false` near Metal's limit.
     fn reserve_set_slot(&self) -> bool {
         use std::sync::atomic::Ordering;
-        let ok = self
-            .attached
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| {
-                (n < MAX_QUEUE_RESIDENCY_SETS).then_some(n + 1)
-            })
-            .is_ok();
+        // A compare-exchange loop (`fetch_update` is deprecated on current stable, and its
+        // replacement is newer than this crate's minimum Rust).
+        let mut n = self.attached.load(Ordering::Acquire);
+        let ok = loop {
+            if n >= MAX_QUEUE_RESIDENCY_SETS {
+                break false;
+            }
+            match self
+                .attached
+                .compare_exchange_weak(n, n + 1, Ordering::AcqRel, Ordering::Acquire)
+            {
+                Ok(_) => break true,
+                Err(cur) => n = cur,
+            }
+        };
         if !ok {
             tracing::debug!("queue residency set limit reached; buffers are declared per command");
         }
