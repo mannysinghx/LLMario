@@ -60,6 +60,17 @@ enum Cmd {
         /// `q8_0`.
         #[arg(long, default_value = "auto", value_parser = parse_kv_type)]
         kv_type: KvArg,
+        /// Directory for the KV disk tier: conversations evicted from memory are saved there
+        /// (owner-only files) and read back when they continue. Off when not given.
+        #[arg(long)]
+        kv_cache_dir: Option<PathBuf>,
+        /// Disk budget of `--kv-cache-dir` in GiB (least recently used files leave first;
+        /// 0 = off).
+        #[arg(long, default_value_t = 8.0)]
+        kv_cache_gb: f64,
+        /// Fewest tokens worth saving or restoring.
+        #[arg(long, default_value_t = llmario_engine_server::KV_CACHE_MIN_TOKENS)]
+        kv_cache_min_tokens: usize,
     },
     /// Report what this build can run (`--json` for the supervisor).
     Probe {
@@ -178,6 +189,9 @@ fn main() -> Result<()> {
                 web: false,
                 searxng_url: None,
                 kv_type: kv_type.0,
+                kv_cache_dir: None,
+                kv_cache_bytes: 0,
+                kv_cache_min_tokens: llmario_engine_server::KV_CACHE_MIN_TOKENS,
             };
             let (plan, _) = llmario_engine_server::plan_for(&f, &opts)?;
             if json {
@@ -217,7 +231,14 @@ fn main() -> Result<()> {
             web,
             searxng_url,
             kv_type,
+            kv_cache_dir,
+            kv_cache_gb,
+            kv_cache_min_tokens,
         } => {
+            anyhow::ensure!(
+                kv_cache_gb.is_finite() && kv_cache_gb >= 0.0,
+                "--kv-cache-gb must be a number of GiB, 0 or more"
+            );
             let threads = threads.unwrap_or_else(|| {
                 std::thread::available_parallelism()
                     .map(|n| n.get())
@@ -241,6 +262,9 @@ fn main() -> Result<()> {
                 web,
                 searxng_url,
                 kv_type: kv_type.0,
+                kv_cache_dir,
+                kv_cache_bytes: (kv_cache_gb * (1u64 << 30) as f64) as u64,
+                kv_cache_min_tokens,
             };
             let rt = tokio::runtime::Builder::new_multi_thread()
                 .worker_threads(2)

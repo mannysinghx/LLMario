@@ -939,6 +939,217 @@ impl KvCache {
     }
 }
 
+/// One sequence's cached state as bytes (the disk tier's payload, Architecture §8.6): its paged
+/// blocks back to back, each window layer's written ring slots (`min(len, cap)` K rows, then as
+/// many V rows), then each Gated DeltaNet layer's conv history and state (f32, native order).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct SeqSnapshot {
+    /// Tokens the state covers.
+    pub len: usize,
+    pub bytes: Vec<u8>,
+}
+
+/// FNV-1a: a hash that stays the same across runs and toolchains, for keys that are written to
+/// disk (std's `DefaultHasher` may change between Rust releases).
+pub struct StableHasher(u64);
+
+impl Default for StableHasher {
+    fn default() -> StableHasher {
+        StableHasher(0xcbf2_9ce4_8422_2325)
+    }
+}
+
+impl std::hash::Hasher for StableHasher {
+    fn write(&mut self, bytes: &[u8]) {
+        for &b in bytes {
+            self.0 = (self.0 ^ b as u64).wrapping_mul(0x0000_0100_0000_01b3);
+        }
+    }
+    fn finish(&self) -> u64 {
+        self.0
+    }
+}
+
+/// View an f32 slice as its bytes.
+fn f32_bytes(v: &[f32]) -> &[u8] {
+    // SAFETY: any f32 is 4 initialised bytes; u8 has no alignment requirement.
+    unsafe { std::slice::from_raw_parts(v.as_ptr() as *const u8, v.len() * 4) }
+}
+
+impl KvCache {
+    /// A hash of everything a snapshot's bytes depend on (byte order, cache type, block size,
+    /// every layer's geometry and offsets, recurrent size): snapshots only move between caches
+    /// with equal fingerprints. Stable across runs, so it can key files on disk.
+    pub fn fingerprint(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut h = StableHasher::default();
+        "cpu".hash(&mut h);
+        cfg!(target_endian = "little").hash(&mut h);
+        self.layout.kv_type.hash(&mut h);
+        self.layout.block_tokens.hash(&mut h);
+        self.layout.block_bytes.hash(&mut h);
+        self.layout.ring_bytes.hash(&mut h);
+        self.layout.recurrent_bytes.hash(&mut h);
+        self.layout.max_ctx.hash(&mut h);
+        for l in &self.layout.layers {
+            (
+                l.kv_dim, l.v_dim, l.cap, l.window, l.k_row, l.v_row, l.off, l.rows,
+            )
+                .hash(&mut h);
+        }
+        h.finish()
+    }
+
+    /// Whether a restored snapshot can be cut back to a shorter prefix (only plain paged
+    /// layers: a recurrent state cannot be rewound and a ring may have overwritten positions).
+    pub fn snapshot_trimmable(&self) -> bool {
+        self.layout.ring_bytes == 0 && self.rs_shape.is_none()
+    }
+
+    /// Bytes of a snapshot covering `len` tokens.
+    pub fn snapshot_bytes(&self, len: usize) -> usize {
+        if len == 0 {
+            return 0;
+        }
+        let blocks = if self.layout.block_bytes > 0 {
+            len.div_ceil(self.layout.block_tokens) * self.layout.block_bytes
+        } else {
+            0
+        };
+        let rings: usize = self
+            .layout
+            .layers
+            .iter()
+            .filter(|l| !l.paged())
+            .map(|l| len.min(l.cap) * (l.k_row + l.v_row))
+            .sum();
+        let recurrent = self.rs_shape.map_or(0, |(c, st, n)| n * (c + st) * 4);
+        blocks + rings + recurrent
+    }
+
+    /// Write sequence `s`'s state (`snapshot_bytes(len(s))` bytes) straight from the cache
+    /// memory, without an intermediate copy.
+    pub fn write_seq(&self, s: usize, w: &mut dyn std::io::Write) -> std::io::Result<()> {
+        let seq = &self.seqs[s];
+        let len = seq.len;
+        if len == 0 {
+            return Ok(());
+        }
+        let bb = self.layout.block_bytes;
+        if bb > 0 {
+            for &b in &seq.blocks[..len.div_ceil(self.layout.block_tokens)] {
+                let r = self.backing[b as usize].as_ref().expect("backed block");
+                // SAFETY: a backed block is `block_bytes` of owned memory.
+                w.write_all(unsafe { std::slice::from_raw_parts(r.as_ptr(), bb) })?;
+            }
+        }
+        if !seq.ring.is_empty() {
+            for l in self.layout.layers.iter().filter(|l| !l.paged()) {
+                let used = len.min(l.cap);
+                for (base, row) in [(l.k_base(), l.k_row), (l.v_base(), l.v_row)] {
+                    // SAFETY: rows `0..used` of this layer lie inside the ring region.
+                    w.write_all(unsafe {
+                        std::slice::from_raw_parts(seq.ring.as_ptr().add(base), used * row)
+                    })?;
+                }
+            }
+        }
+        for r in &seq.rs {
+            w.write_all(f32_bytes(&r.conv))?;
+            w.write_all(f32_bytes(&r.state))?;
+        }
+        Ok(())
+    }
+
+    /// Replace sequence `s`'s state with `len` tokens' worth of snapshot bytes (written by a
+    /// cache with the same [`KvCache::fingerprint`]; `bytes.len()` must be
+    /// `snapshot_bytes(len)`). Fails without changing anything when the pool cannot hold it.
+    pub fn read_seq(&mut self, s: usize, len: usize, bytes: &[u8]) -> Result<(), KvFull> {
+        assert!(
+            len <= self.layout.max_ctx,
+            "snapshot longer than the context"
+        );
+        assert_eq!(bytes.len(), self.snapshot_bytes(len), "snapshot size");
+        let bb = self.layout.block_bytes;
+        let nb = if bb > 0 {
+            len.div_ceil(self.layout.block_tokens)
+        } else {
+            0
+        };
+        // Room first: clearing frees this sequence's blocks, so count them as available.
+        let own = self.seqs[s]
+            .blocks
+            .iter()
+            .filter(|&&b| self.pool.refs(b) == 1)
+            .count();
+        if nb > self.pool.free_blocks() + own {
+            return Err(KvFull {
+                needed: nb,
+                free: self.pool.free_blocks() + own,
+            });
+        }
+        self.clear(s);
+        if len == 0 {
+            return Ok(());
+        }
+        self.reserve(s, len).expect("checked above");
+        let mut at = 0;
+        for &b in &self.seqs[s].blocks {
+            let r = self.backing[b as usize].as_ref().expect("reserved block");
+            // SAFETY: a backed block is `block_bytes` of owned memory; `&mut self` is exclusive.
+            unsafe { std::ptr::copy_nonoverlapping(bytes[at..at + bb].as_ptr(), r.as_ptr(), bb) };
+            at += bb;
+        }
+        if self.layout.ring_bytes > 0 {
+            for l in self.layout.layers.clone().iter().filter(|l| !l.paged()) {
+                let used = len.min(l.cap);
+                for (base, row) in [(l.k_base(), l.k_row), (l.v_base(), l.v_row)] {
+                    let n = used * row;
+                    // SAFETY: rows `0..used` lie inside the ring region `reserve` created.
+                    unsafe {
+                        std::ptr::copy_nonoverlapping(
+                            bytes[at..at + n].as_ptr(),
+                            self.seqs[s].ring.as_ptr().add(base),
+                            n,
+                        );
+                    }
+                    at += n;
+                }
+            }
+        }
+        for r in &mut self.seqs[s].rs {
+            for v in [&mut r.conv, &mut r.state] {
+                let n = v.len() * 4;
+                // SAFETY: `v` owns `n` bytes; the source is a byte slice (no alignment needed).
+                unsafe {
+                    std::ptr::copy_nonoverlapping(
+                        bytes[at..at + n].as_ptr(),
+                        v.as_mut_ptr() as *mut u8,
+                        n,
+                    );
+                }
+                at += n;
+            }
+        }
+        debug_assert_eq!(at, bytes.len());
+        self.seqs[s].len = len;
+        Ok(())
+    }
+
+    /// Copy sequence `s`'s state out (tests; the disk tier streams with `write_seq`).
+    pub fn export(&self, s: usize) -> SeqSnapshot {
+        let len = self.seqs[s].len;
+        let mut bytes = Vec::with_capacity(self.snapshot_bytes(len));
+        self.write_seq(s, &mut bytes).expect("writing to memory");
+        SeqSnapshot { len, bytes }
+    }
+
+    /// See [`KvCache::read_seq`].
+    pub fn import(&mut self, s: usize, snap: &SeqSnapshot) -> Result<(), KvFull> {
+        self.read_seq(s, snap.len, &snap.bytes)
+    }
+}
+
 /// See [`KvCache::reader`]. Holds raw addresses into regions the cache owns; it is only built
 /// and used while the cache is borrowed immutably (no writes can happen meanwhile).
 pub(crate) struct LayerReader {

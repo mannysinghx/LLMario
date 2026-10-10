@@ -7,7 +7,9 @@
 //!
 //! Covers: readiness, plan and ledger endpoints, non-streaming and streaming chat with usage,
 //! JSON-schema output, a forced tool call, cancellation on client disconnect, two concurrent
-//! requests, a prompt longer than the context, and shutdown through `/engine/control`.
+//! requests, a prompt longer than the context, and shutdown through `/engine/control`; and the
+//! KV disk tier (a conversation evicted from the only slot is saved, read back with the same
+//! answer, and read back again after a restart).
 
 use serde_json::{json, Value};
 use std::io::{BufRead, BufReader, Read, Write};
@@ -122,11 +124,16 @@ fn chat(port: u16, body: Value) -> (u16, Value) {
 }
 
 fn start() -> Option<Engine> {
+    let slots = std::env::var("LLMARIO_E2E_SLOTS").unwrap_or_else(|_| "2".into());
+    start_with(&["--parallel", &slots])
+}
+
+/// Start the engine with the environment's model, device and KV type plus `extra` flags.
+fn start_with(extra: &[&str]) -> Option<Engine> {
     let model = std::env::var("LLMARIO_TEST_GGUF").ok()?;
     let model = model.split(',').next()?.to_string();
     let device = std::env::var("LLMARIO_E2E_DEVICE").unwrap_or_else(|_| "cpu".into());
     let kv = std::env::var("LLMARIO_E2E_KV").unwrap_or_else(|_| "auto".into());
-    let slots = std::env::var("LLMARIO_E2E_SLOTS").unwrap_or_else(|_| "2".into());
     let port = free_port();
     // Engine logs go to a file so a startup failure can be shown in the panic message.
     let log_path = std::env::temp_dir().join(format!("llmario-serve-e2e-{port}.log"));
@@ -148,9 +155,8 @@ fn start() -> Option<Engine> {
             "e2e",
             "--kv-type",
             &kv,
-            "--parallel",
-            &slots,
         ])
+        .args(extra)
         .stdout(Stdio::null())
         .stderr(Stdio::from(log.try_clone().unwrap()))
         .spawn()
@@ -427,8 +433,13 @@ fn serve_end_to_end() {
     assert_eq!(http(port, "GET", "/health", None, None).0, 200);
 
     // Shutdown through the control endpoint.
+    shutdown(&mut e);
+}
+
+/// Stop the engine through `/engine/control` and check it exits cleanly.
+fn shutdown(e: &mut Engine) {
     let (st, _) = http(
-        port,
+        e.port,
         "POST",
         "/engine/control",
         Some(&json!({"action": "exit"})),
@@ -447,4 +458,94 @@ fn serve_end_to_end() {
         );
         std::thread::sleep(Duration::from_millis(100));
     }
+}
+
+/// The KV disk tier with one slot: a long conversation is pushed out by another request and
+/// saved; asking it again reads it back (the prompt is not recomputed) and gives the same greedy
+/// answer; after a restart the file is found and read back again. Files are owner-only. With a
+/// cache that cannot be rewound (recurrent or window layers) only the save is checked: the same
+/// prompt again needs the state one token earlier.
+#[test]
+fn kv_disk_tier_end_to_end() {
+    let dir = tempfile::tempdir().unwrap();
+    let kv_dir = dir.path().join("kv");
+    let kv = kv_dir.to_str().unwrap().to_string();
+    let flags = [
+        "--parallel",
+        "1",
+        "--kv-cache-dir",
+        &kv,
+        "--kv-cache-min-tokens",
+        "64",
+    ];
+    let Some(mut e) = start_with(&flags) else {
+        eprintln!("LLMARIO_TEST_GGUF not set; skipping");
+        return;
+    };
+    let long = format!(
+        "Here are some notes about rivers. {} Using the notes, which river flows through Paris? \
+         One word.",
+        "The Seine flows through Paris and into the English Channel. The Thames flows through \
+         London. The Danube passes Vienna, Budapest and Belgrade. "
+            .repeat(6)
+    );
+    let ask_long = json!({"messages": user(&long), "temperature": 0, "max_tokens": 24, "enable_thinking": false});
+    let other = json!({"messages": user("Name a colour. One word."), "temperature": 0,
+                       "max_tokens": 8, "enable_thinking": false});
+    let stats = |port| get_json(port, "/engine/stats")["kv_disk"].clone();
+    assert_eq!(stats(e.port)["enabled"], true, "{}", stats(e.port));
+    let trimmable = stats(e.port)["trimmable"].as_bool().unwrap();
+
+    let (st, first) = chat(e.port, ask_long.clone());
+    assert_eq!(st, 200, "{first}");
+    let answer = first["choices"][0]["message"]["content"].clone();
+    let prompt_tokens = first["usage"]["prompt_tokens"].as_u64().unwrap();
+    assert!(prompt_tokens > 128, "prompt of {prompt_tokens} tokens");
+    let (st, r) = chat(e.port, other.clone());
+    assert_eq!(st, 200, "{r}");
+    let s = stats(e.port);
+    eprintln!("after eviction: {s}");
+    assert_eq!(s["saves"], 1, "the evicted conversation was not saved: {s}");
+    assert!(s["bytes"].as_u64().unwrap() > 0);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = |p: &std::path::Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(&kv_dir), 0o700);
+        for f in std::fs::read_dir(&kv_dir).unwrap() {
+            assert_eq!(mode(&f.unwrap().path()), 0o600);
+        }
+    }
+    if !trimmable {
+        eprintln!("cache cannot be rewound; restore checks skipped");
+        shutdown(&mut e);
+        return;
+    }
+    let check_restored = |port: u16, what: &str| {
+        let before = stats(port)["restores"].as_u64().unwrap();
+        let (st, r) = chat(port, ask_long.clone());
+        assert_eq!(st, 200, "{r}");
+        assert_eq!(
+            r["choices"][0]["message"]["content"], answer,
+            "{what}: the restored cache answers differently"
+        );
+        let cached = r["usage"]["prompt_tokens_details"]["cached_tokens"]
+            .as_u64()
+            .unwrap();
+        assert_eq!(cached, prompt_tokens - 1, "{what}: cached {cached}");
+        let s = stats(port);
+        eprintln!("{what}: {s}");
+        assert_eq!(s["restores"].as_u64().unwrap(), before + 1, "{what}: {s}");
+    };
+    check_restored(e.port, "restored");
+    // Evict it again (the file already covers it: no second write), restart, read it back.
+    let (st, _) = chat(e.port, other.clone());
+    assert_eq!(st, 200);
+    assert_eq!(stats(e.port)["saves"], 1);
+    shutdown(&mut e);
+    drop(e);
+    let mut e = start_with(&flags).unwrap();
+    assert_eq!(stats(e.port)["files"], 1);
+    check_restored(e.port, "after restart");
+    shutdown(&mut e);
 }

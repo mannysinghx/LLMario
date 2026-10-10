@@ -392,6 +392,8 @@ enabled = false             # true: GGUF models whose architecture it supports r
 # threads = 12              # default: the physical performance cores
 web_access = false          # true: models may use the built-in web_fetch tool (SSRF-guarded)
 # searxng_url = "http://127.0.0.1:8080"   # self-hosted SearXNG (JSON enabled) for web_search
+# kv_cache_gb = 8           # disk for conversations pushed out of memory (read back, not recomputed); 0 = off
+# kv_cache_dir = "/path"    # default: $LLMARIO_HOME/cache/kv (owner-only files; safe to delete)
 [backends.llamacpp]
 # server_path = "/opt/homebrew/bin/llama-server"
 # gpu_layers = 999

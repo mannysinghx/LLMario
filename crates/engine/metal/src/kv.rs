@@ -209,6 +209,75 @@ impl MetalKv {
         self.truncate(s, 0);
     }
 
+    /// Hash of the layout (as the CPU cache's: stable across runs, so a snapshot only moves
+    /// between equal layouts).
+    pub fn fingerprint(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut h = llmario_engine_model::StableHasher::default();
+        "metal".hash(&mut h);
+        cfg!(target_endian = "little").hash(&mut h);
+        self.layout.kv_type.hash(&mut h);
+        self.layout.block_tokens.hash(&mut h);
+        self.layout.block_bytes.hash(&mut h);
+        self.layout.max_ctx.hash(&mut h);
+        for l in &self.layout.layers {
+            (l.kv_dim, l.v_dim, l.k_row, l.v_row, l.k_base(), l.v_base()).hash(&mut h);
+        }
+        h.finish()
+    }
+
+    /// Bytes of a snapshot of `len` tokens (blocks only: Metal runs the dense families).
+    pub fn snapshot_bytes(&self, len: usize) -> usize {
+        len.div_ceil(BLOCK_TOKENS) * self.layout.block_bytes
+    }
+
+    /// Write sequence `s`'s blocks straight from the shared buffers (no GPU work may be in
+    /// flight).
+    pub fn write_seq(&self, s: usize, w: &mut dyn std::io::Write) -> std::io::Result<()> {
+        let nb = self.seqs[s].len.div_ceil(BLOCK_TOKENS);
+        for &b in &self.seqs[s].blocks[..nb] {
+            w.write_all(
+                self.backing[b as usize]
+                    .as_ref()
+                    .expect("backed")
+                    .as_slice(),
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Replace sequence `s`'s state with `len` tokens of snapshot bytes; `Ok(false)` (nothing
+    /// changed) when the size is wrong or the pool cannot hold it.
+    pub fn read_seq(&mut self, gpu: &Gpu, s: usize, len: usize, bytes: &[u8]) -> Result<bool> {
+        let bb = self.layout.block_bytes;
+        let nb = len.div_ceil(BLOCK_TOKENS);
+        if len > self.layout.max_ctx || bytes.len() != nb * bb {
+            return Ok(false);
+        }
+        let own = self.seqs[s]
+            .blocks
+            .iter()
+            .filter(|&&b| self.pool.refs(b) == 1)
+            .count();
+        if nb > self.pool.free_blocks() + own {
+            return Ok(false);
+        }
+        self.clear(s);
+        match self.reserve(gpu, s, len) {
+            Ok(r) => r?,
+            Err(_) => return Ok(false),
+        }
+        for i in 0..nb {
+            let b = self.seqs[s].blocks[i];
+            self.backing[b as usize]
+                .as_ref()
+                .expect("reserved")
+                .write_bytes(0, &bytes[i * bb..(i + 1) * bb]);
+        }
+        self.seqs[s].len = len;
+        Ok(true)
+    }
+
     /// Apply residency changes before encoding (macOS 15+), or return the buffers the command
     /// must declare itself.
     pub fn prepare(&mut self) -> Vec<&Buf> {

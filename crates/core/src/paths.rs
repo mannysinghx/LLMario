@@ -60,6 +60,10 @@ impl Paths {
     pub fn tmp_dir(&self) -> PathBuf {
         self.home.join("tmp")
     }
+    /// Conversation state the native engine saved to disk (its KV disk tier).
+    pub fn kv_cache_dir(&self) -> PathBuf {
+        self.home.join("cache").join("kv")
+    }
 
     pub fn ensure(&self) -> anyhow::Result<()> {
         for d in [

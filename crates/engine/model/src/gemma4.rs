@@ -1002,6 +1002,25 @@ mod tests {
         }
     }
 
+    /// Snapshots carry the window rings, including wrapped ones.
+    #[test]
+    fn gemma4_snapshot_round_trip_with_wrapped_rings() {
+        let dir = tempfile::tempdir().unwrap();
+        let f = GgufFile::open(&tiny_gemma4_model(dir.path())).unwrap();
+        let m = Model::load(&f).unwrap();
+        let pool = ThreadPool::new(2);
+        let opts = KvOptions::new(64).ring_batch(4);
+        let toks = [3u32, 17, 5, 42, 9, 61, 2, 33, 12, 7, 50, 28];
+        let mut a = KvCache::with_options(&m.spec, opts);
+        run(&m, &pool, &mut a, &toks, toks.len());
+        let snap = a.export(0);
+        assert!(a.layout.ring_bytes > 0 && !a.snapshot_trimmable());
+        let want = run(&m, &pool, &mut a, &[19], 1);
+        let mut b = KvCache::with_options(&m.spec, opts);
+        b.import(0, &snap).unwrap();
+        assert_eq!(run(&m, &pool, &mut b, &[19], 1), want);
+    }
+
     #[test]
     fn truncate_resets_only_when_a_ring_lost_positions() {
         let dir = tempfile::tempdir().unwrap();

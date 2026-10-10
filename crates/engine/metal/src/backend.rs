@@ -1223,4 +1223,19 @@ impl ModelBackend for MetalBackend<'_> {
     fn kv_free_tokens(&self) -> usize {
         self.kv.free_tokens()
     }
+    fn kv_fingerprint(&self) -> u64 {
+        self.kv.fingerprint()
+    }
+    fn snapshot_bytes(&self, len: usize) -> usize {
+        self.kv.snapshot_bytes(len)
+    }
+    fn snapshot_trimmable(&self) -> bool {
+        true
+    }
+    fn write_seq(&self, s: usize, w: &mut dyn std::io::Write) -> std::io::Result<()> {
+        self.kv.write_seq(s, w)
+    }
+    fn read_seq(&mut self, s: usize, len: usize, bytes: &[u8]) -> bool {
+        matches!(self.kv.read_seq(&self.gpu, s, len, bytes), Ok(true))
+    }
 }
