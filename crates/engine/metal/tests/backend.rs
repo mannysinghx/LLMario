@@ -382,6 +382,42 @@ fn matmul_kernels_match_scalar_reference() {
             "{dtype} gemm: max abs diff {diff} (scale {scale})"
         );
 
+        // The main prefill GEMM (`gemmf`): edge tiles in both dimensions, and with the residual
+        // accumulated into what `y` already holds.
+        for accumulate in [0u32, 1] {
+            let base: Vec<f32> = (0..n * rows).map(|i| (i % 17) as f32 * 0.25).collect();
+            ybuf.write_f32(0, &base);
+            let cmd = gpu.begin().unwrap();
+            cmd.dispatch(
+                kernel_name("gemmf", dtype),
+                &[(0, &wbuf, 0), (1, &xbuf, 0), (2, &ybuf, 0)],
+                3,
+                &GemmParams {
+                    rows: rows as u32,
+                    cols: cols as u32,
+                    n: n as u32,
+                    row_bytes: dtype.row_bytes(cols) as u32,
+                    accumulate,
+                },
+                (groups(n, 32), groups(rows, 64), 1),
+                (128, 1, 1),
+            )
+            .unwrap();
+            cmd.finish().unwrap();
+            let mut got = vec![0f32; n * rows];
+            ybuf.read_f32(0, &mut got);
+            let want: Vec<f32> = expect
+                .iter()
+                .zip(&base)
+                .map(|(e, b)| if accumulate == 1 { e + b } else { *e })
+                .collect();
+            let diff = max_abs_diff(&got, &want);
+            assert!(
+                diff <= 6e-3 * scale,
+                "{dtype} gemmf (accumulate {accumulate}): max abs diff {diff} (scale {scale})"
+            );
+        }
+
         // Embedding gather of rows 3 and 69.
         let toks = [3u32, 69];
         let tbuf = gpu.alloc(8).unwrap();
@@ -1015,6 +1051,30 @@ fn moe_expert_kernels_match_scalar_reference() {
             assert!(
                 diff <= 6e-3 * scale,
                 "{dtype} gemm_id (per pair {per_pair}): {diff} (scale {scale})"
+            );
+            // The blocked variant (cols % 32 == 0 here).
+            ybuf.write_f32(0, &vec![0f32; pairs * rows]);
+            let cmd = gpu.begin().unwrap();
+            cmd.dispatch(
+                kernel_name("gemm_idf", dtype),
+                &[
+                    (0, &wbuf, 0),
+                    (1, xbuf, 0),
+                    (2, &ybuf, 0),
+                    (4, &counts, 0),
+                    (5, &ids, 0),
+                ],
+                3,
+                &mp,
+                (groups(n, 32), groups(rows, 64), ne),
+                (128, 1, 1),
+            )
+            .unwrap();
+            cmd.finish().unwrap();
+            let diff = max_abs_diff(&read(), &want);
+            assert!(
+                diff <= 6e-3 * scale,
+                "{dtype} gemm_idf (per pair {per_pair}): {diff} (scale {scale})"
             );
         }
         // Gate/up SwiGLU per pair.

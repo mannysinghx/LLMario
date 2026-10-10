@@ -274,6 +274,109 @@ GEMM_ID_INSTANCE("gemm_id_q4_k", TagQ4_K)
 GEMM_ID_INSTANCE("gemm_id_q5_k", TagQ5_K)
 GEMM_ID_INSTANCE("gemm_id_q6_k", TagQ6_K)
 
+// `gemm_id_t` with `gemmf_t`'s structure (gemm.metal): blocked 8 KiB operand tiles, no
+// transposed loads, the next weight tile dequantised before the barrier. Rows are gathered from
+// the expert's pair list, so outputs always go out through the staging tile. Needs `cols % 32 == 0`.
+template <typename Tag>
+kernel void gemm_idf_t(device const uchar* W [[buffer(0)]],
+                       device const float* x [[buffer(1)]],
+                       device float* y [[buffer(2)]],
+                       constant GemmIdParams& p [[buffer(3)]],
+                       device const uint* counts [[buffer(4)]],
+                       device const uint* ids [[buffer(5)]],
+                       uint3 tgpig [[threadgroup_position_in_grid]],
+                       ushort tiitg [[thread_index_in_threadgroup]],
+                       ushort sgitg [[simdgroup_index_in_threadgroup]]) {
+    const uint e = tgpig.z;
+    const uint cnt = counts[e];
+    const uint r1 = tgpig.x * GEMM_BN;
+    if (r1 >= cnt) return;  // uniform across the threadgroup
+    const uint r0 = tgpig.y * GEMM_BM;
+    device const uint* list = ids + (ulong)e * p.cap;
+
+    threadgroup half shmem[4096];
+    threadgroup half* sa = shmem;
+    threadgroup half* sb = shmem + 2048;
+
+    const short nr0 = min((uint)GEMM_BM, p.rows - r0);
+    const short nr1 = min((uint)GEMM_BN, cnt - r1);
+    const short lr0 = min((short)(tiitg / 2), (short)(nr0 - 1));
+    const short lr1 = min((short)(tiitg / 4), (short)(nr1 - 1));
+    const short il0 = tiitg % 2;
+    const short ib4 = tiitg % 4;
+
+    device const uchar* wrow = W + (ulong)e * p.expert_bytes + (ulong)(r0 + lr0) * p.row_bytes;
+    const uint pair_in = list[r1 + lr1];
+    device const float* xrow =
+        x + (ulong)(p.x_per_pair != 0 ? pair_in : pair_in / p.k) * p.cols + 8 * ib4;
+
+    const short arow = tiitg / 2;
+    threadgroup half* adst = sa + (8 * (2 * il0) + arow / 8) * 64 + arow % 8;
+    const short btok = tiitg / 4;
+    threadgroup half* bdst = sb + (4 * ib4 + btok / 8) * 64 + 8 * (btok % 8);
+
+    simdgroup_float8x8 mc[8];
+    for (short i = 0; i < 8; i++) mc[i] = simdgroup_float8x8(0.0f);
+
+    for (uint k0 = 0; k0 < p.cols; k0 += GEMM_BK) {
+        float tmp[16];
+        dq16(Tag(), wrow, k0 + 16 * il0, tmp);
+        const float4 xa = *(device const float4*)(xrow + k0);
+        const float4 xb = *(device const float4*)(xrow + k0 + 4);
+
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        for (short i = 0; i < 16; i++) {
+            adst[(i / 8) * 8 * 64 + 8 * (i % 8)] = half(tmp[i]);
+        }
+        *(threadgroup half4*)(bdst) = half4(xa);
+        *(threadgroup half4*)(bdst + 4) = half4(xb);
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+
+        threadgroup const half* lsma = sa + 4 * 64 * (sgitg % 2);
+        threadgroup const half* lsmb = sb + 2 * 64 * (sgitg / 2);
+        for (short ik = 0; ik < GEMM_BK / 8; ik++) {
+            simdgroup_half8x8 ma[4];
+            simdgroup_half8x8 mb[2];
+            simdgroup_barrier(mem_flags::mem_none);
+            for (short i = 0; i < 4; i++) simdgroup_load(ma[i], lsma + 64 * i, 8, 0, false);
+            simdgroup_barrier(mem_flags::mem_none);
+            for (short i = 0; i < 2; i++) simdgroup_load(mb[i], lsmb + 64 * i, 8, 0, false);
+            simdgroup_barrier(mem_flags::mem_none);
+            for (short i = 0; i < 8; i++) {
+                simdgroup_multiply_accumulate(mc[i], mb[i / 4], ma[i % 4], mc[i]);
+            }
+            lsma += 8 * 64;
+            lsmb += 4 * 64;
+        }
+    }
+
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    threadgroup float* st = (threadgroup float*)shmem + 32 * (sgitg & 1) + 16 * (sgitg >> 1) * GEMM_BM;
+    for (short i = 0; i < 8; i++) {
+        simdgroup_store(mc[i], st + 8 * (i % 4) + 8 * GEMM_BM * (i / 4), GEMM_BM, 0, false);
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    threadgroup const float* all = (threadgroup const float*)shmem;
+    for (uint idx = tiitg; idx < GEMM_BM * GEMM_BN; idx += GEMM_THREADS) {
+        const uint t = idx / GEMM_BM;
+        const uint r = idx % GEMM_BM;
+        if (r < (uint)nr0 && t < (uint)nr1) {
+            y[(ulong)list[r1 + t] * p.rows + r0 + r] = all[t * GEMM_BM + r];
+        }
+    }
+}
+
+#define GEMM_IDF_INSTANCE(name, Tag) \
+    template [[host_name(name)]] kernel void gemm_idf_t<Tag>(device const uchar*, device const float*, device float*, constant GemmIdParams&, device const uint*, device const uint*, uint3, ushort, ushort);
+
+GEMM_IDF_INSTANCE("gemm_idf_f32", TagF32)
+GEMM_IDF_INSTANCE("gemm_idf_f16", TagF16)
+GEMM_IDF_INSTANCE("gemm_idf_q4_0", TagQ4_0)
+GEMM_IDF_INSTANCE("gemm_idf_q8_0", TagQ8_0)
+GEMM_IDF_INSTANCE("gemm_idf_q4_k", TagQ4_K)
+GEMM_IDF_INSTANCE("gemm_idf_q5_k", TagQ5_K)
+GEMM_IDF_INSTANCE("gemm_idf_q6_k", TagQ6_K)
+
 struct MoeCombineParams {
     uint n;  // rows
     uint d;
