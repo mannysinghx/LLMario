@@ -609,7 +609,7 @@ impl<'a> MetalBackend<'a> {
                 layers.push(LayerRefs {
                     wq: locate(&lw.wq)?,
                     wk: locate(&lw.wk)?,
-                    wv: lw.wv.as_ref().map(&locate).transpose()?,
+                    wv: lw.wv.as_ref().map(locate).transpose()?,
                     wo: locate(&lw.wo)?,
                     ffn: Ffn::Dense {
                         gate: locate(&lw.w_gate)?,
