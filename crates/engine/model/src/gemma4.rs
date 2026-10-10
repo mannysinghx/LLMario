@@ -935,6 +935,7 @@ mod tests {
         );
         for n_batch in [4usize, 512] {
             let mut kv = KvCache::with_options(&spec, KvOptions::new(64).ring_batch(n_batch));
+            kv.reserve(0, 7).unwrap();
             // Keys: position p has key e_{p mod 8} scaled so q·k is huge where they match; values
             // are the position number broadcast.
             for p in 0..7 {

@@ -18,7 +18,9 @@
 //!   cache uses the same `n_swa + n_batch` sizing, research note KQ1, PR #13194). Rings live in
 //!   a lazily backed region per sequence, so a short conversation touches only the slots it
 //!   wrote.
-//! - **Gated DeltaNet layers** keep fp32 recurrent state per sequence ([`RecurrentState`]).
+//! - **Gated DeltaNet layers** keep fp32 recurrent state per sequence ([`RecurrentState`]),
+//!   allocated when a sequence first receives tokens and freed when it is cleared, so an idle slot
+//!   holds none of it.
 //!
 //! # Element types
 //!
@@ -303,6 +305,14 @@ impl KvLayer {
     pub fn paged(&self) -> bool {
         self.window.is_none()
     }
+    /// Byte offset of this layer's first K row inside a block (paged) or a ring region.
+    pub fn k_base(&self) -> usize {
+        self.off
+    }
+    /// Byte offset of this layer's first V row inside a block (paged) or a ring region.
+    pub fn v_base(&self) -> usize {
+        self.off + self.rows * self.k_row
+    }
     #[inline]
     fn k_off(&self, slot: usize) -> usize {
         self.off + slot * self.k_row
@@ -527,9 +537,10 @@ pub struct SeqKv {
     blocks: Vec<BlockId>,
     /// Tokens cached (positions `0..len`, modulo each ring's eviction).
     pub len: usize,
-    /// Window-layer rings (lazily backed).
+    /// Window-layer rings (lazily backed; empty until the sequence is first used).
     ring: Region,
-    /// One entry per Gated DeltaNet layer, in layer order (empty for the other families).
+    /// One entry per Gated DeltaNet layer, in layer order: empty for the other families and
+    /// while the sequence is unused (see [`KvCache::reserve`]).
     pub rs: Vec<RecurrentState>,
 }
 
@@ -554,6 +565,8 @@ pub struct KvCache {
     /// Backing memory per block id (`None` while the block holds nothing).
     backing: Vec<Option<Region>>,
     seqs: Vec<SeqKv>,
+    /// Recurrent-state geometry: `(conv_len, state_len, layers)` per sequence.
+    rs_shape: Option<(usize, usize, usize)>,
 }
 
 impl KvCache {
@@ -572,24 +585,47 @@ impl KvCache {
             .map(|_| SeqKv {
                 blocks: Vec::new(),
                 len: 0,
-                ring: Region::new(layout.ring_bytes),
-                rs: match &spec.gdn {
-                    Some(g) => (0..spec.n_recurrent_layers())
-                        .map(|_| RecurrentState {
-                            conv: vec![0f32; g.conv_state_len() as usize],
-                            state: vec![0f32; g.state_len() as usize],
-                        })
-                        .collect(),
-                    None => Vec::new(),
-                },
+                ring: Region::new(0),
+                rs: Vec::new(),
             })
             .collect();
         KvCache {
             backing: (0..n_blocks).map(|_| None).collect(),
+            rs_shape: spec.gdn.as_ref().map(|g| {
+                (
+                    g.conv_state_len() as usize,
+                    g.state_len() as usize,
+                    spec.n_recurrent_layers() as usize,
+                )
+            }),
             layout,
             pool,
             seqs,
         }
+    }
+
+    /// Give sequence `s` its rings and recurrent state if it has none yet (zeroed; the OS backs
+    /// the pages as they are written).
+    fn activate(&mut self, s: usize) {
+        let seq = &mut self.seqs[s];
+        if seq.ring.is_empty() && self.layout.ring_bytes > 0 {
+            seq.ring = Region::new(self.layout.ring_bytes);
+        }
+        if seq.rs.is_empty() {
+            if let Some((conv, state, n)) = self.rs_shape {
+                seq.rs = (0..n)
+                    .map(|_| RecurrentState {
+                        conv: vec![0f32; conv],
+                        state: vec![0f32; state],
+                    })
+                    .collect();
+            }
+        }
+    }
+
+    /// Whether sequence `s` holds rings / recurrent state right now.
+    pub fn is_active(&self, s: usize) -> bool {
+        !self.seqs[s].ring.is_empty() || !self.seqs[s].rs.is_empty()
     }
 
     /// Bytes a single-sequence f16 cache for `max_ctx` positions reserves (paged blocks, rings,
@@ -646,11 +682,13 @@ impl KvCache {
         self.backing.iter().filter(|b| b.is_some()).count()
     }
 
-    /// Bytes the cache holds right now: backed blocks, plus every sequence's ring and recurrent
-    /// state counted in full (rings are lazily backed, so this is an upper bound for them).
+    /// Bytes the cache holds right now: backed blocks, plus the rings and recurrent state of the
+    /// sequences in use (rings counted in full: they are lazily backed, so this is an upper
+    /// bound for them).
     pub fn in_use_bytes(&self) -> u64 {
+        let active = (0..self.seqs.len()).filter(|&s| self.is_active(s)).count();
         (self.resident_blocks() * self.layout.block_bytes) as u64
-            + (self.seqs.len() * (self.layout.ring_bytes + self.layout.recurrent_bytes)) as u64
+            + (active * (self.layout.ring_bytes + self.layout.recurrent_bytes)) as u64
     }
 
     fn back(&mut self, b: BlockId) {
@@ -695,6 +733,9 @@ impl KvCache {
             "context overflow: {new_len} > {}",
             self.layout.max_ctx
         );
+        if new_len > self.seqs[s].len {
+            self.activate(s);
+        }
         if self.layout.block_bytes == 0 {
             return Ok(());
         }
@@ -774,20 +815,15 @@ impl KvCache {
         }
     }
 
-    /// Forget sequence `s` entirely (blocks released, rings and recurrent state reset).
+    /// Forget sequence `s` entirely: blocks released, rings and recurrent state freed (they come
+    /// back zeroed when the sequence is used again).
     pub fn clear(&mut self, s: usize) {
         self.seqs[s].len = 0;
         while let Some(b) = self.seqs[s].blocks.pop() {
             self.release_block(b);
         }
-        // Drop the ring's pages too (a fresh lazily backed region).
-        if self.layout.ring_bytes > 0 {
-            self.seqs[s].ring = Region::new(self.layout.ring_bytes);
-        }
-        for r in &mut self.seqs[s].rs {
-            r.conv.iter_mut().for_each(|v| *v = 0.0);
-            r.state.iter_mut().for_each(|v| *v = 0.0);
-        }
+        self.seqs[s].ring = Region::new(0);
+        self.seqs[s].rs = Vec::new();
     }
 
     /// Slot of position `pos` in layer `l`'s storage (the ring slot for a window layer, the
@@ -818,6 +854,10 @@ impl KvCache {
             // SAFETY: `off + row` lies inside the block (layout invariant).
             unsafe { base.add(off) }
         } else {
+            assert!(
+                !seq.ring.is_empty(),
+                "sequence {s} has no ring yet (reserve first)"
+            );
             let slot = pos % lay.cap;
             let off = if v { lay.v_off(slot) } else { lay.k_off(slot) };
             // SAFETY: `off + row` lies inside the ring region (layout invariant).
@@ -883,6 +923,10 @@ impl KvCache {
                 })
                 .collect()
         } else {
+            assert!(
+                !seq.ring.is_empty(),
+                "sequence {s} has no ring yet (reserve first)"
+            );
             vec![seq.ring.as_ptr() as usize]
         };
         LayerReader {

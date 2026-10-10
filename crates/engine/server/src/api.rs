@@ -91,6 +91,7 @@ async fn models(State(s): State<Shared>) -> Json<Value> {
             "owned_by": "llmario",
             "engine": {"backend": "native", "plan_hash": s.plan.hash, "arch": s.plan.arch,
                        "context": s.plan.ctx_per_slot, "kernels": s.runtime.kernels,
+                       "kv_type": s.runtime.kv_type.name(), "slots": s.plan.slots,
                        "device": s.runtime.backend,
                        "capabilities": {"tools": true, "json_schema": true, "vision": false, "web_tools": s.web.available()}}
         }]

@@ -11,6 +11,7 @@ rust-version.workspace = true
 llmario-engine-core = { workspace = true }
 llmario-engine-formats = { workspace = true }
 llmario-engine-model = { workspace = true }
+llmario-engine-kv = { workspace = true }
 llmario-engine-cpu = { workspace = true }
 half = { workspace = true }
 thiserror = { workspace = true }

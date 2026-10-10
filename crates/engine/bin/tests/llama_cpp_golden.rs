@@ -18,8 +18,15 @@ const PROMPTS: &[&str] = &[
 const N: usize = 32;
 const MUST_MATCH: usize = 16;
 
-fn llama_completion(model: &Path, prompt: &str, n: usize) -> Option<String> {
+fn llama_completion(model: &Path, prompt: &str, n: usize, kv: &str) -> Option<String> {
+    // A quantized V cache needs llama.cpp's flash attention.
+    let kv_args: Vec<&str> = if kv == "f16" {
+        vec![]
+    } else {
+        vec!["-ctk", kv, "-ctv", kv, "-fa", "on"]
+    };
     let out = Command::new("llama-completion")
+        .args(kv_args)
         .args([
             "-m",
             model.to_str()?,
@@ -72,10 +79,12 @@ fn greedy_matches_llama_cpp() {
     // greedy near-tie and make this a test of rounding luck rather than model correctness.
     // LLMARIO_GOLDEN_CPU_KERNELS=int8 (or neon, avx2) compares the fast kernels instead.
     let kernels = std::env::var("LLMARIO_GOLDEN_CPU_KERNELS").unwrap_or_else(|_| "scalar".into());
+    // KV cache type on both sides (`f16` default; `q8_0` compares the 8-bit caches).
+    let kv = std::env::var("LLMARIO_GOLDEN_KV").unwrap_or_else(|_| "f16".into());
     for m in models.split(',').filter(|s| !s.is_empty()) {
         let model = Path::new(m);
         for prompt in PROMPTS {
-            let Some(theirs) = llama_completion(model, prompt, N) else {
+            let Some(theirs) = llama_completion(model, prompt, N, &kv) else {
                 eprintln!("llama-completion failed on {m}; skipping prompt");
                 continue;
             };
@@ -109,6 +118,8 @@ fn greedy_matches_llama_cpp() {
                         "8",
                         "--device",
                         device,
+                        "--kv-type",
+                        &kv,
                     ])
                     .output()
                     .expect("run raw-run");
@@ -141,7 +152,7 @@ fn greedy_matches_llama_cpp() {
                         .min(theirs_t.chars().count())
                         .min(ours_t.chars().count());
                 eprintln!(
-                "[{} · {device}] {:?}\n  llama.cpp: {:?}\n  ours:      {:?}\n  common chars: {common}",
+                "[{} · {device} · kv {kv}] {:?}\n  llama.cpp: {:?}\n  ours:      {:?}\n  common chars: {common}",
                 model.file_name().unwrap().to_string_lossy(),
                 prompt,
                 theirs_t,
