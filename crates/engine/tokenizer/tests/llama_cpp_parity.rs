@@ -21,13 +21,14 @@
 //! Command used for the catalog models (see the crate README):
 //!
 //! ```text
-//! LLMARIO_TEST_GGUF="/Volumes/Extreme Pro/AIProjects/LLMario-models/qwen3-1.7b-gguf-q4km/Qwen3-1.7B-Q4_K_M.gguf,\
-//! /Volumes/Extreme Pro/AIProjects/LLMario-beta-models/qwen3.5-0.8b-gguf-q4_0/Qwen3.5-0.8B-Q4_0.gguf,\
-//! /Volumes/Extreme Pro/AIProjects/LLMario-beta-models/gemma-4-12b-gguf-q4_0/gemma-4-12b-it-qat-q4_0.gguf,\
-//! /Volumes/Extreme Pro/AIProjects/LLMario-beta-models/gpt-oss-20b-gguf-mxfp4/gpt-oss-20b-MXFP4.gguf,\
-//! /Volumes/Extreme Pro/AIProjects/LoopForgeProject/platform/.models/smollm3-3b-q4_k_m.gguf,\
-//! /Volumes/Extreme Pro/AIProjects/LoopForgeProject/platform/.models/olmo-3-7b-instruct-q4_k_m.gguf,\
-//! /Volumes/Extreme Pro/AIProjects/LoopForgeProject/platform/.models/smollm2-1.7b-instruct-q4_k_m.gguf" \
+//! D=/Volumes/ARGUS5/AIPROJECTS  # the drive holding the models
+//! LLMARIO_TEST_GGUF="$D/LLMario-models/qwen3-1.7b-gguf-q4km/Qwen3-1.7B-Q4_K_M.gguf,\
+//! $D/LLMario-beta-models/qwen3.5-0.8b-gguf-q4_0/Qwen3.5-0.8B-Q4_0.gguf,\
+//! $D/LLMario-beta-models/gemma-4-12b-gguf-q4_0/gemma-4-12b-it-qat-q4_0.gguf,\
+//! $D/LLMario-beta-models/gpt-oss-20b-gguf-mxfp4/gpt-oss-20b-MXFP4.gguf,\
+//! $D/LoopForgeProject/platform/.models/smollm3-3b-q4_k_m.gguf,\
+//! $D/LoopForgeProject/platform/.models/olmo-3-7b-instruct-q4_k_m.gguf,\
+//! $D/LoopForgeProject/platform/.models/smollm2-1.7b-instruct-q4_k_m.gguf" \
 //!   cargo test -p llmario-engine-tokenizer --test llama_cpp_parity -- --nocapture
 //! ```
 
