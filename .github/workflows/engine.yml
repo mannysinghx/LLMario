@@ -1,3 +1,4 @@
+# NOT RUN ON GITHUB (owner rule 2026-10-30): CI runs on the Mac via scripts/ci-local.sh. This file is the job specification; change it together with that script.
 name: engine
 
 # LLMario's own inference engine (crates/engine/*) on the platforms it supports, Linux and macOS.

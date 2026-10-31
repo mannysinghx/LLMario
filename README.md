@@ -476,6 +476,32 @@ Adding an engine means implementing `EngineAdapter` (probe, formats, command lin
 contract v1: OpenAI-compatible HTTP on a loopback port. See [CONTRIBUTING.md](CONTRIBUTING.md).
 Performance claims need a reproducible `llmario bench` report, including neutral and negative results.
 
+### Local CI
+
+CI runs on the maintainer's Mac, not on GitHub (owner rule, 2026-10-30). `ci.yml` and `engine.yml`
+are disabled on GitHub and stay the job specification; `scripts/ci-local.sh` runs the same steps
+from a clean `git archive` of a commit, never from the working tree:
+
+```bash
+scripts/ci-local.sh                         # HEAD; or give a commit
+scripts/ci-local.sh <commit> --only linux-test,licenses
+scripts/ci-local.sh --keep                  # leave containers and the throwaway dir for debugging
+```
+
+Jobs: `linux-test`, `licenses` and `linux-engine` in Docker (latest stable Rust image, arm64);
+`macos-test`, `macos-desktop` and `macos-engine` natively, in a throwaway directory under
+`~/Library/Caches/llmario-ci`, with the same Rust version installed through rustup. It needs Docker
+Desktop running, the ARGUS5 drive mounted (the repository lives there), and rustup, node and jq on
+the Mac. The first run downloads the toolchain, crates and the 537 MiB smoke model; caches make
+later runs faster. Logs go to `<git common dir>/ci-local/<sha>.<job>.log` (for this clone,
+`.git/ci-local/`); when every job passes, `<sha>.pass` records the commit, date and per-job results.
+
+What this does not cover: Windows cannot be checked on a Mac. `windows.yml` still runs on GitHub, but
+it only builds the CLI and installer and smoke-tests them, so `cargo test`, clippy and the rest of
+`ci.yml`'s Windows legs run nowhere. Linux runs as arm64 here, while GitHub's `ubuntu-latest` is
+x86_64, so x86_64-only code (the AVX2 kernels in `crates/engine/cpu/src/simd/avx2.rs`) is not built
+or tested by any job.
+
 ## Troubleshooting
 
 | Problem | Fix |
