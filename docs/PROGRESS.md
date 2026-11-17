@@ -4,22 +4,22 @@ Where the work stands, so any session or person can pick it up. Engine milestone
 measurements are in [engine/STATUS.md](engine/STATUS.md); side effects outside the working tree
 are in [OPS_LOG.md](OPS_LOG.md).
 
-## Where it stopped (2026-11-17, 05:45 PST)
+## Where it stopped (2026-11-17, 06:20 PST)
 
-- Branch `claude/llmario-performance-optimization-3de13c` (worktree
-  `.claude/worktrees/llmario-performance-optimization-3de13c`), based on `main` 7eeafe6.
-- **Pushed at 626ccf1, and open as [PR #20](https://github.com/mannysinghx/LLMario/pull/20) into
-  `main`** (owner chose "Create PR", 2026-11-17). Not merged; merging is the owner's call.
-- **Three commits follow 626ccf1** on the branch: the ops log and this file for the push, the
-  `deny.toml` exception for RUSTSEC-2026-0543 (owner: "Yes, add it", 2026-11-17), and this
-  update. They are pushed to PR #20 only after `scripts/ci-local.sh` passes on the head;
-  `git status -sb` shows whether the branch is level with the remote.
-- Why the exception: local CI passed on 626ccf1 at 06:39 UTC and failed at 13:45 UTC on a
-  docs-only commit, in the `licenses` job only: "chrono is unmaintained", no upgrade available.
-  `Cargo.lock` was the same in both, so the advisory list changed between the runs. `main` has
-  the same chrono 0.4.45 and fails that job until this PR is merged.
-- Nothing uncommitted. The pass record is `<git common dir>/ci-local/<sha>.pass`. GitHub check
-  status on the PR is not the signal (owner rule, 2026-10-30).
+- **Released to `main`** at the owner's word ("merge to main and push to git", 2026-11-17): `main`
+  is fast-forwarded from 7eeafe6 to the head of `claude/llmario-performance-optimization-3de13c`
+  (nine commits, this one last), which closes
+  [PR #20](https://github.com/mannysinghx/LLMario/pull/20) as merged. The push follows a
+  `scripts/ci-local.sh` pass on this commit; `git ls-remote origin main` shows whether it
+  happened, and the pass record is `<git common dir>/ci-local/<sha>.pass`.
+- Nothing redeployed: no path under `website/` changed, and the repository has no deploy,
+  release or Pages workflow. The push starts the three GitHub CI workflows on `main`; their
+  status is not the signal (owner rule, 2026-10-30).
+- The branch includes the `deny.toml` exception for RUSTSEC-2026-0543, "chrono is unmaintained"
+  (owner: "Yes, add it", 2026-11-17). Without it the `licenses` job of local CI fails on any
+  commit, because the advisory list changed on 2026-11-17 between 06:39 and 13:45 UTC.
+- Nothing uncommitted. Worktree `.claude/worktrees/llmario-performance-optimization-3de13c` and
+  its branch are kept; removing them is the owner's call.
 
 ## Done and verified
 
