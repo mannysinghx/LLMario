@@ -480,8 +480,8 @@ impl MetalKv {
         }
         if let Some(win) = &self.win {
             let (first, end) = self.window_span(len);
-            for i in first..end {
-                let b = self.seqs[s].wblocks[i].expect("a visible window block is live");
+            for &b in &self.seqs[s].wblocks[first..end] {
+                let b = b.expect("a visible window block is live");
                 w.write_all(win.backing[b as usize].as_ref().expect("backed").as_slice())?;
             }
         }
