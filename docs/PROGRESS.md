@@ -4,13 +4,20 @@ Where the work stands, so any session or person can pick it up. Engine milestone
 measurements are in [engine/STATUS.md](engine/STATUS.md); side effects outside the working tree
 are in [OPS_LOG.md](OPS_LOG.md).
 
-## Where it stopped (2026-11-16, 22:30 PST)
+## Where it stopped (2026-11-17, 05:45 PST)
 
 - Branch `claude/llmario-performance-optimization-3de13c` (worktree
   `.claude/worktrees/llmario-performance-optimization-3de13c`), based on `main` 7eeafe6.
-- Local commits only; **nothing pushed, no PR**. Nothing uncommitted.
-- `scripts/ci-local.sh` passes on the branch head (the pass record is
-  `<git common dir>/ci-local/<sha>.pass`; run it again if the head has moved).
+- **Pushed at 626ccf1, and open as [PR #20](https://github.com/mannysinghx/LLMario/pull/20) into
+  `main`** (owner chose "Create PR", 2026-11-17). Not merged; merging is the owner's call.
+- **One local commit is not pushed:** the docs commit after 626ccf1 (ops log and this file).
+  `scripts/ci-local.sh` passed on 626ccf1 at 06:39 UTC and failed on the docs commit at 13:45 UTC
+  in the `licenses` job only: RUSTSEC-2026-0543, "chrono is unmaintained", no upgrade available.
+  `Cargo.lock` is the same in both commits (and `main` has the same chrono 0.4.45), so the
+  advisory list changed between the runs; the other five jobs passed. Nothing more can be pushed
+  to any branch until that job passes. See the open finding below.
+- Nothing uncommitted. The pass record is `<git common dir>/ci-local/<sha>.pass`. GitHub check
+  status on the PR is not the signal (owner rule, 2026-10-30).
 
 ## Done and verified
 
@@ -35,6 +42,7 @@ Nothing half-done in the tree.
 
 | Item | Where | Severity | Who decides |
 |---|---|---|---|
+| RUSTSEC-2026-0543: chrono 0.4.45 reported unmaintained (a notice, not a vulnerability; no upgrade available). Fails the `licenses` job of local CI on every branch, `main` included. Six of our crates use chrono directly, and rmcp 3.10.0 and schemars 1.2.2 bring it in as well, so moving our crates to another date library would not clear it; an `ignore` entry in `deny.toml` (as for RUSTSEC-2024-0370) would | `deny.toml` `[advisories]`; `Cargo.lock:55` | Low; blocks every push | owner (it relaxes a check) |
 | Web tools: the Rule-of-Two gate is not wired into the agent loop, so injected web text can make a model fetch a URL carrying conversation data | `crates/engine/server/src/agent.rs` `run_inner`; gate in `crates/engine/tools/src/policy.rs` | High, only with `web_access = true` (off by default) | owner: fix before promoting web access |
 | No per-launch secret between gateway and engine; port chosen before the engine binds it | `crates/supervisor/src/engine.rs` `free_port` | Low (another local user) | owner |
 | KV disk tier keeps conversations unencrypted and "Clear history" does not clear it | `crates/engine/server/src/kvtier.rs`; `apps/desktop/ui/app.js` | Medium/Low | owner (product: wire Clear history to the tier, add a maximum age) |
