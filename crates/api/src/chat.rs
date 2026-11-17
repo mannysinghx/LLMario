@@ -33,11 +33,8 @@ pub async fn chat_completions(
         Ok(j) => j,
         Err(e) => return ApiError(RuntimeError::InvalidRequest(e.body_text())).into_response(),
     };
-    let requested = v
-        .get("model")
-        .and_then(Value::as_str)
-        .unwrap_or("?")
-        .to_string();
+    // Client text: sanitised before it reaches a log line or a metric label.
+    let requested = crate::metrics::label(v.get("model").and_then(Value::as_str).unwrap_or("?"));
     match handle(&st, v, started).await {
         Ok(r) => r,
         Err(e) => {

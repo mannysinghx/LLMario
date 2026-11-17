@@ -65,17 +65,31 @@ impl Paths {
         self.home.join("cache").join("kv")
     }
 
+    /// Create the data directories. A directory this call creates is owner-only (0700 on
+    /// Unix): the home holds `config.toml` (which may carry the API key), engine logs and saved
+    /// conversation state. The directories that hold only process data (`logs`, `run`, `tmp`)
+    /// are tightened even when they already exist; an existing home and `models` keep the mode
+    /// their owner gave them.
     pub fn ensure(&self) -> anyhow::Result<()> {
-        for d in [
-            self.home.clone(),
-            self.models_dir(),
-            self.logs_dir(),
-            self.run_dir(),
-            self.bench_dir(),
-            self.tmp_dir(),
+        for (d, private) in [
+            (self.home.clone(), false),
+            (self.models_dir(), false),
+            (self.logs_dir(), true),
+            (self.run_dir(), true),
+            (self.bench_dir(), false),
+            (self.tmp_dir(), true),
         ] {
+            let existed = d.exists();
             std::fs::create_dir_all(&d)
                 .map_err(|e| anyhow::anyhow!("creating {}: {e}", d.display()))?;
+            #[cfg(unix)]
+            if !existed || private {
+                use std::os::unix::fs::PermissionsExt;
+                // Best effort: a directory on a file system without modes stays as it is.
+                let _ = std::fs::set_permissions(&d, std::fs::Permissions::from_mode(0o700));
+            }
+            #[cfg(not(unix))]
+            let _ = (existed, private);
         }
         Ok(())
     }

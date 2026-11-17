@@ -721,7 +721,8 @@ impl Worker<'_> {
             Ordering::Relaxed,
         );
         let force = requested || level == Some(Level::Critical);
-        if !force && !(level == Some(Level::Warning) && idle >= self.pressure_idle) {
+        let idle_under_warning = level == Some(Level::Warning) && idle >= self.pressure_idle;
+        if !(force || idle_under_warning) {
             return;
         }
         let released = self.shed_idle(slots, force);

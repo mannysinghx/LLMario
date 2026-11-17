@@ -89,7 +89,12 @@ impl MetaValue {
     /// Short description for logs (long arrays are summarised).
     pub fn summary(&self) -> String {
         match self {
-            MetaValue::Str(s) if s.len() > 60 => format!("{:?}… ({} bytes)", &s[..60], s.len()),
+            // Cut on a character boundary: byte 60 can fall inside a multi-byte character.
+            MetaValue::Str(s) if s.len() > 60 => format!(
+                "{:?}… ({} bytes)",
+                s.chars().take(60).collect::<String>(),
+                s.len()
+            ),
             MetaValue::Str(s) => format!("{s:?}"),
             MetaValue::Array(a) => format!("[{} items]", a.len()),
             MetaValue::F32(v) => format!("{v}"),
@@ -158,6 +163,14 @@ impl<'a> Reader<'a> {
             8 => MetaValue::Str(self.string()?),
             9 => {
                 let ety = self.u32()?;
+                // An array of arrays would recurse once per level with nothing to stop a crafted
+                // file from nesting until the stack overflows. No model metadata uses them
+                // (llama.cpp does not read them either).
+                if ety == 9 {
+                    return Err(EngineError::Format(
+                        "nested metadata arrays are not supported".into(),
+                    ));
+                }
                 let len = self.u64()?;
                 if len > MAX_ARRAY {
                     return Err(EngineError::Format(format!("array of {len} items")));
@@ -657,6 +670,37 @@ mod tests {
         let p = dir.path().join("t.gguf");
         std::fs::write(&p, &bytes[..bytes.len() - 24]).unwrap();
         assert!(GgufFile::open(&p).is_err(), "tensor past EOF must fail");
+    }
+
+    /// A crafted file must fail cleanly: nested arrays (unbounded recursion), a tensor whose
+    /// dimensions overflow 64 bits (a wrapped size would pass the end-of-file check), and a
+    /// long string whose 60th byte is inside a multi-byte character.
+    #[test]
+    fn rejects_hostile_metadata_and_shapes() {
+        let mut w = GgufWriter::new();
+        w.meta(
+            "x",
+            MetaValue::Array(vec![MetaValue::Array(vec![MetaValue::U8(1)])]),
+        );
+        let e = parse_header(&w.to_bytes())
+            .err()
+            .expect("must fail")
+            .to_string();
+        assert!(e.contains("nested"), "{e}");
+
+        // 2^32 × 2^32 F32 elements: 2^66 bytes, which wraps to 0 in unchecked arithmetic.
+        let mut w = GgufWriter::new();
+        w.tensor("big", &[1 << 32, 1 << 32], GgmlType::F32, vec![0u8; 16]);
+        let e = parse_header(&w.to_bytes())
+            .err()
+            .expect("must fail")
+            .to_string();
+        assert!(e.contains("too large"), "{e}");
+
+        let s = MetaValue::Str("é".repeat(40)); // 80 bytes; byte 60 is mid-character at 59
+        assert!(s.summary().contains("80 bytes"));
+        let s = MetaValue::Str(format!("a{}", "é".repeat(40))); // byte 60 inside a character
+        assert!(s.summary().contains("81 bytes"));
     }
 
     #[test]

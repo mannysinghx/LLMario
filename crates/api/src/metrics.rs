@@ -55,9 +55,43 @@ pub struct RequestRecord<'a> {
     pub completion_tokens: u64,
 }
 
+/// Longest model label kept, and the most distinct labels the registry holds.
+const LABEL_MAX_LEN: usize = 96;
+const LABEL_MAX_SERIES: usize = 256;
+
+/// A metric label (and log field) for a model name a client sent. The name is untrusted and
+/// unbounded: it is cut to [`LABEL_MAX_LEN`] characters of `[A-Za-z0-9._:/@+-]` (anything else,
+/// line breaks included, becomes `_`), so it can neither forge exposition or log lines nor grow
+/// without limit.
+pub fn label(model: &str) -> String {
+    let s: String = model
+        .chars()
+        .take(LABEL_MAX_LEN)
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || "._:/@+-".contains(c) {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    if s.is_empty() {
+        "_".into()
+    } else {
+        s
+    }
+}
+
 impl Metrics {
     pub fn record(&self, r: RequestRecord<'_>) {
         let mut g = self.inner.lock().unwrap();
+        // Names that are not served models still arrive (failed requests). Past the series
+        // limit they are counted together, so a client cannot grow the maps without bound.
+        let mut model = label(r.model);
+        if !g.duration.contains_key(&model) && g.duration.len() >= LABEL_MAX_SERIES {
+            model = "other".into();
+        }
+        let r = RequestRecord { model: &model, ..r };
         *g.requests
             .entry((r.model.to_string(), r.outcome.to_string()))
             .or_default() += 1;
@@ -75,7 +109,11 @@ impl Metrics {
     pub fn render(&self, engines: &[EngineInfo]) -> String {
         let g = self.inner.lock().unwrap();
         let mut s = String::new();
-        let esc = |v: &str| v.replace('\\', "\\\\").replace('"', "\\\"");
+        let esc = |v: &str| {
+            v.replace('\\', "\\\\")
+                .replace('"', "\\\"")
+                .replace('\n', "\\n")
+        };
         let _ = writeln!(
             s,
             "# HELP llmario_up Gateway is running.\n# TYPE llmario_up gauge\nllmario_up 1"
@@ -161,6 +199,28 @@ impl Metrics {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn client_model_names_cannot_forge_lines_or_grow_without_bound() {
+        assert_eq!(super::label("qwen3-1.7b-gguf-q4km"), "qwen3-1.7b-gguf-q4km");
+        assert_eq!(super::label("a\nllmario_up 0\n\"x"), "a_llmario_up_0__x");
+        assert_eq!(super::label(""), "_");
+        assert_eq!(super::label(&"x".repeat(5000)).len(), 96);
+        let m = super::Metrics::default();
+        for i in 0..1000 {
+            m.record(super::RequestRecord {
+                model: &format!("m{i}"),
+                outcome: "invalid_request",
+                ttft_s: None,
+                duration_s: 0.1,
+                prompt_tokens: 0,
+                completion_tokens: 0,
+            });
+        }
+        let g = m.inner.lock().unwrap();
+        assert!(g.duration.len() <= 257 && g.duration.contains_key("other"));
+        assert!(g.requests.len() <= 257);
+    }
+
     use super::*;
 
     #[test]

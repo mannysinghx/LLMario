@@ -35,8 +35,11 @@ impl Shape {
     }
 
     /// Number of elements.
+    ///
+    /// Dimensions come straight from a model file, so the product saturates instead of wrapping:
+    /// a crafted shape can never look small.
     pub fn numel(&self) -> u64 {
-        self.ne.iter().product()
+        self.ne.iter().fold(1u64, |a, &d| a.saturating_mul(d))
     }
 
     /// Innermost (row) length.
@@ -46,7 +49,7 @@ impl Shape {
 
     /// Number of rows (product of all outer dims).
     pub fn rows(&self) -> u64 {
-        self.ne[1..].iter().product()
+        self.ne[1..].iter().fold(1u64, |a, &d| a.saturating_mul(d))
     }
 }
 
@@ -91,7 +94,13 @@ impl TensorInfo {
                 "row length {row} is not a multiple of the {dtype} block ({be})"
             )));
         }
-        Ok(row / be * dtype.block_bytes() as u64 * shape.rows())
+        (row / be)
+            .checked_mul(dtype.block_bytes() as u64)
+            .and_then(|b| b.checked_mul(shape.rows()))
+            .filter(|_| shape.rows() != u64::MAX)
+            .ok_or_else(|| {
+                EngineError::InvalidShape(format!("shape {shape} is too large to address"))
+            })
     }
 
     pub fn row_bytes(&self) -> u64 {

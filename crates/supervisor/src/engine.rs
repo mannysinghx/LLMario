@@ -110,6 +110,11 @@ impl Engine {
 
         let mut cmd = tokio::process::Command::new(&spec.program);
         cmd.args(&spec.args)
+            // Engines run offline on local files and never need the gateway's API key or the
+            // Hub token; a child that does not have them cannot log or leak them.
+            .env_remove("LLMARIO_API_KEY")
+            .env_remove("HF_TOKEN")
+            .env_remove("HUGGING_FACE_HUB_TOKEN")
             .envs(spec.env.iter().cloned())
             .stdin(Stdio::null())
             .stdout(log)

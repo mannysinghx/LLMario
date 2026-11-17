@@ -130,6 +130,11 @@ fn start() -> Option<Engine> {
 
 /// Start the engine with the environment's model, device and KV type plus `extra` flags.
 fn start_with(extra: &[&str]) -> Option<Engine> {
+    start_with_env(extra, &[])
+}
+
+/// [`start_with`] plus environment variables for the engine process.
+fn start_with_env(extra: &[&str], env: &[(&str, &str)]) -> Option<Engine> {
     let model = std::env::var("LLMARIO_TEST_GGUF").ok()?;
     let model = model.split(',').next()?.to_string();
     let device = std::env::var("LLMARIO_E2E_DEVICE").unwrap_or_else(|_| "cpu".into());
@@ -157,6 +162,7 @@ fn start_with(extra: &[&str]) -> Option<Engine> {
             &kv,
         ])
         .args(extra)
+        .envs(env.iter().copied())
         .stdout(Stdio::null())
         .stderr(Stdio::from(log.try_clone().unwrap()))
         .spawn()
@@ -547,5 +553,168 @@ fn kv_disk_tier_end_to_end() {
     let mut e = start_with(&flags).unwrap();
     assert_eq!(stats(e.port)["files"], 1);
     check_restored(e.port, "after restart");
+    shutdown(&mut e);
+}
+
+/// One raw request with the given header lines; returns the status code.
+fn raw_status(port: u16, method: &str, path: &str, headers: &str, body: &str) -> u16 {
+    let mut s = TcpStream::connect(("127.0.0.1", port)).expect("connect");
+    s.set_read_timeout(Some(Duration::from_secs(60))).unwrap();
+    write!(
+        s,
+        "{method} {path} HTTP/1.1\r\n{headers}Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    )
+    .unwrap();
+    let mut line = String::new();
+    BufReader::new(s).read_line(&mut line).unwrap();
+    line.split_whitespace()
+        .nth(1)
+        .and_then(|c| c.parse().ok())
+        .unwrap_or(0)
+}
+
+/// Requests a web page could send to the engine's loopback port are refused before any handler
+/// runs; the gateway's own shape passes.
+#[test]
+fn browser_requests_are_refused() {
+    let Some(mut e) = start_with(&["--parallel", "1"]) else {
+        eprintln!("LLMARIO_TEST_GGUF not set; skipping");
+        return;
+    };
+    let json = "Content-Type: application/json\r\n";
+    let exit = r#"{"action":"exit"}"#;
+    // DNS rebinding: the page's own host name.
+    let h = format!("Host: evil.example:{}\r\n{json}", e.port);
+    assert_eq!(raw_status(e.port, "POST", "/engine/control", &h, exit), 403);
+    assert_eq!(raw_status(e.port, "GET", "/engine/stats", &h, ""), 403);
+    // A cross-site fetch: an Origin header, or a body type that needs no preflight.
+    let h = format!(
+        "Host: 127.0.0.1:{}\r\nOrigin: https://evil.example\r\n{json}",
+        e.port
+    );
+    assert_eq!(raw_status(e.port, "POST", "/engine/control", &h, exit), 403);
+    let h = format!("Host: 127.0.0.1:{}\r\nContent-Type: text/plain\r\n", e.port);
+    assert_eq!(raw_status(e.port, "POST", "/engine/control", &h, exit), 403);
+    assert_eq!(
+        raw_status(
+            e.port,
+            "POST",
+            "/v1/chat/completions",
+            &h,
+            r#"{"messages":[]}"#
+        ),
+        403
+    );
+    // None of that stopped the engine; the gateway's shape does.
+    assert_eq!(get_json(e.port, "/health")["status"], "ok");
+    shutdown(&mut e);
+}
+
+/// Memory-pressure relief: while the system reports a warning, an idle conversation's KV cache
+/// is saved to the disk tier and its memory freed; the next turn reads it back and answers the
+/// same. `/engine/control` `sleep` frees the idle cache without any pressure.
+#[test]
+fn memory_pressure_frees_idle_caches() {
+    let dir = tempfile::tempdir().unwrap();
+    let kv = dir.path().join("kv");
+    let level = dir.path().join("level");
+    std::fs::write(&level, "normal").unwrap();
+    let flags = [
+        "--parallel",
+        "1",
+        "--kv-cache-dir",
+        kv.to_str().unwrap(),
+        "--kv-cache-min-tokens",
+        "64",
+        "--pressure-idle-secs",
+        "0",
+    ];
+    let env = [("LLMARIO_SIM_PRESSURE", level.to_str().unwrap())];
+    let Some(mut e) = start_with_env(&flags, &env) else {
+        eprintln!("LLMARIO_TEST_GGUF not set; skipping");
+        return;
+    };
+    let long = format!(
+        "Here are some notes about rivers. {} Using the notes, which river flows through Paris? \
+         One word.",
+        "The Seine flows through Paris and into the English Channel. The Thames flows through \
+         London. The Danube passes Vienna, Budapest and Belgrade. "
+            .repeat(6)
+    );
+    let ask = json!({"messages": user(&long), "temperature": 0, "max_tokens": 24, "enable_thinking": false});
+    let stats = |port| get_json(port, "/engine/stats");
+    let kv_in_use = |port| -> u64 {
+        get_json(port, "/engine/ledger")["devices"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|d| d["kv_arena_in_use"].as_u64().unwrap())
+            .sum()
+    };
+    // Poll (the idle engine checks every two seconds) until the caches are gone.
+    let wait_freed = |port: u16, what: &str| {
+        let t0 = Instant::now();
+        while kv_in_use(port) > 0 {
+            assert!(
+                t0.elapsed() < Duration::from_secs(15),
+                "{what}: idle cache not freed: {}",
+                stats(port)
+            );
+            std::thread::sleep(Duration::from_millis(250));
+        }
+    };
+    assert_eq!(stats(e.port)["memory_pressure"]["relief"], true);
+    let trimmable = stats(e.port)["kv_disk"]["trimmable"].as_bool().unwrap();
+
+    let (st, first) = chat(e.port, ask.clone());
+    assert_eq!(st, 200, "{first}");
+    let answer = first["choices"][0]["message"]["content"].clone();
+    let prompt_tokens = first["usage"]["prompt_tokens"].as_u64().unwrap();
+    let held = kv_in_use(e.port);
+    assert!(held > 0, "the finished conversation keeps its cache");
+    // No pressure: it stays (two polls' worth of time).
+    std::thread::sleep(Duration::from_millis(4500));
+    assert_eq!(kv_in_use(e.port), held);
+    assert_eq!(stats(e.port)["memory_pressure"]["sheds"], 0);
+
+    std::fs::write(&level, "warning").unwrap();
+    wait_freed(e.port, "warning");
+    let s = stats(e.port);
+    eprintln!("after the warning: {s}");
+    assert_eq!(s["memory_pressure"]["level"], "warning");
+    assert_eq!(s["memory_pressure"]["sheds"], 1);
+    assert_eq!(
+        s["memory_pressure"]["released_bytes"].as_u64().unwrap(),
+        held
+    );
+    assert_eq!(s["kv_disk"]["saves"], 1, "freed without being saved: {s}");
+
+    std::fs::write(&level, "normal").unwrap();
+    let (st, again) = chat(e.port, ask.clone());
+    assert_eq!(st, 200, "{again}");
+    if trimmable {
+        assert_eq!(again["choices"][0]["message"]["content"], answer);
+        assert_eq!(
+            again["usage"]["prompt_tokens_details"]["cached_tokens"]
+                .as_u64()
+                .unwrap(),
+            prompt_tokens - 1,
+            "the next turn recomputed the prompt instead of reading it back"
+        );
+        assert_eq!(stats(e.port)["kv_disk"]["restores"], 1);
+    }
+    // `sleep` frees it with no pressure at all.
+    assert!(kv_in_use(e.port) > 0);
+    let (st, _) = http(
+        e.port,
+        "POST",
+        "/engine/control",
+        Some(&json!({"action": "sleep"})),
+        None,
+    );
+    assert_eq!(st, 200);
+    wait_freed(e.port, "sleep");
+    assert_eq!(stats(e.port)["memory_pressure"]["sheds"], 2);
     shutdown(&mut e);
 }

@@ -113,13 +113,32 @@ impl HubClient {
         )
     }
 
-    pub fn new(endpoint: &str, token: Option<String>) -> anyhow::Result<Self> {
-        let endpoint = endpoint.trim_end_matches('/').to_string();
-        let loopback_http =
-            endpoint.starts_with("http://127.0.0.1") || endpoint.starts_with("http://localhost");
-        if !endpoint.starts_with("https://") && !loopback_http {
+    /// Accept `https://` endpoints, and plain `http://` only for a loopback host (tests and
+    /// local mirrors); returns whether it is the latter. The host is compared exactly: a prefix
+    /// test would let `http://localhost.example` or `http://127.0.0.1@example` through and send
+    /// the Hub token in clear text.
+    fn check_endpoint(endpoint: &str) -> anyhow::Result<bool> {
+        let url = reqwest::Url::parse(endpoint)
+            .map_err(|e| anyhow::anyhow!("invalid model endpoint {endpoint}: {e}"))?;
+        let host = url.host_str().unwrap_or("");
+        let host = host.trim_start_matches('[').trim_end_matches(']');
+        let loopback = host.eq_ignore_ascii_case("localhost")
+            || host
+                .parse::<std::net::IpAddr>()
+                .is_ok_and(|ip| ip.is_loopback());
+        let plain_loopback = url.scheme() == "http"
+            && loopback
+            && url.username().is_empty()
+            && url.password().is_none();
+        if url.scheme() != "https" && !plain_loopback {
             anyhow::bail!("refusing non-HTTPS model endpoint {endpoint}");
         }
+        Ok(plain_loopback)
+    }
+
+    pub fn new(endpoint: &str, token: Option<String>) -> anyhow::Result<Self> {
+        let endpoint = endpoint.trim_end_matches('/').to_string();
+        let loopback_http = Self::check_endpoint(&endpoint)?;
         let http = reqwest::Client::builder()
             .user_agent(llmario_core::user_agent())
             .connect_timeout(std::time::Duration::from_secs(30))
@@ -700,6 +719,31 @@ pub fn verify(entry: &ModelEntry) -> anyhow::Result<Vec<String>> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn endpoint_must_be_https_or_exactly_loopback() {
+        for ok in ["https://huggingface.co", "https://mirror.example/hf"] {
+            assert!(!super::HubClient::check_endpoint(ok).unwrap(), "{ok}");
+        }
+        for ok in [
+            "http://127.0.0.1:8080",
+            "http://localhost:9",
+            "http://[::1]:9",
+        ] {
+            assert!(super::HubClient::check_endpoint(ok).unwrap(), "{ok}");
+        }
+        for bad in [
+            "http://huggingface.co",
+            "http://localhost.evil.example",
+            "http://127.0.0.1.evil.example",
+            "http://127.0.0.1@evil.example",
+            "http://user:pw@localhost:9",
+            "ftp://localhost",
+            "not a url",
+        ] {
+            assert!(super::HubClient::check_endpoint(bad).is_err(), "{bad}");
+        }
+    }
+
     use super::*;
 
     fn sib(name: &str, lfs: Option<&str>, blob: Option<&str>, size: u64) -> Sibling {

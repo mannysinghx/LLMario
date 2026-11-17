@@ -65,6 +65,7 @@ pub async fn serve_http(
         .route("/engine/ledger", get(ledger_get))
         .route("/engine/stats", get(stats_get))
         .route("/engine/control", post(control))
+        .layer(axum::middleware::from_fn(browser_guard))
         .with_state(state.clone());
     let listener = tokio::net::TcpListener::bind(&listen).await?;
     tracing::info!(%listen, "listening");
@@ -74,6 +75,65 @@ pub async fn serve_http(
         .await?;
     crate::emit_state("exiting");
     Ok(())
+}
+
+/// Why a request is refused before any handler sees it, or `None` to let it through.
+///
+/// The engine listens on a loopback port for the LLMario gateway, which is not a browser. A web
+/// page the user has open can still reach that port: a cross-site `fetch` with a plain body
+/// would queue generations, and a DNS-rebinding page (a hostile name that resolves to
+/// 127.0.0.1) could read the answers and call `/engine/control`. Three checks close that, the
+/// same ones the gateway applies to its own port:
+///
+/// - `Host` must be a loopback name. A rebinding page sends its own name.
+/// - No `Origin` header. Browsers attach it to every cross-site POST; the gateway never does.
+/// - A body must be `application/json`, which a page cannot send across sites without a CORS
+///   preflight this server does not answer.
+///
+/// Another program of the same user is not stopped by this; that needs a per-launch secret
+/// (docs/THREAT_MODEL.md, T3).
+fn browser_refusal(
+    method: &axum::http::Method,
+    headers: &axum::http::HeaderMap,
+) -> Option<&'static str> {
+    if let Some(host) = headers.get(header::HOST).and_then(|h| h.to_str().ok()) {
+        let name = match host.strip_prefix('[') {
+            Some(rest) => rest.split(']').next().unwrap_or(""),
+            None => host.rsplit_once(':').map(|(h, _)| h).unwrap_or(host),
+        };
+        let loopback = name.eq_ignore_ascii_case("localhost")
+            || name
+                .parse::<std::net::IpAddr>()
+                .is_ok_and(|ip| ip.is_loopback());
+        if !name.is_empty() && !loopback {
+            return Some("this engine only answers loopback host names");
+        }
+    }
+    if headers.contains_key(header::ORIGIN) {
+        return Some("requests from web pages are not accepted");
+    }
+    if method == axum::http::Method::POST {
+        let json = headers
+            .get(header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.split(';').next())
+            .is_some_and(|v| v.trim().eq_ignore_ascii_case("application/json"));
+        if !json {
+            return Some("the request body must be application/json");
+        }
+    }
+    None
+}
+
+async fn browser_guard(req: axum::extract::Request, next: axum::middleware::Next) -> Response {
+    match browser_refusal(req.method(), req.headers()) {
+        Some(why) => (
+            StatusCode::FORBIDDEN,
+            Json(openai::error_body(403, "forbidden", why)),
+        )
+            .into_response(),
+        None => next.run(req).await,
+    }
 }
 
 async fn health(State(s): State<Shared>) -> Json<Value> {
@@ -572,5 +632,74 @@ fn timings_of(f: &crate::engine::Finish) -> Timings {
         prompt_ms: f.prompt_ms,
         predicted_n: f.completion_tokens,
         predicted_ms: f.decode_ms,
+    }
+}
+
+#[cfg(test)]
+mod guard_tests {
+    use super::browser_refusal;
+    use axum::http::{header, HeaderMap, HeaderValue, Method};
+
+    fn headers(pairs: &[(header::HeaderName, &str)]) -> HeaderMap {
+        let mut h = HeaderMap::new();
+        for (k, v) in pairs {
+            h.insert(k.clone(), HeaderValue::from_str(v).unwrap());
+        }
+        h
+    }
+
+    #[test]
+    fn the_gateway_and_local_tools_pass() {
+        let json = (header::CONTENT_TYPE, "application/json");
+        for host in [
+            "127.0.0.1:49152",
+            "localhost:8080",
+            "[::1]:9000",
+            "LOCALHOST",
+        ] {
+            let h = headers(&[(header::HOST, host), json.clone()]);
+            assert_eq!(browser_refusal(&Method::POST, &h), None, "{host}");
+        }
+        // No Host header at all (HTTP/1.0 tools) and a charset parameter are fine.
+        let h = headers(&[(header::CONTENT_TYPE, "application/json; charset=utf-8")]);
+        assert_eq!(browser_refusal(&Method::POST, &h), None);
+        assert_eq!(
+            browser_refusal(&Method::GET, &headers(&[(header::HOST, "127.0.0.1:1")])),
+            None
+        );
+    }
+
+    #[test]
+    fn web_pages_are_refused() {
+        let json = (header::CONTENT_TYPE, "application/json");
+        // DNS rebinding: the page's own name reaches the loopback port.
+        for host in [
+            "evil.example:49152",
+            "127.0.0.1.evil.example",
+            "10.0.0.5:80",
+        ] {
+            let h = headers(&[(header::HOST, host), json.clone()]);
+            assert!(browser_refusal(&Method::POST, &h).is_some(), "{host}");
+            assert!(browser_refusal(&Method::GET, &h).is_some(), "{host}");
+        }
+        // A cross-site fetch carries Origin, whatever else it sends.
+        let h = headers(&[
+            (header::HOST, "127.0.0.1:49152"),
+            (header::ORIGIN, "https://evil.example"),
+            json.clone(),
+        ]);
+        assert!(browser_refusal(&Method::POST, &h).is_some());
+        // A form or text body (what a page may send without a preflight).
+        for ct in [
+            "text/plain",
+            "application/x-www-form-urlencoded",
+            "multipart/form-data",
+        ] {
+            let h = headers(&[(header::HOST, "127.0.0.1:1"), (header::CONTENT_TYPE, ct)]);
+            assert!(browser_refusal(&Method::POST, &h).is_some(), "{ct}");
+        }
+        assert!(
+            browser_refusal(&Method::POST, &headers(&[(header::HOST, "127.0.0.1:1")])).is_some()
+        );
     }
 }
