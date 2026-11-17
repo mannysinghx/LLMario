@@ -10,12 +10,14 @@ are in [OPS_LOG.md](OPS_LOG.md).
   `.claude/worktrees/llmario-performance-optimization-3de13c`), based on `main` 7eeafe6.
 - **Pushed at 626ccf1, and open as [PR #20](https://github.com/mannysinghx/LLMario/pull/20) into
   `main`** (owner chose "Create PR", 2026-11-17). Not merged; merging is the owner's call.
-- **One local commit is not pushed:** the docs commit after 626ccf1 (ops log and this file).
-  `scripts/ci-local.sh` passed on 626ccf1 at 06:39 UTC and failed on the docs commit at 13:45 UTC
-  in the `licenses` job only: RUSTSEC-2026-0543, "chrono is unmaintained", no upgrade available.
-  `Cargo.lock` is the same in both commits (and `main` has the same chrono 0.4.45), so the
-  advisory list changed between the runs; the other five jobs passed. Nothing more can be pushed
-  to any branch until that job passes. See the open finding below.
+- **Three commits follow 626ccf1** on the branch: the ops log and this file for the push, the
+  `deny.toml` exception for RUSTSEC-2026-0543 (owner: "Yes, add it", 2026-11-17), and this
+  update. They are pushed to PR #20 only after `scripts/ci-local.sh` passes on the head;
+  `git status -sb` shows whether the branch is level with the remote.
+- Why the exception: local CI passed on 626ccf1 at 06:39 UTC and failed at 13:45 UTC on a
+  docs-only commit, in the `licenses` job only: "chrono is unmaintained", no upgrade available.
+  `Cargo.lock` was the same in both, so the advisory list changed between the runs. `main` has
+  the same chrono 0.4.45 and fails that job until this PR is merged.
 - Nothing uncommitted. The pass record is `<git common dir>/ci-local/<sha>.pass`. GitHub check
   status on the PR is not the signal (owner rule, 2026-10-30).
 
@@ -42,7 +44,7 @@ Nothing half-done in the tree.
 
 | Item | Where | Severity | Who decides |
 |---|---|---|---|
-| RUSTSEC-2026-0543: chrono 0.4.45 reported unmaintained (a notice, not a vulnerability; no upgrade available). Fails the `licenses` job of local CI on every branch, `main` included. Six of our crates use chrono directly, and rmcp 3.10.0 and schemars 1.2.2 bring it in as well, so moving our crates to another date library would not clear it; an `ignore` entry in `deny.toml` (as for RUSTSEC-2024-0370) would | `deny.toml` `[advisories]`; `Cargo.lock:55` | Low; blocks every push | owner (it relaxes a check) |
+| RUSTSEC-2026-0543: chrono 0.4.45 reported unmaintained (a notice, not a vulnerability; no upgrade available). Excepted in `deny.toml` on 2026-11-17 at the owner's word. Still to decide: whether to move the six workspace crates that use chrono to jiff or time. That alone does not let the exception go, because rmcp 3.10.0 and schemars 1.2.2 depend on chrono too | `deny.toml` `[advisories]`; `Cargo.lock:55` | Low | owner |
 | Web tools: the Rule-of-Two gate is not wired into the agent loop, so injected web text can make a model fetch a URL carrying conversation data | `crates/engine/server/src/agent.rs` `run_inner`; gate in `crates/engine/tools/src/policy.rs` | High, only with `web_access = true` (off by default) | owner: fix before promoting web access |
 | No per-launch secret between gateway and engine; port chosen before the engine binds it | `crates/supervisor/src/engine.rs` `free_port` | Low (another local user) | owner |
 | KV disk tier keeps conversations unencrypted and "Clear history" does not clear it | `crates/engine/server/src/kvtier.rs`; `apps/desktop/ui/app.js` | Medium/Low | owner (product: wire Clear history to the tier, add a maximum age) |
