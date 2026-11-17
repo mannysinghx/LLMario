@@ -10,6 +10,13 @@ ignore = [
   # Tauri's Linux GTK stack (gtk-rs 0.18 → glib-macros); not in the macOS or Windows builds.
   # cargo-deny reports no safe upgrade; drop this once Tauri moves to a newer gtk-rs.
   { id = "RUSTSEC-2024-0370", reason = "unmaintained compile-time dependency of Tauri's Linux GTK stack; no upgrade available" },
+  # "Unmaintained" notice, not a vulnerability; every chrono version is listed and cargo-deny
+  # reports no safe upgrade. Six workspace crates use chrono for timestamps, and rmcp and schemars
+  # depend on it too, so moving our own crates to jiff or time would not clear the notice. This
+  # entry covers this advisory only: a vulnerability in chrono gets its own ID and still fails.
+  # Drop it once rmcp and schemars no longer pull chrono in and our crates have moved off it, or
+  # chrono is maintained again. Owner's decision, 2026-11-17.
+  { id = "RUSTSEC-2026-0543", reason = "unmaintained notice for chrono; no upgrade available, and rmcp and schemars depend on it" },
 ]
 
 [licenses]
