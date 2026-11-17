@@ -38,7 +38,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Build the CLI and the engine
-        run: cargo build --release --locked -p llmario -p llmario-engine
+        run: cargo build --release --locked -p llmario-beta -p llmario-engine
 
       - name: Model revision pinned in the catalog
         id: rev
@@ -56,7 +56,7 @@ jobs:
 
       - name: Pull the test model (verified against the Hub's SHA-256)
         run: |
-          exe=target/release/llmario
+          exe=target/release/llmario-beta
           if ! "$exe" model list --json | jq -e --arg id "$SMOKE_MODEL" '.[] | select(.id == $id)' > /dev/null; then
             "$exe" model pull "$SMOKE_MODEL"
           fi

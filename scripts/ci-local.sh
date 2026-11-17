@@ -187,10 +187,10 @@ mkdir -p "$ENGINE_HOME_ROOT/$SMOKE_MODEL-$rev"
 echo "export LLMARIO_HOME='$ENGINE_HOME_ROOT/$SMOKE_MODEL-$rev'" >> "$CI_ENV"
 EOF
 )
-# The workflow's exe is target/release/llmario; the target dir is $CARGO_TARGET_DIR here.
+# The workflow's exe is target/release/llmario-beta; the target dir is $CARGO_TARGET_DIR here.
 ENGINE_PULL_STEP=$(cat <<'EOF'
 echo "LLMARIO_HOME=$LLMARIO_HOME"
-exe="$CARGO_TARGET_DIR/release/llmario"
+exe="$CARGO_TARGET_DIR/release/llmario-beta"
 if ! "$exe" model list --json | jq -e --arg id "$SMOKE_MODEL" '.[] | select(.id == $id)' > /dev/null; then
   "$exe" model pull "$SMOKE_MODEL"
 fi
@@ -207,7 +207,7 @@ engine_steps() { # $1 = container or empty for mac; $2 = model home root
   # timeout-minutes: 60 is not enforced locally; concurrency: n/a.
   setenv "$1" SMOKE_MODEL "$SMOKE_MODEL"
   setenv "$1" ENGINE_HOME_ROOT "$2"
-  "${run[@]}" 'cargo build --release --locked -p llmario -p llmario-engine'
+  "${run[@]}" 'cargo build --release --locked -p llmario-beta -p llmario-engine'
   # "Model revision pinned in the catalog". "Restore the test model" (actions/cache keyed by
   # os + model + revision) -> a persistent home per model and revision under the root.
   "${run[@]}" "$ENGINE_REV_STEP"
