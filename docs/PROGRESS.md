@@ -57,8 +57,8 @@ Nothing half-done in the tree.
 1. Done: `scripts/ci-local.sh` (first run failed on two things older than this branch, a lint
    new in Rust 1.100 and three advisories against rmcp 3.5.1; both fixed in 259ba98).
 2. Owner review, then one push and a PR into `main` (no Railway redeploy: nothing under `website/`).
-3. ~~Gateway: read `/engine/stats` `paging` and `memory_pressure` and show them in the desktop app~~ done on `ui-engine-memory` (the CLI `ps` and `/metrics` still do not show them)
-   and `/metrics`; call `/engine/control` `sleep` for idle engines.
+3. Done in the desktop app on `ui-engine-memory`: `paging` and `memory_pressure` from `/engine/stats`.
+   Still open: show them in `llmario ps` and `/metrics`; call `/engine/control` `sleep` for idle engines.
 4. Separate thread counts for prompts (all cores) and decode (performance cores): measured gap
    7–9 % on prompts.
 5. Wire the Rule-of-Two gate into the agent loop (first row above).
