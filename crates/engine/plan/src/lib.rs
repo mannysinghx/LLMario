@@ -158,6 +158,10 @@ pub struct Plan {
     pub fits: bool,
     /// Why it does not fit, when `fits` is false.
     pub refusal: Option<String>,
+    /// What the user should know about a plan that fits: it leans on memory other programs hold
+    /// right now, for example. Not part of the hash (it depends on the moment, not the plan).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notes: Vec<String>,
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -348,6 +352,7 @@ pub fn plan(
         bytes_per_token,
         fits,
         refusal,
+        notes: Vec::new(),
     };
     let mut h = Sha256::new();
     h.update(serde_json::to_vec(&p).unwrap());
@@ -411,7 +416,46 @@ pub fn render(p: &Plan) -> String {
     if let Some(r) = &p.refusal {
         s.push_str(&format!("  {r}\n"));
     }
+    for n in &p.notes {
+        s.push_str(&format!("  note: {n}\n"));
+    }
     s
+}
+
+/// The note for a plan that fits its ceiling but not the memory the system can give right now
+/// (`available`, as the operating system reports it), or `None` when it fits both.
+///
+/// The ceiling is what the machine has; `available` is what other programs leave. A plan above
+/// it loads all the same, the system makes room by compressing and swapping the others, and when
+/// the weights alone exceed it they cannot all stay in memory: every token then reads part of
+/// the model from storage again, which is slower by orders of magnitude than running from memory.
+pub fn availability_note(p: &Plan, available: u64) -> Option<String> {
+    if !p.fits {
+        return None;
+    }
+    let resident: u64 = p
+        .devices
+        .iter()
+        .map(|d| d.weights_mapped - d.weights_streamed)
+        .sum();
+    if resident > available {
+        Some(format!(
+            "the weights kept in memory ({}) exceed the {} available right now: the model will be \
+             read from storage again while it generates and replies will be very slow. Close \
+             other programs, or use a smaller model or quantization.",
+            fmt(resident),
+            fmt(available)
+        ))
+    } else if p.planned_peak > available {
+        Some(format!(
+            "planned {} but {} is available right now: other programs will be compressed or \
+             swapped as the conversation grows. A shorter context needs less.",
+            fmt(p.planned_peak),
+            fmt(available)
+        ))
+    } else {
+        None
+    }
 }
 
 pub fn fmt(b: u64) -> String {
@@ -717,6 +761,27 @@ mod tests {
         )
         .unwrap();
         assert!(!p.fits);
+    }
+
+    #[test]
+    fn availability_note_separates_swapping_from_paging_the_weights() {
+        let dir = tempfile::tempdir().unwrap();
+        let f = model(dir.path());
+        let weights = f.tensor_bytes_total();
+        let p = plan(&f, "m", &req(4096, false), &budget(u64::MAX / 4)).unwrap();
+        assert!(p.fits && p.planned_peak > weights);
+        assert_eq!(availability_note(&p, p.planned_peak), None);
+        let swap = availability_note(&p, p.planned_peak - 1).unwrap();
+        assert!(swap.contains("compressed or swapped"), "{swap}");
+        let page = availability_note(&p, weights - 1).unwrap();
+        assert!(page.contains("read from storage again"), "{page}");
+        // A plan that does not fit has its refusal, not a note.
+        let refused = plan(&f, "m", &req(4096, false), &budget(1024)).unwrap();
+        assert_eq!(availability_note(&refused, 0), None);
+        // Notes are shown but are not part of the plan's identity.
+        let mut noted = p.clone();
+        noted.notes.push(swap);
+        assert!(render(&noted).contains("note: planned"));
     }
 
     #[test]

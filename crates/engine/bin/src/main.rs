@@ -71,6 +71,22 @@ enum Cmd {
         /// Fewest tokens worth saving or restoring.
         #[arg(long, default_value_t = llmario_engine_server::KV_CACHE_MIN_TOKENS)]
         kv_cache_min_tokens: usize,
+        /// Bytes of `--memory-limit` to leave free (default: max(1 GiB, 10 %)). Pass 0 when the
+        /// limit is already what the engine may use.
+        #[arg(long)]
+        memory_headroom: Option<u64>,
+        /// Free idle conversations' KV caches when the system reports memory pressure
+        /// (saved to `--kv-cache-dir` first when it is set): `on` or `off`.
+        #[arg(long, default_value = "on", value_parser = parse_on_off, action = clap::ArgAction::Set)]
+        pressure_relief: bool,
+        /// Seconds a cache must have been idle before a pressure warning frees it (critical
+        /// pressure frees at once).
+        #[arg(long, default_value_t = llmario_engine_server::PRESSURE_IDLE_SECS)]
+        pressure_idle_secs: u64,
+        /// Read the model file into the page cache in the background at load, so the first
+        /// tokens do not wait for one page fault at a time: `on` or `off`.
+        #[arg(long, default_value = "on", value_parser = parse_on_off, action = clap::ArgAction::Set)]
+        readahead: bool,
     },
     /// Report what this build can run (`--json` for the supervisor).
     Probe {
@@ -88,6 +104,9 @@ enum Cmd {
         batch: u32,
         #[arg(long)]
         memory_limit: Option<u64>,
+        /// Bytes of the limit to leave free (default: max(1 GiB, 10 %)).
+        #[arg(long)]
+        memory_headroom: Option<u64>,
         #[arg(long)]
         json: bool,
         /// KV cache element type (`auto`, `f16`, `q8_0`).
@@ -129,6 +148,14 @@ enum Cmd {
 #[derive(Clone, Copy, Debug)]
 struct KvArg(Option<KvType>);
 
+fn parse_on_off(s: &str) -> std::result::Result<bool, String> {
+    match s.to_ascii_lowercase().as_str() {
+        "on" | "true" | "1" => Ok(true),
+        "off" | "false" | "0" => Ok(false),
+        _ => Err(format!("expected `on` or `off`, got `{s}`")),
+    }
+}
+
 fn parse_kv_type(s: &str) -> std::result::Result<KvArg, String> {
     if s.eq_ignore_ascii_case("auto") {
         return Ok(KvArg(None));
@@ -169,6 +196,7 @@ fn main() -> Result<()> {
             parallel,
             batch,
             memory_limit,
+            memory_headroom,
             json,
             kv_type,
         } => {
@@ -185,6 +213,7 @@ fn main() -> Result<()> {
                 batch,
                 threads: 0,
                 memory_limit,
+                memory_headroom,
                 device: Device::Auto,
                 web: false,
                 searxng_url: None,
@@ -192,6 +221,9 @@ fn main() -> Result<()> {
                 kv_cache_dir: None,
                 kv_cache_bytes: 0,
                 kv_cache_min_tokens: llmario_engine_server::KV_CACHE_MIN_TOKENS,
+                pressure_relief: false,
+                pressure_idle_secs: llmario_engine_server::PRESSURE_IDLE_SECS,
+                readahead: false,
             };
             let (plan, _) = llmario_engine_server::plan_for(&f, &opts)?;
             if json {
@@ -234,6 +266,10 @@ fn main() -> Result<()> {
             kv_cache_dir,
             kv_cache_gb,
             kv_cache_min_tokens,
+            memory_headroom,
+            pressure_relief,
+            pressure_idle_secs,
+            readahead,
         } => {
             anyhow::ensure!(
                 kv_cache_gb.is_finite() && kv_cache_gb >= 0.0,
@@ -258,6 +294,7 @@ fn main() -> Result<()> {
                 batch,
                 threads,
                 memory_limit,
+                memory_headroom,
                 device,
                 web,
                 searxng_url,
@@ -265,6 +302,9 @@ fn main() -> Result<()> {
                 kv_cache_dir,
                 kv_cache_bytes: (kv_cache_gb * (1u64 << 30) as f64) as u64,
                 kv_cache_min_tokens,
+                pressure_relief,
+                pressure_idle_secs,
+                readahead,
             };
             let rt = tokio::runtime::Builder::new_multi_thread()
                 .worker_threads(2)

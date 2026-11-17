@@ -9,6 +9,7 @@ pub mod engine;
 pub mod footprint;
 pub mod kvtier;
 pub mod openai;
+pub mod pressure;
 pub mod toolcall;
 
 use anyhow::{Context, Result};
@@ -53,6 +54,10 @@ pub struct ServeOptions {
     pub threads: usize,
     /// Ceiling for the plan; `None` = physical memory.
     pub memory_limit: Option<u64>,
+    /// Bytes of the ceiling to leave free; `None` = the default rule (max(1 GiB, 10 %)). A
+    /// supervisor that already took its headroom out of `memory_limit` passes 0, so the same
+    /// reserve is not subtracted twice.
+    pub memory_headroom: Option<u64>,
     pub device: Device,
     /// Allow the built-in `web_fetch` tool (and `web_search` with `searxng_url`). Off by default.
     pub web: bool,
@@ -67,7 +72,17 @@ pub struct ServeOptions {
     pub kv_cache_bytes: u64,
     /// Fewest tokens worth a disk write or a restore.
     pub kv_cache_min_tokens: usize,
+    /// Free idle slots' KV caches when the system reports memory pressure (see `pressure.rs`).
+    pub pressure_relief: bool,
+    /// Seconds a cache must have been idle before a pressure warning frees it.
+    pub pressure_idle_secs: u64,
+    /// Start reading the whole model file into the page cache at load, in the background.
+    pub readahead: bool,
 }
+
+/// Default idle time before a pressure warning frees a cache: long enough that a conversation
+/// in full flow keeps its cache in memory, short enough that one left alone gives it back.
+pub const PRESSURE_IDLE_SECS: u64 = 30;
 
 /// Default budget of the KV disk tier.
 pub const KV_CACHE_DEFAULT_BYTES: u64 = 8 * GIB;
@@ -99,7 +114,14 @@ pub fn kv_choice(opts: &ServeOptions) -> (KvType, bool) {
 /// Build the plan for `opts` against the memory ceiling (no allocation).
 pub fn plan_for(file: &GgufFile, opts: &ServeOptions) -> Result<(Plan, DeviceBudget)> {
     let ceiling = opts.memory_limit.unwrap_or_else(physical_memory);
-    let budget = DeviceBudget::with_default_headroom(DeviceId::Host, ceiling);
+    let budget = match opts.memory_headroom {
+        Some(headroom) => DeviceBudget {
+            device: DeviceId::Host,
+            ceiling,
+            headroom: headroom.min(ceiling),
+        },
+        None => DeviceBudget::with_default_headroom(DeviceId::Host, ceiling),
+    };
     let (kv_type, kv_auto) = kv_choice(opts);
     let req = PlanRequest {
         slots: opts.parallel.max(1),
@@ -110,7 +132,12 @@ pub fn plan_for(file: &GgufFile, opts: &ServeOptions) -> Result<(Plan, DeviceBud
         kv_auto,
         ..Default::default()
     };
-    let plan = llmario_engine_plan::plan(file, &opts.model_id, &req, &budget)?;
+    let mut plan = llmario_engine_plan::plan(file, &opts.model_id, &req, &budget)?;
+    // The ceiling is the machine; what other programs leave free right now can be far less.
+    plan.notes.extend(llmario_engine_plan::availability_note(
+        &plan,
+        available_memory(),
+    ));
     Ok((plan, budget))
 }
 
@@ -118,6 +145,14 @@ pub fn physical_memory() -> u64 {
     let mut s = sysinfo::System::new();
     s.refresh_memory();
     s.total_memory()
+}
+
+/// Memory the system could hand out right now without pushing other programs to swap (free
+/// plus what it can reclaim at once), as the operating system reports it.
+pub fn available_memory() -> u64 {
+    let mut s = sysinfo::System::new();
+    s.refresh_memory();
+    s.available_memory()
 }
 
 /// Load everything, print the plan, and serve until the process is told to exit.

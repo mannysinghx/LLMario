@@ -6,6 +6,7 @@
 //! sequential engine it replaced.
 
 use crate::kvtier::{self, DiskTier, Hit};
+use crate::pressure::{Level, Monitor};
 use crate::{Device, ServeOptions};
 use llmario_engine_chat::ChatTemplate;
 use llmario_engine_core::ledger::{DeviceId, Ledger};
@@ -19,7 +20,7 @@ use llmario_engine_plan::Plan;
 use llmario_engine_tokenizer::{Detokenizer, Tokenizer};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 /// A generation request.
 pub struct Job {
@@ -78,9 +79,38 @@ pub struct Stats {
     /// This model's files in the directory.
     pub disk_bytes: AtomicU64,
     pub disk_files: AtomicU64,
+    /// Memory-pressure relief (see `pressure.rs`): on, the level last read (0 unknown, then
+    /// 1 normal, 2 warning, 3 critical), how often idle caches were freed and how many bytes.
+    pub pressure_enabled: AtomicBool,
+    pub pressure_level: AtomicU64,
+    pub pressure_sheds: AtomicU64,
+    pub pressure_released_bytes: AtomicU64,
+    /// Set by `/engine/control` `sleep`: free the idle caches at the next check.
+    pub shed_requested: AtomicBool,
+    /// Bytes read from storage while jobs ran, and the tokens those jobs processed. A model
+    /// whose weights are planned resident reads nothing once it is loaded; steady reads mean it
+    /// does not fit the memory the system has to give and is being paged in again per token.
+    pub paged_bytes: AtomicU64,
+    pub paged_tokens: AtomicU64,
+    /// The last job's bytes read per token.
+    pub paged_per_token_last: AtomicU64,
+    /// Mapped weight bytes the plan keeps resident (0: unknown or experts streamed by plan).
+    pub resident_weight_bytes: AtomicU64,
 }
 
+/// A job that read more than this share of the resident weights per token is paging the model
+/// in from storage rather than running from memory.
+pub const PAGING_SHARE_PER_TOKEN: u64 = 20;
+
 impl Stats {
+    /// Whether the last job read the resident weights back from storage (see
+    /// [`PAGING_SHARE_PER_TOKEN`]).
+    pub fn is_paging(&self) -> bool {
+        let weights = self.resident_weight_bytes.load(Ordering::Relaxed);
+        weights > 0
+            && self.paged_per_token_last.load(Ordering::Relaxed) > weights / PAGING_SHARE_PER_TOKEN
+    }
+
     pub fn snapshot(&self) -> serde_json::Value {
         let pt = self.prompt_tokens.load(Ordering::Relaxed);
         let ct = self.completion_tokens.load(Ordering::Relaxed);
@@ -106,6 +136,23 @@ impl Stats {
                 "restore_ms": self.disk_restore_micros.load(Ordering::Relaxed) as f64 / 1e3,
                 "bytes": self.disk_bytes.load(Ordering::Relaxed),
                 "files": self.disk_files.load(Ordering::Relaxed),
+            },
+            "memory_pressure": {
+                "relief": self.pressure_enabled.load(Ordering::Relaxed),
+                "level": match self.pressure_level.load(Ordering::Relaxed) {
+                    1 => "normal",
+                    2 => "warning",
+                    3 => "critical",
+                    _ => "unknown",
+                },
+                "sheds": self.pressure_sheds.load(Ordering::Relaxed),
+                "released_bytes": self.pressure_released_bytes.load(Ordering::Relaxed),
+            },
+            "paging": {
+                "bytes": self.paged_bytes.load(Ordering::Relaxed),
+                "tokens": self.paged_tokens.load(Ordering::Relaxed),
+                "bytes_per_token_last": self.paged_per_token_last.load(Ordering::Relaxed),
+                "model_does_not_fit_memory": self.is_paging(),
             },
         })
     }
@@ -226,6 +273,27 @@ fn load_worker<'a>(
         None => None,
     };
     let threads = opts.threads.max(1);
+    // Every weight is planned resident and the system has room for the file: start reading it
+    // now, ahead of the warm-up pass, instead of one page fault at a time inside it. Without
+    // that room the pages read ahead are dropped again before the pass reaches them and the
+    // file is read twice (measured: a 6.5 GiB model with about 5 GiB reclaimable loaded in
+    // 11.3 s instead of 8.7 s). A plan that streams experts from disk never reads ahead.
+    if opts.readahead && plan.weights_streamed() == 0 {
+        let weights = file.tensor_bytes_total();
+        let available = crate::available_memory();
+        if available >= weights + weights / 4 {
+            let bytes = llmario_engine_model::stream::readahead(file);
+            if bytes > 0 {
+                tracing::info!(mib = bytes >> 20, "reading the model into the page cache");
+            }
+        } else {
+            tracing::info!(
+                available_mib = available >> 20,
+                weights_mib = weights >> 20,
+                "not reading ahead: the model does not fit the memory available right now"
+            );
+        }
+    }
     let backend = open_backend(file, opts, threads, plan)?;
     ledger.update(DeviceId::Host, |d| {
         d.weights_mapped = file.tensor_bytes_total();
@@ -255,7 +323,21 @@ fn load_worker<'a>(
         grammar_cache: GrammarCache::new(64),
         tier,
         min_disk_tokens: opts.kv_cache_min_tokens.max(1),
+        pressure: opts.pressure_relief.then(Monitor::from_env),
+        pressure_idle: Duration::from_secs(opts.pressure_idle_secs),
     };
+    worker
+        .stats
+        .pressure_enabled
+        .store(worker.pressure.is_some(), Ordering::Relaxed);
+    worker.stats.resident_weight_bytes.store(
+        if plan.weights_streamed() == 0 {
+            file.tensor_bytes_total()
+        } else {
+            0
+        },
+        Ordering::Relaxed,
+    );
     // Warm-up: one token through every kernel so the first request pays nothing.
     let bos = worker.tokenizer.bos().unwrap_or(0);
     worker.backend.forward(&[bos]);
@@ -441,7 +523,14 @@ struct Worker<'a> {
     tier: Option<DiskTier>,
     /// Fewest tokens worth a disk write or a restore.
     min_disk_tokens: usize,
+    /// The system's memory pressure (`None`: relief is off).
+    pressure: Option<Monitor>,
+    /// How long a slot must have been idle before a pressure warning frees its cache.
+    pressure_idle: Duration,
 }
+
+/// How often an idle engine that holds caches reads the system's memory pressure.
+const PRESSURE_POLL: Duration = Duration::from_secs(2);
 
 /// What a slot's KV cache holds (for prefix reuse between jobs) and whether a job owns it.
 struct Slot {
@@ -509,6 +598,8 @@ struct Active<'t> {
     t0: Instant,
     t1: Option<Instant>,
     prompt_ms: f64,
+    /// Bytes the process had read from storage when the job was admitted.
+    disk0: Option<u64>,
 }
 
 /// How a job ended.
@@ -536,20 +627,33 @@ impl Worker<'_> {
         // Finished jobs whose last events the client has not taken yet.
         let mut draining: Vec<Outbox> = Vec::new();
         let mut open = true;
+        // When the last job ended (how long the idle slots' caches have gone unused).
+        let mut idle_since = Instant::now();
         loop {
             draining.retain_mut(|o| o.flush() && !o.queue.is_empty());
             if active.is_empty() && waiting.is_empty() {
                 if !open {
                     return;
                 }
-                let next = if draining.is_empty() {
-                    rx.recv().ok()
-                } else {
-                    match rx.recv_timeout(std::time::Duration::from_millis(10)) {
+                let next = if !draining.is_empty() {
+                    match rx.recv_timeout(Duration::from_millis(10)) {
                         Ok(j) => Some(j),
                         Err(mpsc::RecvTimeoutError::Timeout) => continue,
                         Err(mpsc::RecvTimeoutError::Disconnected) => None,
                     }
+                } else if slots.iter().any(|s| !s.cached.is_empty()) {
+                    // Idle but holding caches: wake now and then to see whether the system needs
+                    // the memory back. An engine with nothing to give sleeps until a job comes.
+                    match rx.recv_timeout(PRESSURE_POLL) {
+                        Ok(j) => Some(j),
+                        Err(mpsc::RecvTimeoutError::Timeout) => {
+                            self.relieve(&mut slots, idle_since.elapsed());
+                            continue;
+                        }
+                        Err(mpsc::RecvTimeoutError::Disconnected) => None,
+                    }
+                } else {
+                    rx.recv().ok()
                 };
                 match next {
                     Some(j) => waiting.push_back(j),
@@ -595,7 +699,73 @@ impl Worker<'_> {
                 continue;
             }
             self.step(&mut active, &mut slots, &mut draining);
+            idle_since = Instant::now();
         }
+    }
+
+    /// Read the system's memory pressure and, when it calls for it, free the caches idle slots
+    /// keep for prefix reuse. A warning frees a cache only once it has been idle for
+    /// `pressure_idle` and only if it is on disk afterwards (or too short to be worth keeping),
+    /// so a later turn reads it back; critical pressure and an explicit `sleep` free every idle
+    /// cache at once.
+    fn relieve(&mut self, slots: &mut [Slot], idle: Duration) {
+        let requested = self.stats.shed_requested.swap(false, Ordering::Relaxed);
+        let level = self.pressure.as_ref().and_then(|m| m.level());
+        self.stats.pressure_level.store(
+            match level {
+                None => 0,
+                Some(Level::Normal) => 1,
+                Some(Level::Warning) => 2,
+                Some(Level::Critical) => 3,
+            },
+            Ordering::Relaxed,
+        );
+        let force = requested || level == Some(Level::Critical);
+        if !force && !(level == Some(Level::Warning) && idle >= self.pressure_idle) {
+            return;
+        }
+        let released = self.shed_idle(slots, force);
+        if released > 0 {
+            tracing::info!(
+                level = level.map(Level::name).unwrap_or("unknown"),
+                requested,
+                released_mib = released >> 20,
+                "freed idle KV caches"
+            );
+        }
+    }
+
+    /// Free the caches of slots no job owns, saving each to the disk tier first. Without `force`
+    /// a cache that is worth keeping but could not be saved stays in memory. Returns the KV
+    /// bytes given back.
+    fn shed_idle(&mut self, slots: &mut [Slot], force: bool) -> u64 {
+        let before = self.backend.kv_in_use_bytes();
+        for s in 0..slots.len() {
+            if slots[s].busy || slots[s].cached.is_empty() {
+                continue;
+            }
+            self.spill(s, slots);
+            let kept_on_disk = self
+                .tier
+                .as_ref()
+                .is_some_and(|t| t.covers(&slots[s].cached));
+            if force || kept_on_disk || slots[s].cached.len() < self.min_disk_tokens {
+                self.backend.clear_seq(s);
+                slots[s].cached.clear();
+            }
+        }
+        let after = self.backend.kv_in_use_bytes();
+        let released = before.saturating_sub(after);
+        if released > 0 {
+            self.stats.pressure_sheds.fetch_add(1, Ordering::Relaxed);
+            self.stats
+                .pressure_released_bytes
+                .fetch_add(released, Ordering::Relaxed);
+            self.ledger.update(kv_device(self.backend.as_ref()), |d| {
+                d.kv_arena_in_use = after
+            });
+        }
+        released
     }
 
     /// Validate `job`, give it the free slot sharing the longest prefix with its prompt, reuse
@@ -707,6 +877,7 @@ impl Worker<'_> {
             t0: Instant::now(),
             t1: None,
             prompt_ms: 0.0,
+            disk0: crate::footprint::disk_read_bytes(),
         })
     }
 
@@ -891,6 +1062,39 @@ impl Worker<'_> {
         true
     }
 
+    /// Record what `a` read from storage per token and say so, once per change of state, when
+    /// that shows the model is being paged in again for every token.
+    fn account_paging(&mut self, a: &Active, tokens: usize) {
+        let (Some(start), Some(now)) = (a.disk0, crate::footprint::disk_read_bytes()) else {
+            return;
+        };
+        if tokens == 0 {
+            return;
+        }
+        let read = now.saturating_sub(start);
+        let was = self.stats.is_paging();
+        self.stats.paged_bytes.fetch_add(read, Ordering::Relaxed);
+        self.stats
+            .paged_tokens
+            .fetch_add(tokens as u64, Ordering::Relaxed);
+        self.stats
+            .paged_per_token_last
+            .store(read / tokens as u64, Ordering::Relaxed);
+        let is = self.stats.is_paging();
+        if is && !was {
+            tracing::warn!(
+                read_mib = read >> 20,
+                tokens,
+                mib_per_token = (read / tokens as u64) >> 20,
+                "the model does not stay in memory: its weights were read from storage again \
+                 while generating. Replies will be slow until other programs free memory; a \
+                 smaller model or quantization would fit."
+            );
+        } else if was && !is {
+            tracing::info!("the model fits in memory again");
+        }
+    }
+
     /// Account and answer a job that ended; its slot becomes free (its cache stays for reuse).
     fn finish(&mut self, mut a: Active, how: Done, slots: &mut [Slot], draining: &mut Vec<Outbox>) {
         slots[a.slot].busy = false;
@@ -916,6 +1120,7 @@ impl Worker<'_> {
         if let Some(m) = crate::footprint::current() {
             self.ledger.record_measured_peak(m);
         }
+        self.account_paging(&a, prompt_fed + a.n_gen);
         let in_use = self.backend.kv_in_use_bytes();
         self.ledger.update(kv_device(self.backend.as_ref()), |d| {
             d.kv_arena_in_use = in_use

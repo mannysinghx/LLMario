@@ -158,6 +158,107 @@ fn page_size() -> usize {
     *PAGE.get_or_init(|| unsafe { libc::sysconf(libc::_SC_PAGESIZE) }.max(4096) as usize)
 }
 
+/// Bytes advised per call when reading a whole file ahead.
+const READAHEAD_WINDOW: u64 = 32 << 20;
+
+/// Start reading the whole model into the page cache on a background thread, in file order, and
+/// return at once with the number of bytes it will read (0 when the file already looks resident).
+///
+/// The first forward pass after a cold start touches every dense weight. Left alone, each first
+/// touch is a page fault that reads a few pages and blocks a compute thread; advisory reads fetch
+/// the same bytes in large sequential requests ahead of the computation (see the module comment
+/// for the measured difference on an internal SSD). Call this only when the plan keeps every
+/// weight resident: a model whose experts stream from disk must not be pulled in whole.
+pub fn readahead(file: &GgufFile) -> u64 {
+    let todo: Vec<(std::path::PathBuf, u64)> = file
+        .parts
+        .iter()
+        .filter(|p| resident_share(&p.mmap[..], 64) < 0.9)
+        .map(|p| (p.path.clone(), p.mmap.len() as u64))
+        .collect();
+    let total = todo.iter().map(|t| t.1).sum();
+    if total > 0 {
+        let spawned = std::thread::Builder::new()
+            .name("llmario-readahead".into())
+            .spawn(move || {
+                for (path, len) in todo {
+                    advise_file(&path, len);
+                }
+            });
+        if spawned.is_err() {
+            return 0;
+        }
+    }
+    total
+}
+
+/// The share of `samples` evenly spaced pages of `map` that are in memory (1.0 if unknown, so
+/// nothing is read ahead on a platform that cannot tell).
+fn resident_share(map: &[u8], samples: usize) -> f32 {
+    #[cfg(unix)]
+    {
+        let page = page_size();
+        let pages = map.len() / page;
+        if pages == 0 {
+            return 1.0;
+        }
+        let n = samples.clamp(1, pages);
+        let mut hit = 0usize;
+        // A file mapping starts on a page boundary.
+        let base = map.as_ptr() as usize;
+        for i in 0..n {
+            let at = base + (i * pages / n) * page;
+            let mut v = [0u8; 1];
+            // SAFETY: `at` is one whole page inside the live mapping and `v` holds its status.
+            let r = unsafe { libc::mincore(at as _, page, v.as_mut_ptr() as _) };
+            hit += (r == 0 && v[0] & 1 != 0) as usize;
+        }
+        hit as f32 / n as f32
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (map, samples);
+        1.0
+    }
+}
+
+/// Ask the system to read `len` bytes of `path` into the page cache, window by window.
+fn advise_file(path: &Path, len: u64) {
+    #[cfg(unix)]
+    {
+        use std::os::fd::AsRawFd;
+        let Ok(f) = File::open(path) else {
+            return;
+        };
+        let mut offset = 0u64;
+        while offset < len {
+            let n = (len - offset).min(READAHEAD_WINDOW);
+            #[cfg(target_os = "macos")]
+            {
+                let ra = libc::radvisory {
+                    ra_offset: offset as libc::off_t,
+                    ra_count: n as libc::c_int,
+                };
+                // SAFETY: F_RDADVISE reads `ra` and only schedules reads into the page cache.
+                unsafe { libc::fcntl(f.as_raw_fd(), libc::F_RDADVISE, &ra) };
+            }
+            #[cfg(not(target_os = "macos"))]
+            // SAFETY: advisory only; the descriptor is open for reading.
+            unsafe {
+                libc::posix_fadvise(
+                    f.as_raw_fd(),
+                    offset as libc::off_t,
+                    n as libc::off_t,
+                    libc::POSIX_FADV_WILLNEED,
+                );
+            }
+            offset += n;
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = (path, len);
+}
+
 /// Drop `bytes` from the page cache (simulation only; the next access reads the file again).
 /// macOS drops the pages; Linux keeps clean cached pages (`MS_INVALIDATE` does not evict
 /// there), so the simulation needs macOS.

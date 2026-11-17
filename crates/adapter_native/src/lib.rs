@@ -144,7 +144,14 @@ impl EngineAdapter for NativeAdapter {
             .or(ctx.hw.performance_cores)
             .unwrap_or(ctx.hw.physical_cores.max(1));
         args.extend(["--threads".into(), threads.to_string()]);
-        args.extend(["--memory-limit".into(), ctx.memory.budget_bytes.to_string()]);
+        // The budget is already net of the supervisor's headroom; the engine must not take its
+        // own default reserve (max(1 GiB, 10 %)) out of it a second time.
+        args.extend([
+            "--memory-limit".into(),
+            ctx.memory.budget_bytes.to_string(),
+            "--memory-headroom".into(),
+            "0".into(),
+        ]);
         if ctx.cfg.backends.native.web_access {
             args.push("--web".into());
             if let Some(u) = &ctx.cfg.backends.native.searxng_url {

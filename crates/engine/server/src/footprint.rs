@@ -33,3 +33,31 @@ pub fn current() -> Option<u64> {
 pub fn current() -> Option<u64> {
     None
 }
+
+/// Bytes this process has read from storage so far (page-ins of the mapped model included), or
+/// `None` where the system does not say.
+#[cfg(target_os = "macos")]
+pub fn disk_read_bytes() -> Option<u64> {
+    // SAFETY: as in `current`.
+    unsafe {
+        let mut info: libc::rusage_info_v2 = std::mem::zeroed();
+        let rc = libc::proc_pid_rusage(
+            std::process::id() as libc::c_int,
+            libc::RUSAGE_INFO_V2,
+            &mut info as *mut _ as *mut libc::rusage_info_t,
+        );
+        (rc == 0).then_some(info.ri_diskio_bytesread)
+    }
+}
+
+#[cfg(target_os = "linux")]
+pub fn disk_read_bytes() -> Option<u64> {
+    let s = std::fs::read_to_string("/proc/self/io").ok()?;
+    let line = s.lines().find(|l| l.starts_with("read_bytes:"))?;
+    line.split_whitespace().nth(1)?.parse().ok()
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+pub fn disk_read_bytes() -> Option<u64> {
+    None
+}

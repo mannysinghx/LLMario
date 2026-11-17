@@ -131,7 +131,13 @@ async fn control(State(s): State<Shared>, Json(c): Json<Control>) -> Response {
         }
         "sleep" => {
             s.sleeping.store(true, Ordering::Relaxed);
-            Json(json!({"ok": true, "note": "M1: sleep only marks state; KV release lands with the arena"})).into_response()
+            // The inference thread frees the idle slots' KV caches at its next check (within
+            // two seconds when idle), saving them to the disk tier first when one is on.
+            s.runtime
+                .stats
+                .shed_requested
+                .store(true, Ordering::Relaxed);
+            Json(json!({"ok": true, "note": "idle KV caches are being released"})).into_response()
         }
         "wake" => {
             s.sleeping.store(false, Ordering::Relaxed);

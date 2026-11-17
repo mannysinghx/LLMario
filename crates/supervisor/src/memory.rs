@@ -261,6 +261,23 @@ pub fn fmt_bytes(b: u64) -> String {
     }
 }
 
+/// LLMario's engine chooses the 8-bit KV cache at or below this memory limit.
+pub const NATIVE_Q8_LIMIT: u64 = 16 * GIB;
+
+/// Memory LLMario's own engine plans beyond weights and KV cache: its runtime constant
+/// (256 MiB) and its scratch buffers, which grow with the hidden size and the prompt batch.
+/// The engine's planner is the authority (it refuses a load that does not fit its own plan);
+/// this bound was checked against it on five models at an 8K context and a 512-token batch:
+/// Qwen3-1.7B 304 MiB planned by the engine against 416 here, Qwen3.5-0.8B 343 / 368,
+/// Qwen3.5-9B 437 / 512, Gemma 4 12B 379 / 500, Qwen3-Coder-30B-A3B 345 / 416. The general rule
+/// (600 MiB + weights / 12) gave 643 MiB to 2.0 GiB for the same models.
+pub fn native_overhead(model: &ModelEntry, profile: &ResolvedProfile) -> u64 {
+    match &model.shape {
+        Some(s) => 320 * MIB + 96 * s.hidden_size as u64 * profile.ubatch.max(1) as u64,
+        None => 512 * MIB,
+    }
+}
+
 pub fn headroom_bytes(hw: &HardwareReport, cfg: &Config) -> u64 {
     match cfg.runtime.memory_headroom_gb {
         Some(g) => (g * GIB as f64) as u64,
@@ -402,11 +419,18 @@ pub fn estimate(
     } else if kv_cache_bytes(32, backend, cfg) != 32 {
         notes.push("8-bit KV cache (q8_0)".into());
     }
-    let kv_per_token = kvp.growing_per_token;
-    let kv = kvp.total;
-    // Compute buffers, tokenizer, runtime: fixed floor plus a share of weights.
-    let overhead = 600 * MIB + weights / 12 + backend_extra;
-    let total = weights + kv + overhead;
+    let mut kv_per_token = kvp.growing_per_token;
+    let mut kv = kvp.total;
+    let mut kv_bounded = kvp.bounded;
+    let native = backend == BackendKind::Native;
+    // Compute buffers, tokenizer, runtime: fixed floor plus a share of weights. LLMario's own
+    // engine plans these itself, far more tightly (see `native_overhead`).
+    let overhead = if native {
+        native_overhead(model, profile)
+    } else {
+        600 * MIB + weights / 12
+    } + backend_extra;
+    let mut total = weights + kv + overhead;
 
     let headroom = headroom_bytes(hw, cfg);
     let ram_budget = hw.total_memory_bytes.saturating_sub(headroom);
@@ -542,6 +566,26 @@ pub fn estimate(
         gpu_layers = Some(0);
     }
 
+    // LLMario's engine stores the KV cache in 8 bits (q8_0, 17/32 of f16) when the limit it is
+    // given is 16 GiB or less and every head is a multiple of 32 wide (`kv_choice` in
+    // `crates/engine/server`); fixed recurrent state stays as it is.
+    if native
+        && budget <= NATIVE_Q8_LIMIT
+        && model.shape.as_ref().is_some_and(|s| s.head_dim % 32 == 0)
+    {
+        let state = if kvp.per_layer {
+            model.shape.as_ref().map_or(0, |s| s.state_bytes_per_seq)
+                * profile.parallel.max(1) as u64
+        } else {
+            0
+        };
+        let q8 = |b: u64| b.saturating_sub(state) / 32 * 17 + state.min(b);
+        kv = q8(kv);
+        kv_bounded = q8(kv_bounded);
+        kv_per_token = kv_per_token / 32 * 17;
+        total = weights + kv + overhead;
+        notes.push("8-bit KV cache (q8_0): LLMario's engine uses it when its memory limit is 16 GiB or less".into());
+    }
     let mut fits = total <= budget;
     // Last resort for LLMario's engine with a mixture-of-experts model: plan the dense weights
     // and a resident share of the experts (a quarter, or four tokens' worth of active experts if
@@ -567,7 +611,7 @@ pub fn estimate(
     let resident_total = total - streamed_expert_bytes;
     let max_ctx = {
         // Only full-attention layers grow with the context; the rest is counted at its cap.
-        let avail = budget.saturating_sub(weights - streamed_expert_bytes + overhead + kvp.bounded);
+        let avail = budget.saturating_sub(weights - streamed_expert_bytes + overhead + kv_bounded);
         let per_slot_tokens = avail / (kv_per_token.max(1) * profile.parallel.max(1) as u64);
         let c = (per_slot_tokens / 256 * 256).min(u32::MAX as u64) as u32;
         (c > 0).then_some(c)
@@ -581,7 +625,17 @@ pub fn estimate(
             fmt_bytes(hw.total_memory_bytes)
         ));
     }
-    if hw.available_memory_bytes + reserved_by_others < resident_total && fits {
+    let available_now = hw.available_memory_bytes + reserved_by_others;
+    let resident_weights = weights - streamed_expert_bytes;
+    if fits && available_now < resident_weights {
+        // Measured (2026-11-16, 64 GB Mac with about 5 GiB reclaimable): a 6.5 GiB model read
+        // 13 GiB from storage to answer one short question.
+        notes.push(format!(
+            "only {} is available right now, less than the weights ({}): the model would be read from storage again for every token and replies would be very slow; close other apps first, or use a smaller model",
+            fmt_bytes(hw.available_memory_bytes),
+            fmt_bytes(resident_weights)
+        ));
+    } else if fits && available_now < resident_total {
         notes.push(format!(
             "only {} is currently available; the OS may compress or swap other apps while loading",
             fmt_bytes(hw.available_memory_bytes)
@@ -1044,6 +1098,70 @@ pub(crate) mod tests {
         // llama.cpp without offload still refuses it.
         let ll = estimate(&big, &p, BackendKind::LlamaCpp, &h, &cfg, 256 * MIB_, 0);
         assert!(!ll.fits);
+    }
+
+    /// LLMario's engine is planned with its own, tighter numbers: a 5.28 GiB 9B model on an
+    /// 8 GiB CPU-only machine (6 GiB budget) is refused under the general overhead rule and fits
+    /// under the engine's (its planner gives 5.89 GiB for Qwen3.5-9B Q4_K_M at an 8K context).
+    #[test]
+    fn native_engine_estimate_follows_the_engines_planner() {
+        let h = hw(8, None);
+        let p = latency();
+        let cfg = Config::default();
+        // Qwen3.5-9B: 8 full-attention layers of 4 KV heads × 256, 24 recurrent layers.
+        let mut m = layered(32, vec![group(8, 4, 256, None)], 50 * MIB_);
+        let w = (5.28 * GIB as f64) as u64;
+        m.files[0].size = w;
+        m.size_bytes = w;
+        m.shape.as_mut().unwrap().head_dim = 256;
+        let ll = estimate(&m, &p, BackendKind::LlamaCpp, &h, &cfg, 0, 0);
+        assert!(!ll.fits, "{}", ll.explain());
+        let nat = estimate(&m, &p, BackendKind::Native, &h, &cfg, 0, 0);
+        assert!(nat.fits, "{}", nat.explain());
+        // 8-bit KV at a limit of 16 GiB or less: 17/32 of the f16 cache, state unchanged.
+        let f16_kv = ll.kv_cache_bytes;
+        assert_eq!(
+            nat.kv_cache_bytes,
+            (f16_kv - 50 * MIB_) / 32 * 17 + 50 * MIB_
+        );
+        assert!(nat.notes.iter().any(|n| n.contains("q8_0")));
+        // Overhead: the engine's runtime constant plus scratch, not a share of the weights.
+        assert_eq!(nat.overhead_bytes, native_overhead(&m, &p));
+        assert!(nat.overhead_bytes < 600 * MIB_ && ll.overhead_bytes > GIB);
+        // At or above the engine's own plan for this model (5.89 GiB), within 200 MiB.
+        let engine_plan = (5.89 * GIB as f64) as u64;
+        assert!(nat.total_bytes >= engine_plan && nat.total_bytes < engine_plan + 200 * MIB_);
+        // Above 16 GiB the engine keeps f16.
+        let big = estimate(&m, &p, BackendKind::Native, &hw(64, None), &cfg, 0, 0);
+        assert_eq!(big.kv_cache_bytes, f16_kv);
+        // Head widths q8_0 cannot tile keep f16 too.
+        let mut odd = m.clone();
+        odd.shape.as_mut().unwrap().head_dim = 80;
+        let odd = estimate(&odd, &p, BackendKind::Native, &h, &cfg, 0, 0);
+        assert!(!odd.notes.iter().any(|n| n.contains("q8_0")));
+    }
+
+    /// A plan that fits the machine but not what is free right now says which kind of trouble
+    /// to expect: swapping, or reading the weights from storage for every token.
+    #[test]
+    fn available_memory_notes() {
+        let p = latency();
+        let cfg = Config::default();
+        let m = model(6.5);
+        let mut h = hw(64, None);
+        h.available_memory_bytes = 5 * GIB;
+        let plan = estimate(&m, &p, BackendKind::LlamaCpp, &h, &cfg, 0, 0);
+        assert!(plan.fits);
+        assert!(plan
+            .notes
+            .iter()
+            .any(|n| n.contains("read from storage again for every token")));
+        h.available_memory_bytes = 7 * GIB;
+        let plan = estimate(&m, &p, BackendKind::LlamaCpp, &h, &cfg, 0, 0);
+        assert!(plan.notes.iter().any(|n| n.contains("compress or swap")));
+        h.available_memory_bytes = 32 * GIB;
+        let plan = estimate(&m, &p, BackendKind::LlamaCpp, &h, &cfg, 0, 0);
+        assert!(!plan.notes.iter().any(|n| n.contains("available")));
     }
 
     /// Phase 7: with `offload = "auto"`, a model over the GPU limit but within RAM keeps some
