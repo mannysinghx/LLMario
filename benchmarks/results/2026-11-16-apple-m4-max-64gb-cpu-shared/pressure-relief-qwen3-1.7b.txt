@@ -1,0 +1,6 @@
+before (no relief), tier     load    75M | turn1 3159 tok  21.26s ->   478M | idle+pressure ->   478M (sheds -, released 0M) | turn2   0.83s cached 3159/3176 disk restores 0 answer ''
+relief, no pressure          load    73M | turn1 3159 tok  21.53s ->   475M | idle+pressure ->   475M (sheds 0, released 0M) | turn2   0.85s cached 3159/3176 disk restores 0 answer ''
+relief, warning, tier        load    75M | turn1 3159 tok  21.28s ->   476M | idle+pressure ->   127M (sheds 1, released 350M) | turn2   1.01s cached 3159/3176 disk restores 1 answer ''
+relief, warning, no tier     load    75M | turn1 3159 tok  21.03s ->   477M | idle+pressure ->   477M (sheds 0, released 0M) | turn2   0.83s cached 3159/3176 disk restores 0 answer ''
+relief, critical, no tier    load    74M | turn1 3159 tok  20.84s ->   476M | idle+pressure ->   128M (sheds 1, released 350M) | turn2  20.89s cached 0/3176 disk restores 0 answer ''
+static q8_0 KV, no relief    load    75M | turn1 3159 tok  20.70s ->   313M | idle+pressure ->   313M (sheds 0, released 0M) | turn2   0.77s cached 3159/3176 disk restores 0 answer ''

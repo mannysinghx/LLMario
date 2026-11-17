@@ -30,10 +30,22 @@ processes it launches. Out of scope: vulnerabilities inside upstream engines the
 | T14 | Engine fetching from the network | MLX engines run with `HF_HUB_OFFLINE=1`/`TRANSFORMERS_OFFLINE=1`; llama.cpp is given a local file path only. |
 | T15 | Multi-machine sharding (engines exchanging tensors over the network) | **Not implemented.** The engines' cluster protocols (MLX distributed, llama.cpp RPC) are unauthenticated and unencrypted, so nothing in LLMario uses them. Requirements for any future implementation (dedicated link or authenticated tunnel, mutual authentication, lease-based shutdown, content-hash check) are in [MULTI_MACHINE.md](MULTI_MACHINE.md). |
 | T16 | Speculative-decoding settings taken from requests | Speculation (n-gram, MTP, draft model) is set only in `config.toml`; the gateway drops a client-sent `draft_model` (T2), so a request cannot make an engine load another model as a draft. |
+| T17 | A web page the user has open reaches an engine's loopback port (a cross-site `fetch`, or DNS rebinding) | The gateway had this protection (T13); LLMario's own engine did not until 2026-11-16. Its HTTP port now refuses a non-loopback `Host`, any `Origin` header and any body that is not `application/json`, before a handler runs (`browser_refusal` in `crates/engine/server/src/api.rs`; unit and end-to-end tests). llama.cpp and MLX engines rely on their own servers' behaviour. |
+| T18 | A crafted model file crashes or misleads the engine | GGUF tensor sizes use checked arithmetic (a size that wrapped around 64 bits used to pass the end-of-file check), nested metadata arrays are refused (they recursed without bound) and string summaries cut on a character boundary. Tested with crafted headers. Residual: the chat template of a model file is rendered without a time or size limit, and the `unsafe` kernels trust the dimensions the loader validated. |
+| T19 | Conversation state on disk | LLMario's engine saves evicted conversations (token ids and KV state) under `$LLMARIO_HOME/cache/kv`, owner-only (0700 directory, 0600 files), unencrypted, evicted by size only. Since 2026-11-16 it also writes them when the system is short of memory. **Not cleared by the desktop app's "Clear history"**; delete the directory, or set `[backends.native] kv_cache_gb = 0` to turn the tier off. |
+| T20 | Web content read by a model steers it (prompt injection), e.g. into fetching a URL that carries the conversation | Only with `[backends.native] web_access = true` (off by default). Fetched text is wrapped and marked untrusted, and a failed fetch's error text is reduced to one plain line. **Unresolved:** the Rule-of-Two gate in `crates/engine/tools` is not wired into the agent loop, so a model that obeys injected text can still call `web_fetch` with data in the URL. Keep web access off for conversations that hold private data. |
+| T21 | Secrets reaching engine processes or other local users | Engine children no longer inherit `LLMARIO_API_KEY`, `HF_TOKEN` or `HUGGING_FACE_HUB_TOKEN`. Data directories LLMario creates are owner-only, and `logs`, `run` and `tmp` are tightened when they already exist. An existing `~/.llmario` keeps its mode: run `chmod 700 ~/.llmario` if `config.toml` holds an API key. |
+| T22 | Client-controlled text in metrics and logs | A request's `model` string is cut to 96 safe characters before it becomes a metric label or log field, and at most 256 distinct labels are kept (the rest count as `other`). |
 
 ## Residual risks
 
-- Loopback ports are visible to all local users on multi-user machines.
+- Loopback ports are visible to all local users on multi-user machines. An engine port is picked
+  before the engine binds it, so another local user could bind it first and receive prompts; a
+  per-launch secret between gateway and engine is not implemented yet.
+- The model endpoint override (`HF_ENDPOINT`) must be `https://`, or plain `http://` on an exact
+  loopback host (it used to be a prefix test).
+- Error responses include local paths and the engine's last log lines, also for authenticated
+  remote clients in `--allow-remote` mode.
 - Upstream engine parsers (GGUF, safetensors, Jinja chat templates) process untrusted files.
   Run downloaded models from sources you trust.
 - A GPU/CPU split (`offload = "auto"`) keeps part of a model in RAM; on a 16 GB Mac this is

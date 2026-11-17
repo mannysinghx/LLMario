@@ -1,0 +1,2468 @@
+{
+ "schema": 1,
+ "environment": {
+  "date_utc": "2026-11-17T05:52:29Z",
+  "os": "macOS-27.0.1-arm64-arm-64bit-Mach-O",
+  "machine": "arm64",
+  "logical_cpus": 16,
+  "load_average": [
+   10.94580078125,
+   18.83984375,
+   29.88330078125
+  ],
+  "cpu": "Apple M4 Max",
+  "ram_bytes": 68719476736,
+  "performance_cores": 12,
+  "efficiency_cores": 4,
+  "ram_free_bytes": 45246644224,
+  "ram_wired_bytes": 5930369024,
+  "load_average_end": [
+   14.62255859375,
+   12.75537109375,
+   19.42724609375
+  ]
+ },
+ "args": {
+  "engine": [
+   {
+    "label": "base",
+    "path": "/Volumes/ARGUS5/PROJECTS/LLMario/.claude/worktrees/llmario-performance-optimization-3de13c/target/baseline/llmario-engine",
+    "env": {},
+    "version": "llmario-engine 0.2.1"
+   },
+   {
+    "label": "new",
+    "path": "/Volumes/ARGUS5/PROJECTS/LLMario/.claude/worktrees/llmario-performance-optimization-3de13c/target/release/llmario-engine",
+    "env": {},
+    "version": "llmario-engine 0.2.1"
+   }
+  ],
+  "model": [
+   "/Volumes/ARGUS5/AIPROJECTS/LLMario-beta-models/qwen3.5-9b-gguf-q4km/Qwen3.5-9B-Q4_K_M.gguf",
+   "/Volumes/ARGUS5/AIPROJECTS/LLMario-beta-models/gemma-4-12b-gguf-q4_0/gemma-4-12b-it-qat-q4_0.gguf"
+  ],
+  "modes": "raw,serve",
+  "threads": "12",
+  "serve_threads": 12,
+  "serve_arg": [],
+  "prompt_tokens": 256,
+  "decode_tokens": 32,
+  "rounds": 2,
+  "ctx": 8192,
+  "max_tokens": 64,
+  "prompt_words": [
+   40,
+   700
+  ],
+  "concurrency": "1,2,4",
+  "no_quality": true,
+  "no_cold": false,
+  "quiet_idle": 75.0,
+  "quiet_wait": 45,
+  "out": "benchmarks/results/2026-11-16-apple-m4-max-64gb-cpu-shared/ab/large"
+ },
+ "models": [
+  {
+   "info": {
+    "file": "Qwen3.5-9B-Q4_K_M.gguf",
+    "bytes": 5680522464,
+    "general.name": "\"Qwen3.5-9B\"",
+    "general.architecture": "\"qwen35\"",
+    "general.file_type": "15",
+    "general.size_label": "\"9B\"",
+    "general.quantization_version": "2",
+    "context_length": 262144,
+    "bytes_by_type_pct": {
+     "f32": 0.1,
+     "q8_0": 0.1,
+     "q4_K": 58.5,
+     "q5_K": 14.6,
+     "q6_K": 26.7
+    }
+   },
+   "storage": {
+    "path_volume": "/Volumes/ARGUS5",
+    "solid_state": "Yes",
+    "protocol": "PCI-Express",
+    "file_system_personality": "APFS",
+    "device_location": "External"
+   },
+   "raw": {
+    "base": {
+     "12": [
+      {
+       "wall_s": 6.645,
+       "idle_before_pct": 66.45,
+       "output_ids": "839,22602,321,8341,279,3000,19074,364,4139,314,1754,3603,11,18207,279,3979,948,279,5323,557,1379,11078,13,561,72103,7110,2843,5947,421,874,25347,557,5384",
+       "load_s": 0.04,
+       "prefill_tok_s": 46.1,
+       "decode_tok_s": 32.44,
+       "threads_used": 12
+      },
+      {
+       "wall_s": 5.835,
+       "idle_before_pct": 85.46,
+       "output_ids": "839,22602,321,8341,279,3000,19074,364,4139,314,1754,3603,11,18207,279,3979,948,279,5323,557,1379,11078,13,561,72103,7110,2843,5947,421,874,25347,557,5384",
+       "load_s": 0.02,
+       "prefill_tok_s": 53.2,
+       "decode_tok_s": 33.73,
+       "threads_used": 12
+      }
+     ]
+    },
+    "new": {
+     "12": [
+      {
+       "wall_s": 5.703,
+       "idle_before_pct": 83.58,
+       "output_ids": "839,22602,321,8341,279,3000,19074,364,4139,314,1754,3603,11,18207,279,3979,948,279,5323,557,1379,11078,13,561,72103,7110,2843,5947,421,874,25347,557,5384",
+       "load_s": 0.02,
+       "prefill_tok_s": 54.5,
+       "decode_tok_s": 34.08,
+       "threads_used": 12
+      },
+      {
+       "wall_s": 5.909,
+       "idle_before_pct": 83.59,
+       "output_ids": "839,22602,321,8341,279,3000,19074,364,4139,314,1754,3603,11,18207,279,3979,948,279,5323,557,1379,11078,13,561,72103,7110,2843,5947,421,874,25347,557,5384",
+       "load_s": 0.02,
+       "prefill_tok_s": 52.6,
+       "decode_tok_s": 33.04,
+       "threads_used": 12
+      }
+     ]
+    }
+   },
+   "serve": {
+    "base": [
+     {
+      "cold": true,
+      "idle_before_pct": 83.86,
+      "resident_after_evict": 0.0,
+      "load_s": 1.799,
+      "cmd": "/Volumes/ARGUS5/PROJECTS/LLMario/.claude/worktrees/llmario-performance-optimization-3de13c/target/baseline/llmario-engine serve --model /Volumes/ARGUS5/AIPROJECTS/LLMario-beta-models/qwen3.5-9b-gguf-q4km/Qwen3.5-9B-Q4_K_M.gguf --listen 127.0.0.1:57300 --ctx 8192 --parallel 1 --device cpu --threads 12",
+      "after_load": {
+       "footprint": 182309280,
+       "footprint_peak": 182473120,
+       "resident": 5295407104,
+       "cpu_s": 2.9211699166666665,
+       "disk_read": 5108527104,
+       "pageins": 311808,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 2.921
+       }
+      },
+      "threads_os": 15,
+      "engine_model": {
+       "backend": "native",
+       "plan_hash": "6fc4aeb020b8234b29ad3f008a278c2f",
+       "arch": "qwen35",
+       "context": 8192,
+       "kernels": "neon",
+       "kv_type": "f16",
+       "slots": 1,
+       "device": "cpu",
+       "capabilities": {
+        "tools": true,
+        "json_schema": true,
+        "vision": false,
+        "web_tools": []
+       }
+      },
+      "plan": {
+       "planned_peak": 6450049024,
+       "ctx_per_slot": 8192,
+       "kv_dtype": "f16",
+       "slots": 1,
+       "degradations": [],
+       "fits": true
+      },
+      "requests": [
+       {
+        "ttft_s": 3.4581733748782426,
+        "total_s": 4.730263583827764,
+        "usage": {
+         "prompt_tokens": 180,
+         "completion_tokens": 42,
+         "total_tokens": 222,
+         "prompt_tokens_details": {
+          "cached_tokens": 0
+         }
+        },
+        "timings": {
+         "prompt_n": 180,
+         "prompt_ms": 3456.695375,
+         "predicted_n": 42,
+         "predicted_ms": 1272.599583
+        },
+        "decode_tok_s": 33.0033111444136,
+        "prefill_tok_s": 52.07285585586205,
+        "idle_before_pct": 85.27,
+        "prompt_words": 40,
+        "avg_cores": 10.1,
+        "footprint_after": 316199544,
+        "resident_after": 5432262656
+       },
+       {
+        "ttft_s": 15.953803042182699,
+        "total_s": 17.414291500113904,
+        "usage": {
+         "prompt_tokens": 808,
+         "completion_tokens": 46,
+         "total_tokens": 854,
+         "prompt_tokens_details": {
+          "cached_tokens": 0
+         }
+        },
+        "timings": {
+         "prompt_n": 808,
+         "prompt_ms": 15952.162084,
+         "predicted_n": 46,
+         "predicted_ms": 1460.902834
+        },
+        "decode_tok_s": 31.487378167410686,
+        "prefill_tok_s": 50.65144121187328,
+        "idle_before_pct": 82.2,
+        "prompt_words": 700,
+        "avg_cores": 9.71,
+        "footprint_after": 429052536,
+        "resident_after": 5575901184
+       }
+      ],
+      "at_end": {
+       "footprint": 429052536,
+       "footprint_peak": 473748088,
+       "resident": 5575901184,
+       "cpu_s": 219.8462935833333,
+       "disk_read": 5118423040,
+       "pageins": 311981,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 219.846
+       }
+      },
+      "stats": {
+       "requests": 2,
+       "cancelled": 0,
+       "prompt_tokens": 988,
+       "cached_prompt_tokens": 0,
+       "completion_tokens": 88,
+       "prefill_tok_s": 50.904594742493074,
+       "decode_tok_s": 32.19314717645979,
+       "steps": 89,
+       "max_seqs_in_step": 1,
+       "kv_disk": {
+        "enabled": false,
+        "trimmable": false,
+        "saves": 0,
+        "restores": 0,
+        "restored_tokens": 0,
+        "save_ms": 0.0,
+        "restore_ms": 0.0,
+        "bytes": 0,
+        "files": 0
+       },
+       "threads": 12,
+       "kernels": "neon",
+       "device": "cpu",
+       "bytes_per_token": 5937989632,
+       "sleeping": false
+      }
+     },
+     {
+      "cold": false,
+      "idle_before_pct": 83.27,
+      "load_s": 0.273,
+      "cmd": "/Volumes/ARGUS5/PROJECTS/LLMario/.claude/worktrees/llmario-performance-optimization-3de13c/target/baseline/llmario-engine serve --model /Volumes/ARGUS5/AIPROJECTS/LLMario-beta-models/qwen3.5-9b-gguf-q4km/Qwen3.5-9B-Q4_K_M.gguf --listen 127.0.0.1:57433 --ctx 8192 --parallel 1 --device cpu --threads 12",
+      "after_load": {
+       "footprint": 182178184,
+       "footprint_peak": 182309256,
+       "resident": 5295292416,
+       "cpu_s": 1.438228125,
+       "disk_read": 0,
+       "pageins": 0,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 1.438
+       }
+      },
+      "threads_os": 15,
+      "engine_model": {
+       "backend": "native",
+       "plan_hash": "6fc4aeb020b8234b29ad3f008a278c2f",
+       "arch": "qwen35",
+       "context": 8192,
+       "kernels": "neon",
+       "kv_type": "f16",
+       "slots": 1,
+       "device": "cpu",
+       "capabilities": {
+        "tools": true,
+        "json_schema": true,
+        "vision": false,
+        "web_tools": []
+       }
+      },
+      "plan": {
+       "planned_peak": 6450049024,
+       "ctx_per_slot": 8192,
+       "kv_dtype": "f16",
+       "slots": 1,
+       "degradations": [],
+       "fits": true
+      },
+      "requests": [
+       {
+        "ttft_s": 3.4369004999753088,
+        "total_s": 4.677756417077035,
+        "usage": {
+         "prompt_tokens": 180,
+         "completion_tokens": 42,
+         "total_tokens": 222,
+         "prompt_tokens_details": {
+          "cached_tokens": 0
+         }
+        },
+        "timings": {
+         "prompt_n": 180,
+         "prompt_ms": 3435.555334,
+         "predicted_n": 42,
+         "predicted_ms": 1241.332125
+        },
+        "decode_tok_s": 33.834619401314534,
+        "prefill_tok_s": 52.39327634127403,
+        "idle_before_pct": 84.43,
+        "prompt_words": 40,
+        "avg_cores": 10.11,
+        "footprint_after": 278467144,
+        "resident_after": 5394563072
+       },
+       {
+        "ttft_s": 15.449307875009254,
+        "total_s": 16.90179962501861,
+        "usage": {
+         "prompt_tokens": 808,
+         "completion_tokens": 46,
+         "total_tokens": 854,
+         "prompt_tokens_details": {
+          "cached_tokens": 0
+         }
+        },
+        "timings": {
+         "prompt_n": 808,
+         "prompt_ms": 15447.532374999999,
+         "predicted_n": 46,
+         "predicted_ms": 1452.9825839999999
+        },
+        "decode_tok_s": 31.65901677456032,
+        "prefill_tok_s": 52.30608879044347,
+        "idle_before_pct": 82.89,
+        "prompt_words": 700,
+        "avg_cores": 9.64,
+        "footprint_after": 434737784,
+        "resident_after": 5574115328
+       }
+      ],
+      "at_end": {
+       "footprint": 434737784,
+       "footprint_peak": 472486544,
+       "resident": 5574115328,
+       "cpu_s": 211.69768474999998,
+       "disk_read": 0,
+       "pageins": 0,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 211.697
+       }
+      },
+      "stats": {
+       "requests": 2,
+       "cancelled": 0,
+       "prompt_tokens": 988,
+       "cached_prompt_tokens": 0,
+       "completion_tokens": 88,
+       "prefill_tok_s": 52.321953502623806,
+       "decode_tok_s": 32.661375029042645,
+       "steps": 89,
+       "max_seqs_in_step": 1,
+       "kv_disk": {
+        "enabled": false,
+        "trimmable": false,
+        "saves": 0,
+        "restores": 0,
+        "restored_tokens": 0,
+        "save_ms": 0.0,
+        "restore_ms": 0.0,
+        "bytes": 0,
+        "files": 0
+       },
+       "threads": 12,
+       "kernels": "neon",
+       "device": "cpu",
+       "bytes_per_token": 5937989632,
+       "sleeping": false
+      }
+     },
+     {
+      "cold": true,
+      "idle_before_pct": 88.91,
+      "resident_after_evict": 0.0,
+      "load_s": 1.82,
+      "cmd": "/Volumes/ARGUS5/PROJECTS/LLMario/.claude/worktrees/llmario-performance-optimization-3de13c/target/baseline/llmario-engine serve --model /Volumes/ARGUS5/AIPROJECTS/LLMario-beta-models/qwen3.5-9b-gguf-q4km/Qwen3.5-9B-Q4_K_M.gguf --listen 127.0.0.1:57474 --ctx 8192 --parallel 1 --device cpu --threads 12",
+      "after_load": {
+       "footprint": 182473096,
+       "footprint_peak": 182489480,
+       "resident": 5295587328,
+       "cpu_s": 2.9971567083333333,
+       "disk_read": 5108527104,
+       "pageins": 311802,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 2.997
+       }
+      },
+      "threads_os": 15,
+      "engine_model": {
+       "backend": "native",
+       "plan_hash": "6fc4aeb020b8234b29ad3f008a278c2f",
+       "arch": "qwen35",
+       "context": 8192,
+       "kernels": "neon",
+       "kv_type": "f16",
+       "slots": 1,
+       "device": "cpu",
+       "capabilities": {
+        "tools": true,
+        "json_schema": true,
+        "vision": false,
+        "web_tools": []
+       }
+      },
+      "plan": {
+       "planned_peak": 6450049024,
+       "ctx_per_slot": 8192,
+       "kv_dtype": "f16",
+       "slots": 1,
+       "degradations": [],
+       "fits": true
+      },
+      "requests": [
+       {
+        "ttft_s": 3.38324850006029,
+        "total_s": 4.618902958231047,
+        "usage": {
+         "prompt_tokens": 180,
+         "completion_tokens": 42,
+         "total_tokens": 222,
+         "prompt_tokens_details": {
+          "cached_tokens": 0
+         }
+        },
+        "timings": {
+         "prompt_n": 180,
+         "prompt_ms": 3381.2655,
+         "predicted_n": 42,
+         "predicted_ms": 1236.128667
+        },
+        "decode_tok_s": 33.977045530325846,
+        "prefill_tok_s": 53.23450642961932,
+        "idle_before_pct": 90.4,
+        "prompt_words": 40,
+        "avg_cores": 10.02,
+        "footprint_after": 316166776,
+        "resident_after": 5432229888
+       },
+       {
+        "ttft_s": 15.22675049980171,
+        "total_s": 16.627048124792054,
+        "usage": {
+         "prompt_tokens": 808,
+         "completion_tokens": 46,
+         "total_tokens": 854,
+         "prompt_tokens_details": {
+          "cached_tokens": 0
+         }
+        },
+        "timings": {
+         "prompt_n": 808,
+         "prompt_ms": 15225.067041999999,
+         "predicted_n": 46,
+         "predicted_ms": 1400.72625
+        },
+        "decode_tok_s": 32.840107051609834,
+        "prefill_tok_s": 53.07037386246276,
+        "idle_before_pct": 86.98,
+        "prompt_words": 700,
+        "avg_cores": 9.67,
+        "footprint_after": 428987000,
+        "resident_after": 5575835648
+       }
+      ],
+      "at_end": {
+       "footprint": 428987000,
+       "footprint_peak": 471306872,
+       "resident": 5575835648,
+       "cpu_s": 210.06906120833332,
+       "disk_read": 5118423040,
+       "pageins": 311973,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 210.069
+       }
+      },
+      "stats": {
+       "requests": 2,
+       "cancelled": 0,
+       "prompt_tokens": 988,
+       "cached_prompt_tokens": 0,
+       "completion_tokens": 88,
+       "prefill_tok_s": 53.10020266219049,
+       "decode_tok_s": 33.373102947679314,
+       "steps": 89,
+       "max_seqs_in_step": 1,
+       "kv_disk": {
+        "enabled": false,
+        "trimmable": false,
+        "saves": 0,
+        "restores": 0,
+        "restored_tokens": 0,
+        "save_ms": 0.0,
+        "restore_ms": 0.0,
+        "bytes": 0,
+        "files": 0
+       },
+       "threads": 12,
+       "kernels": "neon",
+       "device": "cpu",
+       "bytes_per_token": 5937989632,
+       "sleeping": false
+      }
+     },
+     {
+      "cold": false,
+      "idle_before_pct": 83.43,
+      "load_s": 0.266,
+      "cmd": "/Volumes/ARGUS5/PROJECTS/LLMario/.claude/worktrees/llmario-performance-optimization-3de13c/target/baseline/llmario-engine serve --model /Volumes/ARGUS5/AIPROJECTS/LLMario-beta-models/qwen3.5-9b-gguf-q4km/Qwen3.5-9B-Q4_K_M.gguf --listen 127.0.0.1:57608 --ctx 8192 --parallel 1 --device cpu --threads 12",
+      "after_load": {
+       "footprint": 182342048,
+       "footprint_peak": 182522272,
+       "resident": 5295439872,
+       "cpu_s": 1.4207720416666665,
+       "disk_read": 0,
+       "pageins": 0,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 1.42
+       }
+      },
+      "threads_os": 15,
+      "engine_model": {
+       "backend": "native",
+       "plan_hash": "6fc4aeb020b8234b29ad3f008a278c2f",
+       "arch": "qwen35",
+       "context": 8192,
+       "kernels": "neon",
+       "kv_type": "f16",
+       "slots": 1,
+       "device": "cpu",
+       "capabilities": {
+        "tools": true,
+        "json_schema": true,
+        "vision": false,
+        "web_tools": []
+       }
+      },
+      "plan": {
+       "planned_peak": 6450049024,
+       "ctx_per_slot": 8192,
+       "kv_dtype": "f16",
+       "slots": 1,
+       "degradations": [],
+       "fits": true
+      },
+      "requests": [
+       {
+        "ttft_s": 3.3599924999289215,
+        "total_s": 4.636073041940108,
+        "usage": {
+         "prompt_tokens": 180,
+         "completion_tokens": 42,
+         "total_tokens": 222,
+         "prompt_tokens_details": {
+          "cached_tokens": 0
+         }
+        },
+        "timings": {
+         "prompt_n": 180,
+         "prompt_ms": 3358.634292,
+         "predicted_n": 42,
+         "predicted_ms": 1276.5092499999998
+        },
+        "decode_tok_s": 32.9022292631252,
+        "prefill_tok_s": 53.593212106702325,
+        "idle_before_pct": 88.48,
+        "prompt_words": 40,
+        "avg_cores": 10.08,
+        "footprint_after": 278516296,
+        "resident_after": 5394612224
+       },
+       {
+        "ttft_s": 15.192797041963786,
+        "total_s": 16.545847916975617,
+        "usage": {
+         "prompt_tokens": 808,
+         "completion_tokens": 46,
+         "total_tokens": 854,
+         "prompt_tokens_details": {
+          "cached_tokens": 0
+         }
+        },
+        "timings": {
+         "prompt_n": 808,
+         "prompt_ms": 15191.059,
+         "predicted_n": 46,
+         "predicted_ms": 1353.442458
+        },
+        "decode_tok_s": 33.98740724299045,
+        "prefill_tok_s": 53.1891818733638,
+        "idle_before_pct": 90.43,
+        "prompt_words": 700,
+        "avg_cores": 9.65,
+        "footprint_after": 437326480,
+        "resident_after": 5576687616
+       }
+      ],
+      "at_end": {
+       "footprint": 437326480,
+       "footprint_peak": 473731728,
+       "resident": 5576687616,
+       "cpu_s": 207.75587016666665,
+       "disk_read": 0,
+       "pageins": 0,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 207.755
+       }
+      },
+      "stats": {
+       "requests": 2,
+       "cancelled": 0,
+       "prompt_tokens": 988,
+       "cached_prompt_tokens": 0,
+       "completion_tokens": 88,
+       "prefill_tok_s": 53.26233701010577,
+       "decode_tok_s": 33.46069945789864,
+       "steps": 89,
+       "max_seqs_in_step": 1,
+       "kv_disk": {
+        "enabled": false,
+        "trimmable": false,
+        "saves": 0,
+        "restores": 0,
+        "restored_tokens": 0,
+        "save_ms": 0.0,
+        "restore_ms": 0.0,
+        "bytes": 0,
+        "files": 0
+       },
+       "threads": 12,
+       "kernels": "neon",
+       "device": "cpu",
+       "bytes_per_token": 5937989632,
+       "sleeping": false
+      }
+     }
+    ],
+    "new": [
+     {
+      "cold": true,
+      "idle_before_pct": 83.7,
+      "resident_after_evict": 0.0,
+      "load_s": 1.312,
+      "cmd": "/Volumes/ARGUS5/PROJECTS/LLMario/.claude/worktrees/llmario-performance-optimization-3de13c/target/release/llmario-engine serve --model /Volumes/ARGUS5/AIPROJECTS/LLMario-beta-models/qwen3.5-9b-gguf-q4km/Qwen3.5-9B-Q4_K_M.gguf --listen 127.0.0.1:57376 --ctx 8192 --parallel 1 --device cpu --threads 12",
+      "after_load": {
+       "footprint": 192024992,
+       "footprint_peak": 192139680,
+       "resident": 5305188352,
+       "cpu_s": 2.460893375,
+       "disk_read": 5680525312,
+       "pageins": 311795,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 2.46
+       }
+      },
+      "threads_os": 15,
+      "engine_model": {
+       "backend": "native",
+       "plan_hash": "6fc4aeb020b8234b29ad3f008a278c2f",
+       "arch": "qwen35",
+       "context": 8192,
+       "kernels": "neon",
+       "kv_type": "f16",
+       "slots": 1,
+       "device": "cpu",
+       "capabilities": {
+        "tools": true,
+        "json_schema": true,
+        "vision": false,
+        "web_tools": []
+       }
+      },
+      "plan": {
+       "planned_peak": 6450049024,
+       "ctx_per_slot": 8192,
+       "kv_dtype": "f16",
+       "slots": 1,
+       "degradations": [],
+       "fits": true
+      },
+      "requests": [
+       {
+        "ttft_s": 3.4150165831670165,
+        "total_s": 4.667139000026509,
+        "usage": {
+         "prompt_tokens": 180,
+         "completion_tokens": 42,
+         "total_tokens": 222,
+         "prompt_tokens_details": {
+          "cached_tokens": 0
+         }
+        },
+        "timings": {
+         "prompt_n": 180,
+         "prompt_ms": 3413.448708,
+         "predicted_n": 42,
+         "predicted_ms": 1252.568375
+        },
+        "decode_tok_s": 33.53110364134812,
+        "prefill_tok_s": 52.73259257657491,
+        "idle_before_pct": 80.32,
+        "prompt_words": 40,
+        "avg_cores": 10.07,
+        "footprint_after": 287150664,
+        "resident_after": 5403312128
+       },
+       {
+        "ttft_s": 15.643995125079527,
+        "total_s": 17.032940458972007,
+        "usage": {
+         "prompt_tokens": 808,
+         "completion_tokens": 46,
+         "total_tokens": 854,
+         "prompt_tokens_details": {
+          "cached_tokens": 0
+         }
+        },
+        "timings": {
+         "prompt_n": 808,
+         "prompt_ms": 15642.372166,
+         "predicted_n": 46,
+         "predicted_ms": 1389.348125
+        },
+        "decode_tok_s": 33.10905249179359,
+        "prefill_tok_s": 51.654569487628955,
+        "idle_before_pct": 82.26,
+        "prompt_words": 700,
+        "avg_cores": 9.68,
+        "footprint_after": 397546056,
+        "resident_after": 5530288128
+       }
+      ],
+      "at_end": {
+       "footprint": 397546056,
+       "footprint_peak": 438784584,
+       "resident": 5530288128,
+       "cpu_s": 214.3267855833333,
+       "disk_read": 5680525312,
+       "pageins": 311966,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 214.326
+       }
+      },
+      "stats": {
+       "requests": 2,
+       "cancelled": 0,
+       "prompt_tokens": 988,
+       "cached_prompt_tokens": 0,
+       "completion_tokens": 88,
+       "prefill_tok_s": 51.84767698267511,
+       "decode_tok_s": 33.309158958876814,
+       "steps": 89,
+       "max_seqs_in_step": 1,
+       "kv_disk": {
+        "enabled": false,
+        "trimmable": false,
+        "saves": 0,
+        "restores": 0,
+        "restored_tokens": 0,
+        "save_ms": 0.0,
+        "restore_ms": 0.0,
+        "bytes": 0,
+        "files": 0
+       },
+       "memory_pressure": {
+        "relief": true,
+        "level": "unknown",
+        "sheds": 0,
+        "released_bytes": 0
+       },
+       "paging": {
+        "bytes": 0,
+        "tokens": 1076,
+        "bytes_per_token_last": 0,
+        "model_does_not_fit_memory": false
+       },
+       "threads": 12,
+       "kernels": "neon",
+       "device": "cpu",
+       "bytes_per_token": 5937989632,
+       "sleeping": false
+      }
+     },
+     {
+      "cold": false,
+      "idle_before_pct": 84.6,
+      "load_s": 0.274,
+      "cmd": "/Volumes/ARGUS5/PROJECTS/LLMario/.claude/worktrees/llmario-performance-optimization-3de13c/target/release/llmario-engine serve --model /Volumes/ARGUS5/AIPROJECTS/LLMario-beta-models/qwen3.5-9b-gguf-q4km/Qwen3.5-9B-Q4_K_M.gguf --listen 127.0.0.1:57452 --ctx 8192 --parallel 1 --device cpu --threads 12",
+      "after_load": {
+       "footprint": 183767456,
+       "footprint_peak": 183931296,
+       "resident": 5296930816,
+       "cpu_s": 1.4489451666666666,
+       "disk_read": 0,
+       "pageins": 0,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 1.449
+       }
+      },
+      "threads_os": 15,
+      "engine_model": {
+       "backend": "native",
+       "plan_hash": "6fc4aeb020b8234b29ad3f008a278c2f",
+       "arch": "qwen35",
+       "context": 8192,
+       "kernels": "neon",
+       "kv_type": "f16",
+       "slots": 1,
+       "device": "cpu",
+       "capabilities": {
+        "tools": true,
+        "json_schema": true,
+        "vision": false,
+        "web_tools": []
+       }
+      },
+      "plan": {
+       "planned_peak": 6450049024,
+       "ctx_per_slot": 8192,
+       "kv_dtype": "f16",
+       "slots": 1,
+       "degradations": [],
+       "fits": true
+      },
+      "requests": [
+       {
+        "ttft_s": 3.3708427499514073,
+        "total_s": 4.584813249995932,
+        "usage": {
+         "prompt_tokens": 180,
+         "completion_tokens": 42,
+         "total_tokens": 222,
+         "prompt_tokens_details": {
+          "cached_tokens": 0
+         }
+        },
+        "timings": {
+         "prompt_n": 180,
+         "prompt_ms": 3369.401458,
+         "predicted_n": 42,
+         "predicted_ms": 1214.413
+        },
+        "decode_tok_s": 34.584610013232734,
+        "prefill_tok_s": 53.42195112209748,
+        "idle_before_pct": 90.9,
+        "prompt_words": 40,
+        "avg_cores": 10.06,
+        "footprint_after": 266883632,
+        "resident_after": 5383061504
+       },
+       {
+        "ttft_s": 15.13715708302334,
+        "total_s": 16.49507399997674,
+        "usage": {
+         "prompt_tokens": 808,
+         "completion_tokens": 46,
+         "total_tokens": 854,
+         "prompt_tokens_details": {
+          "cached_tokens": 0
+         }
+        },
+        "timings": {
+         "prompt_n": 808,
+         "prompt_ms": 15135.412833,
+         "predicted_n": 46,
+         "predicted_ms": 1358.327084
+        },
+        "decode_tok_s": 33.86518647963586,
+        "prefill_tok_s": 53.384734788224854,
+        "idle_before_pct": 89.49,
+        "prompt_words": 700,
+        "avg_cores": 9.67,
+        "footprint_after": 470897272,
+        "resident_after": 5587173376
+       }
+      ],
+      "at_end": {
+       "footprint": 470897272,
+       "footprint_peak": 470897272,
+       "resident": 5587173376,
+       "cpu_s": 207.11360324999998,
+       "disk_read": 0,
+       "pageins": 0,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 207.113
+       }
+      },
+      "stats": {
+       "requests": 2,
+       "cancelled": 0,
+       "prompt_tokens": 988,
+       "cached_prompt_tokens": 0,
+       "completion_tokens": 88,
+       "prefill_tok_s": 53.39151495343401,
+       "decode_tok_s": 34.20477778555159,
+       "steps": 89,
+       "max_seqs_in_step": 1,
+       "kv_disk": {
+        "enabled": false,
+        "trimmable": false,
+        "saves": 0,
+        "restores": 0,
+        "restored_tokens": 0,
+        "save_ms": 0.0,
+        "restore_ms": 0.0,
+        "bytes": 0,
+        "files": 0
+       },
+       "memory_pressure": {
+        "relief": true,
+        "level": "unknown",
+        "sheds": 0,
+        "released_bytes": 0
+       },
+       "paging": {
+        "bytes": 0,
+        "tokens": 1076,
+        "bytes_per_token_last": 0,
+        "model_does_not_fit_memory": false
+       },
+       "threads": 12,
+       "kernels": "neon",
+       "device": "cpu",
+       "bytes_per_token": 5937989632,
+       "sleeping": false
+      }
+     },
+     {
+      "cold": true,
+      "idle_before_pct": 89.9,
+      "resident_after_evict": 0.0,
+      "load_s": 1.292,
+      "cmd": "/Volumes/ARGUS5/PROJECTS/LLMario/.claude/worktrees/llmario-performance-optimization-3de13c/target/release/llmario-engine serve --model /Volumes/ARGUS5/AIPROJECTS/LLMario-beta-models/qwen3.5-9b-gguf-q4km/Qwen3.5-9B-Q4_K_M.gguf --listen 127.0.0.1:57554 --ctx 8192 --parallel 1 --device cpu --threads 12",
+      "after_load": {
+       "footprint": 182489480,
+       "footprint_peak": 182620552,
+       "resident": 5295669248,
+       "cpu_s": 2.2359655,
+       "disk_read": 5680525312,
+       "pageins": 311796,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 2.235
+       }
+      },
+      "threads_os": 15,
+      "engine_model": {
+       "backend": "native",
+       "plan_hash": "6fc4aeb020b8234b29ad3f008a278c2f",
+       "arch": "qwen35",
+       "context": 8192,
+       "kernels": "neon",
+       "kv_type": "f16",
+       "slots": 1,
+       "device": "cpu",
+       "capabilities": {
+        "tools": true,
+        "json_schema": true,
+        "vision": false,
+        "web_tools": []
+       }
+      },
+      "plan": {
+       "planned_peak": 6450049024,
+       "ctx_per_slot": 8192,
+       "kv_dtype": "f16",
+       "slots": 1,
+       "degradations": [],
+       "fits": true
+      },
+      "requests": [
+       {
+        "ttft_s": 3.3402695420663804,
+        "total_s": 4.559156250208616,
+        "usage": {
+         "prompt_tokens": 180,
+         "completion_tokens": 42,
+         "total_tokens": 222,
+         "prompt_tokens_details": {
+          "cached_tokens": 0
+         }
+        },
+        "timings": {
+         "prompt_n": 180,
+         "prompt_ms": 3338.927541,
+         "predicted_n": 42,
+         "predicted_ms": 1219.231167
+        },
+        "decode_tok_s": 34.44793828830985,
+        "prefill_tok_s": 53.909525675448016,
+        "idle_before_pct": 86.75,
+        "prompt_words": 40,
+        "avg_cores": 10.08,
+        "footprint_after": 280580680,
+        "resident_after": 5396742144
+       },
+       {
+        "ttft_s": 15.112348041962832,
+        "total_s": 16.471880541881546,
+        "usage": {
+         "prompt_tokens": 808,
+         "completion_tokens": 46,
+         "total_tokens": 854,
+         "prompt_tokens_details": {
+          "cached_tokens": 0
+         }
+        },
+        "timings": {
+         "prompt_n": 808,
+         "prompt_ms": 15110.587833,
+         "predicted_n": 46,
+         "predicted_ms": 1359.9929579999998
+        },
+        "decode_tok_s": 33.823704548917235,
+        "prefill_tok_s": 53.47243991629561,
+        "idle_before_pct": 88.79,
+        "prompt_words": 700,
+        "avg_cores": 9.64,
+        "footprint_after": 440472208,
+        "resident_after": 5574574080
+       }
+      ],
+      "at_end": {
+       "footprint": 440472208,
+       "footprint_peak": 483971728,
+       "resident": 5574574080,
+       "cpu_s": 206.93990845833332,
+       "disk_read": 5680525312,
+       "pageins": 311967,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 206.939
+       }
+      },
+      "stats": {
+       "requests": 2,
+       "cancelled": 0,
+       "prompt_tokens": 988,
+       "cached_prompt_tokens": 0,
+       "completion_tokens": 88,
+       "prefill_tok_s": 53.55154612744813,
+       "decode_tok_s": 34.11880244554271,
+       "steps": 89,
+       "max_seqs_in_step": 1,
+       "kv_disk": {
+        "enabled": false,
+        "trimmable": false,
+        "saves": 0,
+        "restores": 0,
+        "restored_tokens": 0,
+        "save_ms": 0.0,
+        "restore_ms": 0.0,
+        "bytes": 0,
+        "files": 0
+       },
+       "memory_pressure": {
+        "relief": true,
+        "level": "unknown",
+        "sheds": 0,
+        "released_bytes": 0
+       },
+       "paging": {
+        "bytes": 0,
+        "tokens": 1076,
+        "bytes_per_token_last": 0,
+        "model_does_not_fit_memory": false
+       },
+       "threads": 12,
+       "kernels": "neon",
+       "device": "cpu",
+       "bytes_per_token": 5937989632,
+       "sleeping": false
+      }
+     },
+     {
+      "cold": false,
+      "idle_before_pct": 88.46,
+      "load_s": 0.277,
+      "cmd": "/Volumes/ARGUS5/PROJECTS/LLMario/.claude/worktrees/llmario-performance-optimization-3de13c/target/release/llmario-engine serve --model /Volumes/ARGUS5/AIPROJECTS/LLMario-beta-models/qwen3.5-9b-gguf-q4km/Qwen3.5-9B-Q4_K_M.gguf --listen 127.0.0.1:57626 --ctx 8192 --parallel 1 --device cpu --threads 12",
+      "after_load": {
+       "footprint": 182292872,
+       "footprint_peak": 182391176,
+       "resident": 5295472640,
+       "cpu_s": 1.448845,
+       "disk_read": 0,
+       "pageins": 0,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 1.448
+       }
+      },
+      "threads_os": 15,
+      "engine_model": {
+       "backend": "native",
+       "plan_hash": "6fc4aeb020b8234b29ad3f008a278c2f",
+       "arch": "qwen35",
+       "context": 8192,
+       "kernels": "neon",
+       "kv_type": "f16",
+       "slots": 1,
+       "device": "cpu",
+       "capabilities": {
+        "tools": true,
+        "json_schema": true,
+        "vision": false,
+        "web_tools": []
+       }
+      },
+      "plan": {
+       "planned_peak": 6450049024,
+       "ctx_per_slot": 8192,
+       "kv_dtype": "f16",
+       "slots": 1,
+       "degradations": [],
+       "fits": true
+      },
+      "requests": [
+       {
+        "ttft_s": 3.516320209018886,
+        "total_s": 4.857406917028129,
+        "usage": {
+         "prompt_tokens": 180,
+         "completion_tokens": 42,
+         "total_tokens": 222,
+         "prompt_tokens_details": {
+          "cached_tokens": 0
+         }
+        },
+        "timings": {
+         "prompt_n": 180,
+         "prompt_ms": 3514.8445420000003,
+         "predicted_n": 42,
+         "predicted_ms": 1341.508292
+        },
+        "decode_tok_s": 31.30804352866423,
+        "prefill_tok_s": 51.21136876727335,
+        "idle_before_pct": 90.23,
+        "prompt_words": 40,
+        "avg_cores": 10.16,
+        "footprint_after": 315806328,
+        "resident_after": 5431934976
+       },
+       {
+        "ttft_s": 15.310430249897763,
+        "total_s": 16.700950333848596,
+        "usage": {
+         "prompt_tokens": 808,
+         "completion_tokens": 46,
+         "total_tokens": 854,
+         "prompt_tokens_details": {
+          "cached_tokens": 0
+         }
+        },
+        "timings": {
+         "prompt_n": 808,
+         "prompt_ms": 15308.786541,
+         "predicted_n": 46,
+         "predicted_ms": 1390.923917
+        },
+        "decode_tok_s": 33.07154290596615,
+        "prefill_tok_s": 52.7801467370398,
+        "idle_before_pct": 90.47,
+        "prompt_words": 700,
+        "avg_cores": 9.67,
+        "footprint_after": 441553528,
+        "resident_after": 5576769536
+       }
+      ],
+      "at_end": {
+       "footprint": 441553528,
+       "footprint_peak": 473420408,
+       "resident": 5576769536,
+       "cpu_s": 212.2730394583333,
+       "disk_read": 0,
+       "pageins": 0,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 212.273
+       }
+      },
+      "stats": {
+       "requests": 2,
+       "cancelled": 0,
+       "prompt_tokens": 988,
+       "cached_prompt_tokens": 0,
+       "completion_tokens": 88,
+       "prefill_tok_s": 52.48721952142068,
+       "decode_tok_s": 32.20575377749704,
+       "steps": 89,
+       "max_seqs_in_step": 1,
+       "kv_disk": {
+        "enabled": false,
+        "trimmable": false,
+        "saves": 0,
+        "restores": 0,
+        "restored_tokens": 0,
+        "save_ms": 0.0,
+        "restore_ms": 0.0,
+        "bytes": 0,
+        "files": 0
+       },
+       "memory_pressure": {
+        "relief": true,
+        "level": "unknown",
+        "sheds": 0,
+        "released_bytes": 0
+       },
+       "paging": {
+        "bytes": 0,
+        "tokens": 1076,
+        "bytes_per_token_last": 0,
+        "model_does_not_fit_memory": false
+       },
+       "threads": 12,
+       "kernels": "neon",
+       "device": "cpu",
+       "bytes_per_token": 5937989632,
+       "sleeping": false
+      }
+     }
+    ]
+   }
+  },
+  {
+   "info": {
+    "file": "gemma-4-12b-it-qat-q4_0.gguf",
+    "bytes": 6975879296,
+    "general.name": "\"Hf\"",
+    "general.architecture": "\"gemma4\"",
+    "general.file_type": "2",
+    "general.size_label": "\"12B\"",
+    "general.quantization_version": "2",
+    "context_length": 262144,
+    "bytes_by_type_pct": {
+     "f32": 0.0,
+     "q4_0": 88.1,
+     "q6_K": 11.9
+    }
+   },
+   "storage": {
+    "path_volume": "/Volumes/ARGUS5",
+    "solid_state": "Yes",
+    "protocol": "PCI-Express",
+    "file_system_personality": "APFS",
+    "device_location": "External"
+   },
+   "raw": {
+    "base": {
+     "12": [
+      {
+       "wall_s": 12.137,
+       "idle_before_pct": 85.63,
+       "output_ids": "2214,18830,573,3746,529,1546,3446,236764,16890,506,3885,1056,506,7102,691,1346,13588,236761,669,53676,7588,3209,7971,600,951,16878,691,5745,580,506,17240,528,1724",
+       "load_s": 0.06,
+       "prefill_tok_s": 24.9,
+       "decode_tok_s": 18.8,
+       "threads_used": 12
+      },
+      {
+       "wall_s": 11.192,
+       "idle_before_pct": 89.78,
+       "output_ids": "2214,18830,573,3746,529,1546,3446,236764,16890,506,3885,1056,506,7102,691,1346,13588,236761,669,53676,7588,3209,7971,600,951,16878,691,5745,580,506,17240,528,1724",
+       "load_s": 0.03,
+       "prefill_tok_s": 27.3,
+       "decode_tok_s": 18.59,
+       "threads_used": 12
+      }
+     ]
+    },
+    "new": {
+     "12": [
+      {
+       "wall_s": 11.105,
+       "idle_before_pct": 84.9,
+       "output_ids": "2214,18830,573,3746,529,1546,3446,236764,16890,506,3885,1056,506,7102,691,1346,13588,236761,669,53676,7588,3209,7971,600,951,16878,691,5745,580,506,17240,528,1724",
+       "load_s": 0.03,
+       "prefill_tok_s": 27.4,
+       "decode_tok_s": 19.1,
+       "threads_used": 12
+      },
+      {
+       "wall_s": 11.162,
+       "idle_before_pct": 80.41,
+       "output_ids": "2214,18830,573,3746,529,1546,3446,236764,16890,506,3885,1056,506,7102,691,1346,13588,236761,669,53676,7588,3209,7971,600,951,16878,691,5745,580,506,17240,528,1724",
+       "load_s": 0.03,
+       "prefill_tok_s": 27.3,
+       "decode_tok_s": 19.09,
+       "threads_used": 12
+      }
+     ]
+    }
+   },
+   "serve": {
+    "base": [
+     {
+      "cold": true,
+      "idle_before_pct": 87.92,
+      "resident_after_evict": 0.0,
+      "load_s": 2.48,
+      "cmd": "/Volumes/ARGUS5/PROJECTS/LLMario/.claude/worktrees/llmario-performance-optimization-3de13c/target/baseline/llmario-engine serve --model /Volumes/ARGUS5/AIPROJECTS/LLMario-beta-models/gemma-4-12b-gguf-q4_0/gemma-4-12b-it-qat-q4_0.gguf --listen 127.0.0.1:57644 --ctx 8192 --parallel 1 --device cpu --threads 12",
+      "after_load": {
+       "footprint": 175085160,
+       "footprint_peak": 176740304,
+       "resident": 7154843648,
+       "cpu_s": 4.018684791666666,
+       "disk_read": 6975881216,
+       "pageins": 425799,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 4.018
+       }
+      },
+      "threads_os": 15,
+      "engine_model": {
+       "backend": "native",
+       "plan_hash": "bad4951163783799d1b9683c3abf9d8b",
+       "arch": "gemma4",
+       "context": 8192,
+       "kernels": "neon",
+       "kv_type": "f16",
+       "slots": 1,
+       "device": "cpu",
+       "capabilities": {
+        "tools": true,
+        "json_schema": true,
+        "vision": false,
+        "web_tools": []
+       }
+      },
+      "plan": {
+       "planned_peak": 7996062912,
+       "ctx_per_slot": 8192,
+       "kv_dtype": "f16",
+       "slots": 1,
+       "degradations": [],
+       "fits": true
+      },
+      "requests": [
+       {
+        "ttft_s": 6.446115875151008,
+        "total_s": 8.138054083101451,
+        "usage": {
+         "prompt_tokens": 179,
+         "completion_tokens": 35,
+         "total_tokens": 214,
+         "prompt_tokens_details": {
+          "cached_tokens": 0
+         }
+        },
+        "timings": {
+         "prompt_n": 179,
+         "prompt_ms": 6444.458208,
+         "predicted_n": 35,
+         "predicted_ms": 1692.40375
+        },
+        "decode_tok_s": 20.680644320245687,
+        "prefill_tok_s": 27.775802747513136,
+        "idle_before_pct": 89.23,
+        "prompt_words": 40,
+        "avg_cores": 10.23,
+        "footprint_after": 302274536,
+        "resident_after": 7282180096
+       },
+       {
+        "ttft_s": 24.177628125064075,
+        "total_s": 26.223416667198762,
+        "usage": {
+         "prompt_tokens": 795,
+         "completion_tokens": 35,
+         "total_tokens": 830,
+         "prompt_tokens_details": {
+          "cached_tokens": 159
+         }
+        },
+        "timings": {
+         "prompt_n": 636,
+         "prompt_ms": 24175.586458,
+         "predicted_n": 35,
+         "predicted_ms": 2046.2724579999997
+        },
+        "decode_tok_s": 17.1042716541318,
+        "prefill_tok_s": 26.307531405904726,
+        "idle_before_pct": 88.78,
+        "prompt_words": 700,
+        "avg_cores": 10.14,
+        "footprint_after": 606459904,
+        "resident_after": 7586349056
+       }
+      ],
+      "at_end": {
+       "footprint": 606459904,
+       "footprint_peak": 606459904,
+       "resident": 7586349056,
+       "cpu_s": 353.1134324583333,
+       "disk_read": 6975881216,
+       "pageins": 425800,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 353.113
+       }
+      },
+      "stats": {
+       "requests": 2,
+       "cancelled": 0,
+       "prompt_tokens": 815,
+       "cached_prompt_tokens": 159,
+       "completion_tokens": 70,
+       "prefill_tok_s": 26.616552216580747,
+       "decode_tok_s": 18.723210763171444,
+       "steps": 71,
+       "max_seqs_in_step": 1,
+       "kv_disk": {
+        "enabled": false,
+        "trimmable": false,
+        "saves": 0,
+        "restores": 0,
+        "restored_tokens": 0,
+        "save_ms": 0.0,
+        "restore_ms": 0.0,
+        "bytes": 0,
+        "files": 0
+       },
+       "threads": 12,
+       "kernels": "neon",
+       "device": "cpu",
+       "bytes_per_token": 7094272192,
+       "sleeping": false
+      }
+     },
+     {
+      "cold": false,
+      "idle_before_pct": 87.8,
+      "load_s": 0.349,
+      "cmd": "/Volumes/ARGUS5/PROJECTS/LLMario/.claude/worktrees/llmario-performance-optimization-3de13c/target/baseline/llmario-engine serve --model /Volumes/ARGUS5/AIPROJECTS/LLMario-beta-models/gemma-4-12b-gguf-q4_0/gemma-4-12b-it-qat-q4_0.gguf --listen 127.0.0.1:57820 --ctx 8192 --parallel 1 --device cpu --threads 12",
+      "after_load": {
+       "footprint": 175003264,
+       "footprint_peak": 176740328,
+       "resident": 7154745344,
+       "cpu_s": 1.8906292499999997,
+       "disk_read": 0,
+       "pageins": 0,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 1.89
+       }
+      },
+      "threads_os": 15,
+      "engine_model": {
+       "backend": "native",
+       "plan_hash": "bad4951163783799d1b9683c3abf9d8b",
+       "arch": "gemma4",
+       "context": 8192,
+       "kernels": "neon",
+       "kv_type": "f16",
+       "slots": 1,
+       "device": "cpu",
+       "capabilities": {
+        "tools": true,
+        "json_schema": true,
+        "vision": false,
+        "web_tools": []
+       }
+      },
+      "plan": {
+       "planned_peak": 7996062912,
+       "ctx_per_slot": 8192,
+       "kv_dtype": "f16",
+       "slots": 1,
+       "degradations": [],
+       "fits": true
+      },
+      "requests": [
+       {
+        "ttft_s": 6.467674124985933,
+        "total_s": 8.145675958134234,
+        "usage": {
+         "prompt_tokens": 179,
+         "completion_tokens": 35,
+         "total_tokens": 214,
+         "prompt_tokens_details": {
+          "cached_tokens": 0
+         }
+        },
+        "timings": {
+         "prompt_n": 179,
+         "prompt_ms": 6465.956375,
+         "predicted_n": 35,
+         "predicted_ms": 1678.523083
+        },
+        "decode_tok_s": 20.851664391439293,
+        "prefill_tok_s": 27.683453091654986,
+        "idle_before_pct": 88.85,
+        "prompt_words": 40,
+        "avg_cores": 10.28,
+        "footprint_after": 305059840,
+        "resident_after": 7284948992
+       },
+       {
+        "ttft_s": 24.50107366614975,
+        "total_s": 26.51454975013621,
+        "usage": {
+         "prompt_tokens": 795,
+         "completion_tokens": 35,
+         "total_tokens": 830,
+         "prompt_tokens_details": {
+          "cached_tokens": 159
+         }
+        },
+        "timings": {
+         "prompt_n": 636,
+         "prompt_ms": 24498.717625,
+         "predicted_n": 35,
+         "predicted_ms": 2013.9001250000001
+        },
+        "decode_tok_s": 17.379213380802586,
+        "prefill_tok_s": 25.960542495946253,
+        "idle_before_pct": 85.68,
+        "prompt_words": 700,
+        "avg_cores": 10.16,
+        "footprint_after": 609425408,
+        "resident_after": 7589314560
+       }
+      ],
+      "at_end": {
+       "footprint": 609425408,
+       "footprint_peak": 609425408,
+       "resident": 7589314560,
+       "cpu_s": 355.1231962083333,
+       "disk_read": 0,
+       "pageins": 0,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 355.123
+       }
+      },
+      "stats": {
+       "requests": 2,
+       "cancelled": 0,
+       "prompt_tokens": 815,
+       "cached_prompt_tokens": 159,
+       "completion_tokens": 70,
+       "prefill_tok_s": 26.32031670413571,
+       "decode_tok_s": 18.957741298870687,
+       "steps": 71,
+       "max_seqs_in_step": 1,
+       "kv_disk": {
+        "enabled": false,
+        "trimmable": false,
+        "saves": 0,
+        "restores": 0,
+        "restored_tokens": 0,
+        "save_ms": 0.0,
+        "restore_ms": 0.0,
+        "bytes": 0,
+        "files": 0
+       },
+       "threads": 12,
+       "kernels": "neon",
+       "device": "cpu",
+       "bytes_per_token": 7094272192,
+       "sleeping": false
+      }
+     },
+     {
+      "cold": true,
+      "idle_before_pct": 79.16,
+      "resident_after_evict": 0.0,
+      "load_s": 2.5,
+      "cmd": "/Volumes/ARGUS5/PROJECTS/LLMario/.claude/worktrees/llmario-performance-optimization-3de13c/target/baseline/llmario-engine serve --model /Volumes/ARGUS5/AIPROJECTS/LLMario-beta-models/gemma-4-12b-gguf-q4_0/gemma-4-12b-it-qat-q4_0.gguf --listen 127.0.0.1:57863 --ctx 8192 --parallel 1 --device cpu --threads 12",
+      "after_load": {
+       "footprint": 175429248,
+       "footprint_peak": 177149928,
+       "resident": 7155171328,
+       "cpu_s": 4.204417625,
+       "disk_read": 6975881216,
+       "pageins": 425841,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 4.204
+       }
+      },
+      "threads_os": 15,
+      "engine_model": {
+       "backend": "native",
+       "plan_hash": "bad4951163783799d1b9683c3abf9d8b",
+       "arch": "gemma4",
+       "context": 8192,
+       "kernels": "neon",
+       "kv_type": "f16",
+       "slots": 1,
+       "device": "cpu",
+       "capabilities": {
+        "tools": true,
+        "json_schema": true,
+        "vision": false,
+        "web_tools": []
+       }
+      },
+      "plan": {
+       "planned_peak": 7996062912,
+       "ctx_per_slot": 8192,
+       "kv_dtype": "f16",
+       "slots": 1,
+       "degradations": [],
+       "fits": true
+      },
+      "requests": [
+       {
+        "ttft_s": 6.464345583925024,
+        "total_s": 8.14822691702284,
+        "usage": {
+         "prompt_tokens": 179,
+         "completion_tokens": 35,
+         "total_tokens": 214,
+         "prompt_tokens_details": {
+          "cached_tokens": 0
+         }
+        },
+        "timings": {
+         "prompt_n": 179,
+         "prompt_ms": 6462.632417,
+         "predicted_n": 35,
+         "predicted_ms": 1684.3007910000001
+        },
+        "decode_tok_s": 20.7801362957384,
+        "prefill_tok_s": 27.697691660311555,
+        "idle_before_pct": 90.2,
+        "prompt_words": 40,
+        "avg_cores": 10.26,
+        "footprint_after": 302520296,
+        "resident_after": 7282425856
+       },
+       {
+        "ttft_s": 23.99215425015427,
+        "total_s": 26.024528000038117,
+        "usage": {
+         "prompt_tokens": 795,
+         "completion_tokens": 35,
+         "total_tokens": 830,
+         "prompt_tokens_details": {
+          "cached_tokens": 159
+         }
+        },
+        "timings": {
+         "prompt_n": 636,
+         "prompt_ms": 23989.843125,
+         "predicted_n": 35,
+         "predicted_ms": 2032.781334
+        },
+        "decode_tok_s": 17.21778895476615,
+        "prefill_tok_s": 26.5112196309954,
+        "idle_before_pct": 90.43,
+        "prompt_words": 700,
+        "avg_cores": 10.16,
+        "footprint_after": 606738432,
+        "resident_after": 7586627584
+       }
+      ],
+      "at_end": {
+       "footprint": 606738432,
+       "footprint_peak": 606738432,
+       "resident": 7586627584,
+       "cpu_s": 352.1182575833333,
+       "disk_read": 6975881216,
+       "pageins": 425841,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 352.118
+       }
+      },
+      "stats": {
+       "requests": 2,
+       "cancelled": 0,
+       "prompt_tokens": 815,
+       "cached_prompt_tokens": 159,
+       "completion_tokens": 70,
+       "prefill_tok_s": 26.763013515321827,
+       "decode_tok_s": 18.83198133158788,
+       "steps": 71,
+       "max_seqs_in_step": 1,
+       "kv_disk": {
+        "enabled": false,
+        "trimmable": false,
+        "saves": 0,
+        "restores": 0,
+        "restored_tokens": 0,
+        "save_ms": 0.0,
+        "restore_ms": 0.0,
+        "bytes": 0,
+        "files": 0
+       },
+       "threads": 12,
+       "kernels": "neon",
+       "device": "cpu",
+       "bytes_per_token": 7094272192,
+       "sleeping": false
+      }
+     },
+     {
+      "cold": false,
+      "idle_before_pct": 90.37,
+      "load_s": 0.325,
+      "cmd": "/Volumes/ARGUS5/PROJECTS/LLMario/.claude/worktrees/llmario-performance-optimization-3de13c/target/baseline/llmario-engine serve --model /Volumes/ARGUS5/AIPROJECTS/LLMario-beta-models/gemma-4-12b-gguf-q4_0/gemma-4-12b-it-qat-q4_0.gguf --listen 127.0.0.1:58044 --ctx 8192 --parallel 1 --device cpu --threads 12",
+      "after_load": {
+       "footprint": 175052416,
+       "footprint_peak": 176707536,
+       "resident": 7154794496,
+       "cpu_s": 1.8595504166666665,
+       "disk_read": 0,
+       "pageins": 0,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 1.859
+       }
+      },
+      "threads_os": 15,
+      "engine_model": {
+       "backend": "native",
+       "plan_hash": "bad4951163783799d1b9683c3abf9d8b",
+       "arch": "gemma4",
+       "context": 8192,
+       "kernels": "neon",
+       "kv_type": "f16",
+       "slots": 1,
+       "device": "cpu",
+       "capabilities": {
+        "tools": true,
+        "json_schema": true,
+        "vision": false,
+        "web_tools": []
+       }
+      },
+      "plan": {
+       "planned_peak": 7996062912,
+       "ctx_per_slot": 8192,
+       "kv_dtype": "f16",
+       "slots": 1,
+       "degradations": [],
+       "fits": true
+      },
+      "requests": [
+       {
+        "ttft_s": 6.472053958103061,
+        "total_s": 8.139297125162557,
+        "usage": {
+         "prompt_tokens": 179,
+         "completion_tokens": 35,
+         "total_tokens": 214,
+         "prompt_tokens_details": {
+          "cached_tokens": 0
+         }
+        },
+        "timings": {
+         "prompt_n": 179,
+         "prompt_ms": 6470.4805,
+         "predicted_n": 35,
+         "predicted_ms": 1667.712875
+        },
+        "decode_tok_s": 20.986826044621143,
+        "prefill_tok_s": 27.664096970850927,
+        "idle_before_pct": 90.21,
+        "prompt_words": 40,
+        "avg_cores": 10.26,
+        "footprint_after": 302536704,
+        "resident_after": 7282425856
+       },
+       {
+        "ttft_s": 24.039987458847463,
+        "total_s": 26.145917291985825,
+        "usage": {
+         "prompt_tokens": 795,
+         "completion_tokens": 35,
+         "total_tokens": 830,
+         "prompt_tokens_details": {
+          "cached_tokens": 159
+         }
+        },
+        "timings": {
+         "prompt_n": 636,
+         "prompt_ms": 24038.008375,
+         "predicted_n": 35,
+         "predicted_ms": 2106.367041
+        },
+        "decode_tok_s": 16.616287341537454,
+        "prefill_tok_s": 26.458098777494914,
+        "idle_before_pct": 90.15,
+        "prompt_words": 700,
+        "avg_cores": 10.15,
+        "footprint_after": 602888192,
+        "resident_after": 7582777344
+       }
+      ],
+      "at_end": {
+       "footprint": 602888192,
+       "footprint_peak": 602888192,
+       "resident": 7582777344,
+       "cpu_s": 350.67715791666666,
+       "disk_read": 0,
+       "pageins": 0,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 350.677
+       }
+      },
+      "stats": {
+       "requests": 2,
+       "cancelled": 0,
+       "prompt_tokens": 815,
+       "cached_prompt_tokens": 159,
+       "completion_tokens": 70,
+       "prefill_tok_s": 26.71387713478295,
+       "decode_tok_s": 18.547571473729086,
+       "steps": 71,
+       "max_seqs_in_step": 1,
+       "kv_disk": {
+        "enabled": false,
+        "trimmable": false,
+        "saves": 0,
+        "restores": 0,
+        "restored_tokens": 0,
+        "save_ms": 0.0,
+        "restore_ms": 0.0,
+        "bytes": 0,
+        "files": 0
+       },
+       "threads": 12,
+       "kernels": "neon",
+       "device": "cpu",
+       "bytes_per_token": 7094272192,
+       "sleeping": false
+      }
+     }
+    ],
+    "new": [
+     {
+      "cold": true,
+      "idle_before_pct": 87.0,
+      "resident_after_evict": 0.0,
+      "load_s": 1.631,
+      "cmd": "/Volumes/ARGUS5/PROJECTS/LLMario/.claude/worktrees/llmario-performance-optimization-3de13c/target/release/llmario-engine serve --model /Volumes/ARGUS5/AIPROJECTS/LLMario-beta-models/gemma-4-12b-gguf-q4_0/gemma-4-12b-it-qat-q4_0.gguf --listen 127.0.0.1:57748 --ctx 8192 --parallel 1 --device cpu --threads 12",
+      "after_load": {
+       "footprint": 175396480,
+       "footprint_peak": 177018856,
+       "resident": 7155171328,
+       "cpu_s": 3.2174757499999997,
+       "disk_read": 6975881216,
+       "pageins": 425774,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 3.217
+       }
+      },
+      "threads_os": 15,
+      "engine_model": {
+       "backend": "native",
+       "plan_hash": "bad4951163783799d1b9683c3abf9d8b",
+       "arch": "gemma4",
+       "context": 8192,
+       "kernels": "neon",
+       "kv_type": "f16",
+       "slots": 1,
+       "device": "cpu",
+       "capabilities": {
+        "tools": true,
+        "json_schema": true,
+        "vision": false,
+        "web_tools": []
+       }
+      },
+      "plan": {
+       "planned_peak": 7996062912,
+       "ctx_per_slot": 8192,
+       "kv_dtype": "f16",
+       "slots": 1,
+       "degradations": [],
+       "fits": true
+      },
+      "requests": [
+       {
+        "ttft_s": 6.491371166193858,
+        "total_s": 8.167717625154182,
+        "usage": {
+         "prompt_tokens": 179,
+         "completion_tokens": 35,
+         "total_tokens": 214,
+         "prompt_tokens_details": {
+          "cached_tokens": 0
+         }
+        },
+        "timings": {
+         "prompt_n": 179,
+         "prompt_ms": 6489.175959,
+         "predicted_n": 35,
+         "predicted_ms": 1676.846166
+        },
+        "decode_tok_s": 20.872516936655,
+        "prefill_tok_s": 27.584396097587774,
+        "idle_before_pct": 75.18,
+        "prompt_words": 40,
+        "avg_cores": 10.26,
+        "footprint_after": 303765504,
+        "resident_after": 7283720192
+       },
+       {
+        "ttft_s": 23.961383499903604,
+        "total_s": 25.990361457923427,
+        "usage": {
+         "prompt_tokens": 795,
+         "completion_tokens": 35,
+         "total_tokens": 830,
+         "prompt_tokens_details": {
+          "cached_tokens": 159
+         }
+        },
+        "timings": {
+         "prompt_n": 636,
+         "prompt_ms": 23959.527083,
+         "predicted_n": 35,
+         "predicted_ms": 2029.347333
+        },
+        "decode_tok_s": 17.246924383446586,
+        "prefill_tok_s": 26.54476433515505,
+        "idle_before_pct": 86.55,
+        "prompt_words": 700,
+        "avg_cores": 10.15,
+        "footprint_after": 604149760,
+        "resident_after": 7584104448
+       }
+      ],
+      "at_end": {
+       "footprint": 604149760,
+       "footprint_peak": 604149760,
+       "resident": 7584104448,
+       "cpu_s": 350.7512564583333,
+       "disk_read": 6975881216,
+       "pageins": 425774,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 350.751
+       }
+      },
+      "stats": {
+       "requests": 2,
+       "cancelled": 0,
+       "prompt_tokens": 815,
+       "cached_prompt_tokens": 159,
+       "completion_tokens": 70,
+       "prefill_tok_s": 26.766329809395486,
+       "decode_tok_s": 18.887305652997565,
+       "steps": 71,
+       "max_seqs_in_step": 1,
+       "kv_disk": {
+        "enabled": false,
+        "trimmable": false,
+        "saves": 0,
+        "restores": 0,
+        "restored_tokens": 0,
+        "save_ms": 0.0,
+        "restore_ms": 0.0,
+        "bytes": 0,
+        "files": 0
+       },
+       "memory_pressure": {
+        "relief": true,
+        "level": "unknown",
+        "sheds": 0,
+        "released_bytes": 0
+       },
+       "paging": {
+        "bytes": 0,
+        "tokens": 885,
+        "bytes_per_token_last": 0,
+        "model_does_not_fit_memory": false
+       },
+       "threads": 12,
+       "kernels": "neon",
+       "device": "cpu",
+       "bytes_per_token": 7094272192,
+       "sleeping": false
+      }
+     },
+     {
+      "cold": false,
+      "idle_before_pct": 88.61,
+      "load_s": 0.337,
+      "cmd": "/Volumes/ARGUS5/PROJECTS/LLMario/.claude/worktrees/llmario-performance-optimization-3de13c/target/release/llmario-engine serve --model /Volumes/ARGUS5/AIPROJECTS/LLMario-beta-models/gemma-4-12b-gguf-q4_0/gemma-4-12b-it-qat-q4_0.gguf --listen 127.0.0.1:57841 --ctx 8192 --parallel 1 --device cpu --threads 12",
+      "after_load": {
+       "footprint": 175183488,
+       "footprint_peak": 176822248,
+       "resident": 7154958336,
+       "cpu_s": 1.8676451666666665,
+       "disk_read": 0,
+       "pageins": 0,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 1.867
+       }
+      },
+      "threads_os": 15,
+      "engine_model": {
+       "backend": "native",
+       "plan_hash": "bad4951163783799d1b9683c3abf9d8b",
+       "arch": "gemma4",
+       "context": 8192,
+       "kernels": "neon",
+       "kv_type": "f16",
+       "slots": 1,
+       "device": "cpu",
+       "capabilities": {
+        "tools": true,
+        "json_schema": true,
+        "vision": false,
+        "web_tools": []
+       }
+      },
+      "plan": {
+       "planned_peak": 7996062912,
+       "ctx_per_slot": 8192,
+       "kv_dtype": "f16",
+       "slots": 1,
+       "degradations": [],
+       "fits": true
+      },
+      "requests": [
+       {
+        "ttft_s": 6.529086833819747,
+        "total_s": 8.207751333946362,
+        "usage": {
+         "prompt_tokens": 179,
+         "completion_tokens": 35,
+         "total_tokens": 214,
+         "prompt_tokens_details": {
+          "cached_tokens": 0
+         }
+        },
+        "timings": {
+         "prompt_n": 179,
+         "prompt_ms": 6527.40275,
+         "predicted_n": 35,
+         "predicted_ms": 1679.124166
+        },
+        "decode_tok_s": 20.844200035174765,
+        "prefill_tok_s": 27.42285206776922,
+        "idle_before_pct": 87.63,
+        "prompt_words": 40,
+        "avg_cores": 10.3,
+        "footprint_after": 305862632,
+        "resident_after": 7285833728
+       },
+       {
+        "ttft_s": 24.29361208411865,
+        "total_s": 26.322319500148296,
+        "usage": {
+         "prompt_tokens": 795,
+         "completion_tokens": 35,
+         "total_tokens": 830,
+         "prompt_tokens_details": {
+          "cached_tokens": 159
+         }
+        },
+        "timings": {
+         "prompt_n": 636,
+         "prompt_ms": 24291.378792,
+         "predicted_n": 35,
+         "predicted_ms": 2029.1420000000003
+        },
+        "decode_tok_s": 17.248669634752027,
+        "prefill_tok_s": 26.182128459890347,
+        "idle_before_pct": 89.64,
+        "prompt_words": 700,
+        "avg_cores": 10.15,
+        "footprint_after": 607705088,
+        "resident_after": 7587659776
+       }
+      ],
+      "at_end": {
+       "footprint": 607705088,
+       "footprint_peak": 607705088,
+       "resident": 7587659776,
+       "cpu_s": 353.6091915833333,
+       "disk_read": 0,
+       "pageins": 0,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 353.609
+       }
+      },
+      "stats": {
+       "requests": 2,
+       "cancelled": 0,
+       "prompt_tokens": 815,
+       "cached_prompt_tokens": 159,
+       "completion_tokens": 70,
+       "prefill_tok_s": 26.444914432044357,
+       "decode_tok_s": 18.876747245208406,
+       "steps": 71,
+       "max_seqs_in_step": 1,
+       "kv_disk": {
+        "enabled": false,
+        "trimmable": false,
+        "saves": 0,
+        "restores": 0,
+        "restored_tokens": 0,
+        "save_ms": 0.0,
+        "restore_ms": 0.0,
+        "bytes": 0,
+        "files": 0
+       },
+       "memory_pressure": {
+        "relief": true,
+        "level": "unknown",
+        "sheds": 0,
+        "released_bytes": 0
+       },
+       "paging": {
+        "bytes": 0,
+        "tokens": 885,
+        "bytes_per_token_last": 0,
+        "model_does_not_fit_memory": false
+       },
+       "threads": 12,
+       "kernels": "neon",
+       "device": "cpu",
+       "bytes_per_token": 7094272192,
+       "sleeping": false
+      }
+     },
+     {
+      "cold": true,
+      "idle_before_pct": 88.1,
+      "resident_after_evict": 0.0,
+      "load_s": 1.585,
+      "cmd": "/Volumes/ARGUS5/PROJECTS/LLMario/.claude/worktrees/llmario-performance-optimization-3de13c/target/release/llmario-engine serve --model /Volumes/ARGUS5/AIPROJECTS/LLMario-beta-models/gemma-4-12b-gguf-q4_0/gemma-4-12b-it-qat-q4_0.gguf --listen 127.0.0.1:57975 --ctx 8192 --parallel 1 --device cpu --threads 12",
+      "after_load": {
+       "footprint": 176887424,
+       "footprint_peak": 178608104,
+       "resident": 7156662272,
+       "cpu_s": 3.006808958333333,
+       "disk_read": 6975881216,
+       "pageins": 425774,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 3.006
+       }
+      },
+      "threads_os": 15,
+      "engine_model": {
+       "backend": "native",
+       "plan_hash": "bad4951163783799d1b9683c3abf9d8b",
+       "arch": "gemma4",
+       "context": 8192,
+       "kernels": "neon",
+       "kv_type": "f16",
+       "slots": 1,
+       "device": "cpu",
+       "capabilities": {
+        "tools": true,
+        "json_schema": true,
+        "vision": false,
+        "web_tools": []
+       }
+      },
+      "plan": {
+       "planned_peak": 7996062912,
+       "ctx_per_slot": 8192,
+       "kv_dtype": "f16",
+       "slots": 1,
+       "degradations": [],
+       "fits": true
+      },
+      "requests": [
+       {
+        "ttft_s": 6.489000375149772,
+        "total_s": 8.1560107502155,
+        "usage": {
+         "prompt_tokens": 179,
+         "completion_tokens": 35,
+         "total_tokens": 214,
+         "prompt_tokens_details": {
+          "cached_tokens": 0
+         }
+        },
+        "timings": {
+         "prompt_n": 179,
+         "prompt_ms": 6486.897833999999,
+         "predicted_n": 35,
+         "predicted_ms": 1667.4572090000001
+        },
+        "decode_tok_s": 20.990043889036315,
+        "prefill_tok_s": 27.594083424869307,
+        "idle_before_pct": 89.97,
+        "prompt_words": 40,
+        "avg_cores": 10.29,
+        "footprint_after": 305043456,
+        "resident_after": 7284998144
+       },
+       {
+        "ttft_s": 24.20513404207304,
+        "total_s": 26.201579875079915,
+        "usage": {
+         "prompt_tokens": 795,
+         "completion_tokens": 35,
+         "total_tokens": 830,
+         "prompt_tokens_details": {
+          "cached_tokens": 159
+         }
+        },
+        "timings": {
+         "prompt_n": 636,
+         "prompt_ms": 24203.155833,
+         "predicted_n": 35,
+         "predicted_ms": 1996.9207920000001
+        },
+        "decode_tok_s": 17.52698461562215,
+        "prefill_tok_s": 26.27756497492944,
+        "idle_before_pct": 89.57,
+        "prompt_words": 700,
+        "avg_cores": 10.15,
+        "footprint_after": 608425984,
+        "resident_after": 7588380672
+       }
+      ],
+      "at_end": {
+       "footprint": 608425984,
+       "footprint_peak": 608425984,
+       "resident": 7588380672,
+       "cpu_s": 352.91903275,
+       "disk_read": 6975881216,
+       "pageins": 425774,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 352.919
+       }
+      },
+      "stats": {
+       "requests": 2,
+       "cancelled": 0,
+       "prompt_tokens": 815,
+       "cached_prompt_tokens": 159,
+       "completion_tokens": 70,
+       "prefill_tok_s": 26.55583639936485,
+       "decode_tok_s": 19.102837944894862,
+       "steps": 71,
+       "max_seqs_in_step": 1,
+       "kv_disk": {
+        "enabled": false,
+        "trimmable": false,
+        "saves": 0,
+        "restores": 0,
+        "restored_tokens": 0,
+        "save_ms": 0.0,
+        "restore_ms": 0.0,
+        "bytes": 0,
+        "files": 0
+       },
+       "memory_pressure": {
+        "relief": true,
+        "level": "unknown",
+        "sheds": 0,
+        "released_bytes": 0
+       },
+       "paging": {
+        "bytes": 0,
+        "tokens": 885,
+        "bytes_per_token_last": 0,
+        "model_does_not_fit_memory": false
+       },
+       "threads": 12,
+       "kernels": "neon",
+       "device": "cpu",
+       "bytes_per_token": 7094272192,
+       "sleeping": false
+      }
+     },
+     {
+      "cold": false,
+      "idle_before_pct": 87.66,
+      "load_s": 0.34,
+      "cmd": "/Volumes/ARGUS5/PROJECTS/LLMario/.claude/worktrees/llmario-performance-optimization-3de13c/target/release/llmario-engine serve --model /Volumes/ARGUS5/AIPROJECTS/LLMario-beta-models/gemma-4-12b-gguf-q4_0/gemma-4-12b-it-qat-q4_0.gguf --listen 127.0.0.1:58068 --ctx 8192 --parallel 1 --device cpu --threads 12",
+      "after_load": {
+       "footprint": 175543936,
+       "footprint_peak": 177264616,
+       "resident": 7155318784,
+       "cpu_s": 1.8973922499999998,
+       "disk_read": 0,
+       "pageins": 0,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 1.897
+       }
+      },
+      "threads_os": 15,
+      "engine_model": {
+       "backend": "native",
+       "plan_hash": "bad4951163783799d1b9683c3abf9d8b",
+       "arch": "gemma4",
+       "context": 8192,
+       "kernels": "neon",
+       "kv_type": "f16",
+       "slots": 1,
+       "device": "cpu",
+       "capabilities": {
+        "tools": true,
+        "json_schema": true,
+        "vision": false,
+        "web_tools": []
+       }
+      },
+      "plan": {
+       "planned_peak": 7996062912,
+       "ctx_per_slot": 8192,
+       "kv_dtype": "f16",
+       "slots": 1,
+       "degradations": [],
+       "fits": true
+      },
+      "requests": [
+       {
+        "ttft_s": 6.377716709161177,
+        "total_s": 8.049435375025496,
+        "usage": {
+         "prompt_tokens": 179,
+         "completion_tokens": 35,
+         "total_tokens": 214,
+         "prompt_tokens_details": {
+          "cached_tokens": 0
+         }
+        },
+        "timings": {
+         "prompt_n": 179,
+         "prompt_ms": 6376.0952910000005,
+         "predicted_n": 35,
+         "predicted_ms": 1672.1737079999998
+        },
+        "decode_tok_s": 20.930839800047856,
+        "prefill_tok_s": 28.073608036044014,
+        "idle_before_pct": 83.11,
+        "prompt_words": 40,
+        "avg_cores": 10.27,
+        "footprint_after": 302700520,
+        "resident_after": 7282671616
+       },
+       {
+        "ttft_s": 24.0866569171194,
+        "total_s": 26.115061999997124,
+        "usage": {
+         "prompt_tokens": 795,
+         "completion_tokens": 35,
+         "total_tokens": 830,
+         "prompt_tokens_details": {
+          "cached_tokens": 159
+         }
+        },
+        "timings": {
+         "prompt_n": 636,
+         "prompt_ms": 24083.394542000002,
+         "predicted_n": 35,
+         "predicted_ms": 2029.8132080000003
+        },
+        "decode_tok_s": 17.242965935021147,
+        "prefill_tok_s": 26.408237380775123,
+        "idle_before_pct": 88.1,
+        "prompt_words": 700,
+        "avg_cores": 10.03,
+        "footprint_after": 603346944,
+        "resident_after": 7583301632
+       }
+      ],
+      "at_end": {
+       "footprint": 603346944,
+       "footprint_peak": 603346944,
+       "resident": 7583301632,
+       "cpu_s": 346.5104627916666,
+       "disk_read": 0,
+       "pageins": 0,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 346.51
+       }
+      },
+      "stats": {
+       "requests": 2,
+       "cancelled": 0,
+       "prompt_tokens": 815,
+       "cached_prompt_tokens": 159,
+       "completion_tokens": 70,
+       "prefill_tok_s": 26.756850714074684,
+       "decode_tok_s": 18.90876950912294,
+       "steps": 71,
+       "max_seqs_in_step": 1,
+       "kv_disk": {
+        "enabled": false,
+        "trimmable": false,
+        "saves": 0,
+        "restores": 0,
+        "restored_tokens": 0,
+        "save_ms": 0.0,
+        "restore_ms": 0.0,
+        "bytes": 0,
+        "files": 0
+       },
+       "memory_pressure": {
+        "relief": true,
+        "level": "unknown",
+        "sheds": 0,
+        "released_bytes": 0
+       },
+       "paging": {
+        "bytes": 0,
+        "tokens": 885,
+        "bytes_per_token_last": 0,
+        "model_does_not_fit_memory": false
+       },
+       "threads": 12,
+       "kernels": "neon",
+       "device": "cpu",
+       "bytes_per_token": 7094272192,
+       "sleeping": false
+      }
+     }
+    ]
+   }
+  }
+ ]
+}

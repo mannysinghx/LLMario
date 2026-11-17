@@ -302,6 +302,11 @@ records for orphan detection).
 | `balanced` | 4 | 8,192 | A chat plus apps/agents using the API |
 | `throughput` | 16 | 4,096 | Many concurrent requests |
 
+- **Memory is watched after loading, too** (LLMario's engine). When the system reports memory
+  pressure, idle conversations' KV caches are saved to disk and freed (measured on the CPU:
+  476 → 127 MiB for a 3,159-token conversation, next turn 1.0 s instead of 21 s to recompute); a model that
+  does not fit the memory other programs leave free is reported (`/engine/stats`, `paging`)
+  instead of only being slow. Details: [docs/engine/STATUS.md](docs/engine/STATUS.md).
 - **Engine-specific fixes.** Measured examples: `mlx_lm.server` disables batching for requests
   with a `seed`, so LLMario drops it when decoding is greedy (the output is identical). MLX's
   allocator cache is capped so memory stays within the estimate.
@@ -351,6 +356,11 @@ Rules for fair comparisons: [docs/BENCHMARK_PLAN.md](docs/BENCHMARK_PLAN.md).
 - **Verified downloads.** HTTPS only, checksums checked before files become visible, path
   traversal rejected, disk space checked first.
 - **No prompt logging, no telemetry.** The only network traffic is model downloads you start.
+- **Engines are not reachable from web pages.** LLMario's own engine refuses requests with a
+  non-loopback `Host`, an `Origin` header or a non-JSON body, and engine processes do not inherit
+  the API key or the Hub token.
+- **Model files are untrusted input.** Tensor sizes are checked for overflow and malformed
+  metadata is refused before anything is mapped.
 - **Desktop app:** no remote assets, a strict Content-Security-Policy, only core IPC permissions
   (no filesystem, shell or HTTP plugins), and model output rendered by an escape-first Markdown
   renderer with tests against HTML injection.
@@ -394,6 +404,9 @@ web_access = false          # true: models may use the built-in web_fetch tool (
 # searxng_url = "http://127.0.0.1:8080"   # self-hosted SearXNG (JSON enabled) for web_search
 # kv_cache_gb = 8           # disk for conversations pushed out of memory (read back, not recomputed); 0 = off
 # kv_cache_dir = "/path"    # default: $LLMARIO_HOME/cache/kv (owner-only files; safe to delete)
+# extra_args = ["--pressure-relief", "off"]   # engine flags; defaults: --pressure-relief on (free
+                            # idle conversations' memory when the system is short of it; they are
+                            # read back from kv_cache_dir), --pressure-idle-secs 30, --readahead on
 [backends.llamacpp]
 # server_path = "/opt/homebrew/bin/llama-server"
 # gpu_layers = 999

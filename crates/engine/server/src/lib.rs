@@ -141,6 +141,43 @@ pub fn plan_for(file: &GgufFile, opts: &ServeOptions) -> Result<(Plan, DeviceBud
     Ok((plan, budget))
 }
 
+/// Threads the CPU backend uses when none are asked for: the physical performance cores.
+///
+/// Efficiency cores and SMT siblings slow a decode step down more than they add, because every
+/// parallel region waits for its slowest chunk. Measured on an M4 Max (12 performance and 4
+/// efficiency cores, Qwen3-1.7B Q4_K_M, 64 tokens after a 512-token prompt, three interleaved
+/// rounds): 12 threads 90–99 tok/s, all 16 threads 78–80; prompts ran 7 % faster on 16
+/// (257–269 against 239–247 tok/s). Decode is what a reader waits for, token by token.
+pub fn default_threads() -> usize {
+    let logical = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1);
+    #[cfg(target_os = "macos")]
+    {
+        let mut v: i32 = 0;
+        let mut len = std::mem::size_of::<i32>();
+        // SAFETY: `v` and `len` describe a 4-byte buffer for an integer sysctl; the name is a
+        // NUL-terminated literal.
+        let r = unsafe {
+            libc::sysctlbyname(
+                c"hw.perflevel0.physicalcpu".as_ptr(),
+                &mut v as *mut i32 as *mut libc::c_void,
+                &mut len,
+                std::ptr::null_mut(),
+                0,
+            )
+        };
+        if r == 0 && v > 0 {
+            return (v as usize).min(logical);
+        }
+    }
+    // Elsewhere: physical cores (no SMT siblings). A hybrid x86 CPU's efficiency cores are
+    // counted, because no portable interface tells them apart.
+    sysinfo::System::physical_core_count()
+        .filter(|&n| n > 0)
+        .map_or(logical, |n| n.min(logical))
+}
+
 pub fn physical_memory() -> u64 {
     let mut s = sysinfo::System::new();
     s.refresh_memory();

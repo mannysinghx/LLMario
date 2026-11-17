@@ -278,7 +278,13 @@ fn load_worker<'a>(
     // that room the pages read ahead are dropped again before the pass reaches them and the
     // file is read twice (measured: a 6.5 GiB model with about 5 GiB reclaimable loaded in
     // 11.3 s instead of 8.7 s). A plan that streams experts from disk never reads ahead.
-    if opts.readahead && plan.weights_streamed() == 0 {
+    //
+    // Only dense models: there every token reads every weight, so the whole file is needed at
+    // once. A mixture-of-experts model touches a few experts per token; reading all of it ahead
+    // competes with the warm-up for the disk (measured on Qwen3-Coder-30B-A3B, 17.3 GiB: cold
+    // load 0.9 s without, 3.5 s with).
+    let routed_experts = file.tensors.iter().any(|t| t.name.contains("_exps."));
+    if opts.readahead && plan.weights_streamed() == 0 && !routed_experts {
         let weights = file.tensor_bytes_total();
         let available = crate::available_memory();
         if available >= weights + weights / 4 {

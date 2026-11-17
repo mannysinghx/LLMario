@@ -1,0 +1,1964 @@
+{
+ "schema": 1,
+ "environment": {
+  "date_utc": "2026-11-17T05:04:13Z",
+  "os": "macOS-27.0.1-arm64-arm-64bit-Mach-O",
+  "machine": "arm64",
+  "logical_cpus": 16,
+  "load_average": [
+   6.57177734375,
+   11.91357421875,
+   19.501953125
+  ],
+  "cpu": "Apple M4 Max",
+  "ram_bytes": 68719476736,
+  "performance_cores": 12,
+  "efficiency_cores": 4,
+  "ram_free_bytes": 5486624768,
+  "ram_wired_bytes": 45884162048,
+  "load_average_end": [
+   5.54931640625,
+   22.439453125,
+   43.87451171875
+  ]
+ },
+ "args": {
+  "engine": [
+   {
+    "label": "base",
+    "path": "/Volumes/ARGUS5/PROJECTS/LLMario/.claude/worktrees/llmario-performance-optimization-3de13c/target/baseline/llmario-engine",
+    "env": {},
+    "version": "llmario-engine 0.2.1"
+   }
+  ],
+  "model": [
+   "/Volumes/ARGUS5/AIPROJECTS/LLMario-models/qwen3-1.7b-gguf-q4km/Qwen3-1.7B-Q4_K_M.gguf"
+  ],
+  "modes": "raw,llama,serve,conc",
+  "threads": "4,8,12,16",
+  "serve_threads": 0,
+  "serve_arg": [],
+  "prompt_tokens": 512,
+  "decode_tokens": 64,
+  "rounds": 3,
+  "ctx": 8192,
+  "max_tokens": 64,
+  "prompt_words": [
+   40,
+   700,
+   2800
+  ],
+  "concurrency": "1,2,4",
+  "no_quality": false,
+  "no_cold": false,
+  "quiet_idle": 75.0,
+  "quiet_wait": 45,
+  "out": "benchmarks/results/2026-11-16-apple-m4-max-64gb-cpu-shared/baseline/qwen3-1.7b"
+ },
+ "models": [
+  {
+   "info": {
+    "file": "Qwen3-1.7B-Q4_K_M.gguf",
+    "bytes": 1107409472,
+    "general.name": "\"Qwen3-1.7B\"",
+    "general.architecture": "\"qwen3\"",
+    "general.file_type": "15",
+    "general.size_label": "\"1.7B\"",
+    "general.quantization_version": "2",
+    "context_length": 40960,
+    "bytes_by_type_pct": {
+     "f32": 0.0,
+     "q4_K": 61.5,
+     "q6_K": 38.5
+    }
+   },
+   "storage": {
+    "path_volume": "/Volumes/ARGUS5",
+    "solid_state": "Yes",
+    "protocol": "PCI-Express",
+    "file_system_personality": "APFS",
+    "device_location": "External"
+   },
+   "raw": {
+    "base": {
+     "4": [
+      {
+       "wall_s": 9.567,
+       "idle_before_pct": 84.64,
+       "output_ids": "35398,1635,566,1030,13628,1172,2326,21461,11,1817,315,1105,2337,279,2244,13458,429,62008,279,15134,504,279,708,587,1530,323,36967,279,19948,25099,3156,279,13648,13,3197,279,8149,15328,4641,311,17331,304,279,2086,12406,315,279,4116,11,566,65801,291,279,5590,11,50981,279,289,865,23327,323,8604,279,3100,19675",
+       "load_s": 0.03,
+       "prefill_tok_s": 64.9,
+       "decode_tok_s": 40.39,
+       "threads_used": 4
+      },
+      {
+       "wall_s": 8.052,
+       "idle_before_pct": 79.5,
+       "output_ids": "35398,1635,566,1030,13628,1172,2326,21461,11,1817,315,1105,2337,279,2244,13458,429,62008,279,15134,504,279,708,587,1530,323,36967,279,19948,25099,3156,279,13648,13,3197,279,8149,15328,4641,311,17331,304,279,2086,12406,315,279,4116,11,566,65801,291,279,5590,11,50981,279,289,865,23327,323,8604,279,3100,19675",
+       "load_s": 0.01,
+       "prefill_tok_s": 81.5,
+       "decode_tok_s": 37.46,
+       "threads_used": 4
+      },
+      {
+       "wall_s": 8.073,
+       "idle_before_pct": 84.97,
+       "output_ids": "35398,1635,566,1030,13628,1172,2326,21461,11,1817,315,1105,2337,279,2244,13458,429,62008,279,15134,504,279,708,587,1530,323,36967,279,19948,25099,3156,279,13648,13,3197,279,8149,15328,4641,311,17331,304,279,2086,12406,315,279,4116,11,566,65801,291,279,5590,11,50981,279,289,865,23327,323,8604,279,3100,19675",
+       "load_s": 0.01,
+       "prefill_tok_s": 77.9,
+       "decode_tok_s": 44.63,
+       "threads_used": 4
+      }
+     ],
+     "8": [
+      {
+       "wall_s": 6.898,
+       "idle_before_pct": 79.49,
+       "output_ids": "35398,1635,566,1030,13628,1172,2326,21461,11,1817,315,1105,2337,279,2244,13458,429,62008,279,15134,504,279,708,587,1530,323,36967,279,19948,25099,3156,279,13648,13,3197,279,8149,15328,4641,311,17331,304,279,2086,12406,315,279,4116,11,566,65801,291,279,5590,11,50981,279,289,865,23327,323,8604,279,3100,19675",
+       "load_s": 0.01,
+       "prefill_tok_s": 94.3,
+       "decode_tok_s": 45.47,
+       "threads_used": 8
+      },
+      {
+       "wall_s": 5.693,
+       "idle_before_pct": 82.93,
+       "output_ids": "35398,1635,566,1030,13628,1172,2326,21461,11,1817,315,1105,2337,279,2244,13458,429,62008,279,15134,504,279,708,587,1530,323,36967,279,19948,25099,3156,279,13648,13,3197,279,8149,15328,4641,311,17331,304,279,2086,12406,315,279,4116,11,566,65801,291,279,5590,11,50981,279,289,865,23327,323,8604,279,3100,19675",
+       "load_s": 0.01,
+       "prefill_tok_s": 114.8,
+       "decode_tok_s": 55.54,
+       "threads_used": 8
+      },
+      {
+       "wall_s": 9.315,
+       "idle_before_pct": 77.61,
+       "output_ids": "35398,1635,566,1030,13628,1172,2326,21461,11,1817,315,1105,2337,279,2244,13458,429,62008,279,15134,504,279,708,587,1530,323,36967,279,19948,25099,3156,279,13648,13,3197,279,8149,15328,4641,311,17331,304,279,2086,12406,315,279,4116,11,566,65801,291,279,5590,11,50981,279,289,865,23327,323,8604,279,3100,19675",
+       "load_s": 0.04,
+       "prefill_tok_s": 72.8,
+       "decode_tok_s": 29.73,
+       "threads_used": 8
+      }
+     ],
+     "12": [
+      {
+       "wall_s": 7.389,
+       "idle_before_pct": 84.38,
+       "output_ids": "35398,1635,566,1030,13628,1172,2326,21461,11,1817,315,1105,2337,279,2244,13458,429,62008,279,15134,504,279,708,587,1530,323,36967,279,19948,25099,3156,279,13648,13,3197,279,8149,15328,4641,311,17331,304,279,2086,12406,315,279,4116,11,566,65801,291,279,5590,11,50981,279,289,865,23327,323,8604,279,3100,19675",
+       "load_s": 0.01,
+       "prefill_tok_s": 86.2,
+       "decode_tok_s": 46.31,
+       "threads_used": 12
+      },
+      {
+       "wall_s": 5.557,
+       "idle_before_pct": 84.45,
+       "output_ids": "35398,1635,566,1030,13628,1172,2326,21461,11,1817,315,1105,2337,279,2244,13458,429,62008,279,15134,504,279,708,587,1530,323,36967,279,19948,25099,3156,279,13648,13,3197,279,8149,15328,4641,311,17331,304,279,2086,12406,315,279,4116,11,566,65801,291,279,5590,11,50981,279,289,865,23327,323,8604,279,3100,19675",
+       "load_s": 0.01,
+       "prefill_tok_s": 133.2,
+       "decode_tok_s": 39.13,
+       "threads_used": 12
+      },
+      {
+       "wall_s": 6.515,
+       "idle_before_pct": 76.67,
+       "output_ids": "35398,1635,566,1030,13628,1172,2326,21461,11,1817,315,1105,2337,279,2244,13458,429,62008,279,15134,504,279,708,587,1530,323,36967,279,19948,25099,3156,279,13648,13,3197,279,8149,15328,4641,311,17331,304,279,2086,12406,315,279,4116,11,566,65801,291,279,5590,11,50981,279,289,865,23327,323,8604,279,3100,19675",
+       "load_s": 0.01,
+       "prefill_tok_s": 100.5,
+       "decode_tok_s": 47.76,
+       "threads_used": 12
+      }
+     ],
+     "16": [
+      {
+       "wall_s": 5.614,
+       "idle_before_pct": 79.12,
+       "output_ids": "35398,1635,566,1030,13628,1172,2326,21461,11,1817,315,1105,2337,279,2244,13458,429,62008,279,15134,504,279,708,587,1530,323,36967,279,19948,25099,3156,279,13648,13,3197,279,8149,15328,4641,311,17331,304,279,2086,12406,315,279,4116,11,566,65801,291,279,5590,11,50981,279,289,865,23327,323,8604,279,3100,19675",
+       "load_s": 0.01,
+       "prefill_tok_s": 119.6,
+       "decode_tok_s": 50.51,
+       "threads_used": 16
+      },
+      {
+       "wall_s": 5.666,
+       "idle_before_pct": 84.42,
+       "output_ids": "35398,1635,566,1030,13628,1172,2326,21461,11,1817,315,1105,2337,279,2244,13458,429,62008,279,15134,504,279,708,587,1530,323,36967,279,19948,25099,3156,279,13648,13,3197,279,8149,15328,4641,311,17331,304,279,2086,12406,315,279,4116,11,566,65801,291,279,5590,11,50981,279,289,865,23327,323,8604,279,3100,19675",
+       "load_s": 0.01,
+       "prefill_tok_s": 127.6,
+       "decode_tok_s": 40.6,
+       "threads_used": 16
+      },
+      {
+       "wall_s": 6.785,
+       "idle_before_pct": 76.79,
+       "output_ids": "35398,1635,566,1030,13628,1172,2326,21461,11,1817,315,1105,2337,279,2244,13458,429,62008,279,15134,504,279,708,587,1530,323,36967,279,19948,25099,3156,279,13648,13,3197,279,8149,15328,4641,311,17331,304,279,2086,12406,315,279,4116,11,566,65801,291,279,5590,11,50981,279,289,865,23327,323,8604,279,3100,19675",
+       "load_s": 0.03,
+       "prefill_tok_s": 95.8,
+       "decode_tok_s": 47.18,
+       "threads_used": 16
+      }
+     ]
+    }
+   },
+   "llama_bench_cpu": {
+    "4": {
+     "version": [
+      "version: 0.5.0 (build 11146, commit 7fe450e19)",
+      "built with AppleClang 21.0.0.21000334 for Darwin arm64"
+     ],
+     "prefill_tok_s": 65.76,
+     "prefill_tok_s_stddev": 8.58,
+     "decode_tok_s": 32.67,
+     "decode_tok_s_stddev": 1.82
+    },
+    "8": {
+     "version": [
+      "version: 0.5.0 (build 11146, commit 7fe450e19)",
+      "built with AppleClang 21.0.0.21000334 for Darwin arm64"
+     ],
+     "prefill_tok_s": 70.45,
+     "prefill_tok_s_stddev": 3.97,
+     "decode_tok_s": 14.31,
+     "decode_tok_s_stddev": 2.22
+    },
+    "12": {
+     "version": [
+      "version: 0.5.0 (build 11146, commit 7fe450e19)",
+      "built with AppleClang 21.0.0.21000334 for Darwin arm64"
+     ],
+     "prefill_tok_s": 47.18,
+     "prefill_tok_s_stddev": 9.05,
+     "decode_tok_s": 4.76,
+     "decode_tok_s_stddev": 2.89
+    },
+    "16": {
+     "version": [
+      "version: 0.5.0 (build 11146, commit 7fe450e19)",
+      "built with AppleClang 21.0.0.21000334 for Darwin arm64"
+     ],
+     "prefill_tok_s": 26.42,
+     "prefill_tok_s_stddev": 9.4,
+     "decode_tok_s": 0.31,
+     "decode_tok_s_stddev": 0.19
+    }
+   },
+   "serve": {
+    "base": [
+     {
+      "cold": true,
+      "idle_before_pct": 76.33,
+      "resident_after_evict": 0.0,
+      "load_s": 0.554,
+      "cmd": "/Volumes/ARGUS5/PROJECTS/LLMario/.claude/worktrees/llmario-performance-optimization-3de13c/target/baseline/llmario-engine serve --model /Volumes/ARGUS5/AIPROJECTS/LLMario-models/qwen3-1.7b-gguf-q4km/Qwen3-1.7B-Q4_K_M.gguf --listen 127.0.0.1:56330 --ctx 8192 --parallel 1 --device cpu",
+      "after_load": {
+       "footprint": 78251376,
+       "footprint_peak": 79086960,
+       "resident": 1192443904,
+       "cpu_s": 1.3291514583333333,
+       "disk_read": 1112899584,
+       "pageins": 67994,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 1.329
+       }
+      },
+      "threads_os": 19,
+      "engine_model": {
+       "backend": "native",
+       "plan_hash": "81f3f85b0ce1cdcb939c404479f844af",
+       "arch": "qwen3",
+       "context": 8192,
+       "kernels": "neon",
+       "kv_type": "f16",
+       "slots": 1,
+       "device": "cpu",
+       "capabilities": {
+        "tools": true,
+        "json_schema": true,
+        "vision": false,
+        "web_tools": []
+       }
+      },
+      "plan": {
+       "planned_peak": 2364034560,
+       "ctx_per_slot": 8192,
+       "kv_dtype": "f16",
+       "slots": 1,
+       "degradations": [],
+       "fits": true
+      },
+      "requests": [
+       {
+        "ttft_s": 0.6678778750356287,
+        "total_s": 1.5593018750660121,
+        "usage": {
+         "prompt_tokens": 176,
+         "completion_tokens": 64,
+         "total_tokens": 240,
+         "prompt_tokens_details": {
+          "cached_tokens": 0
+         }
+        },
+        "timings": {
+         "prompt_n": 176,
+         "prompt_ms": 649.979125,
+         "predicted_n": 64,
+         "predicted_ms": 907.515458
+        },
+        "decode_tok_s": 70.52221473014292,
+        "prefill_tok_s": 270.77792690649875,
+        "idle_before_pct": 77.25,
+        "prompt_words": 40,
+        "avg_cores": 12.41,
+        "footprint_after": 127124896,
+        "resident_after": 1241743360
+       },
+       {
+        "ttft_s": 2.7090732909273356,
+        "total_s": 3.6634107078425586,
+        "usage": {
+         "prompt_tokens": 804,
+         "completion_tokens": 64,
+         "total_tokens": 868,
+         "prompt_tokens_details": {
+          "cached_tokens": 160
+         }
+        },
+        "timings": {
+         "prompt_n": 644,
+         "prompt_ms": 2687.6915,
+         "predicted_n": 64,
+         "predicted_ms": 974.479333
+        },
+        "decode_tok_s": 65.6760978223845,
+        "prefill_tok_s": 239.61083331178446,
+        "idle_before_pct": 80.56,
+        "prompt_words": 700,
+        "avg_cores": 10.92,
+        "footprint_after": 235013584,
+        "resident_after": 1349599232
+       },
+       {
+        "ttft_s": 18.584670833079144,
+        "total_s": 20.50526637514122,
+        "usage": {
+         "prompt_tokens": 3159,
+         "completion_tokens": 64,
+         "total_tokens": 3223,
+         "prompt_tokens_details": {
+          "cached_tokens": 788
+         }
+        },
+        "timings": {
+         "prompt_n": 2371,
+         "prompt_ms": 18550.829875000003,
+         "predicted_n": 64,
+         "predicted_ms": 1952.4081250000002
+        },
+        "decode_tok_s": 32.78003158279215,
+        "prefill_tok_s": 127.81099368472321,
+        "idle_before_pct": 82.25,
+        "prompt_words": 2800,
+        "avg_cores": 9.93,
+        "footprint_after": 507332240,
+        "resident_after": 1621786624
+       }
+      ],
+      "quality": {
+       "correct": 10,
+       "of": 12,
+       "answers": [
+        {
+         "q": "What is the capital of France? Answer with one word.",
+         "answer": "Paris",
+         "ok": true
+        },
+        {
+         "q": "What is 17 + 26? Answer with the number only.",
+         "answer": "43",
+         "ok": true
+        },
+        {
+         "q": "What is the chemical symbol for gold? Answer with the symbol only.",
+         "answer": "Au",
+         "ok": true
+        },
+        {
+         "q": "How many days are in a leap year? Answer with the number only.",
+         "answer": "366",
+         "ok": true
+        },
+        {
+         "q": "Which planet is known as the Red Planet? Answer with one word.",
+         "answer": "Mars",
+         "ok": true
+        },
+        {
+         "q": "What is the opposite of 'hot'? Answer with one word.",
+         "answer": "cold",
+         "ok": true
+        },
+        {
+         "q": "What is 9 times 8? Answer with the number only.",
+         "answer": "",
+         "ok": false
+        },
+        {
+         "q": "Who wrote the play 'Romeo and Juliet'? Answer with the surname only.",
+         "answer": "Shakespeare",
+         "ok": true
+        },
+        {
+         "q": "What is the largest ocean on Earth? Answer with one word.",
+         "answer": "Pacific",
+         "ok": true
+        },
+        {
+         "q": "What is the square root of 144? Answer with the number only.",
+         "answer": "To find the square root of 144, we are looking for a number that, when",
+         "ok": false
+        },
+        {
+         "q": "Spell the word 'cat' backwards. Answer with the three letters only.",
+         "answer": "TAC",
+         "ok": true
+        },
+        {
+         "q": "What gas do plants absorb from the air for photosynthesis? Answer briefly.",
+         "answer": "Plants absorb **carbon dioxide** (CO\u2082) from the air during photosynthesis.",
+         "ok": true
+        }
+       ]
+      },
+      "at_end": {
+       "footprint": 166823328,
+       "footprint_peak": 507348624,
+       "resident": 1281441792,
+       "cpu_s": 718.5585904583332,
+       "disk_read": 1113227264,
+       "pageins": 68022,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 718.558
+       }
+      },
+      "stats": {
+       "requests": 15,
+       "cancelled": 0,
+       "prompt_tokens": 3417,
+       "cached_prompt_tokens": 993,
+       "completion_tokens": 2946,
+       "prefill_tok_s": 145.6140945238745,
+       "decode_tok_s": 58.16142611027122,
+       "steps": 2951,
+       "max_seqs_in_step": 1,
+       "kv_disk": {
+        "enabled": false,
+        "trimmable": false,
+        "saves": 0,
+        "restores": 0,
+        "restored_tokens": 0,
+        "save_ms": 0.0,
+        "restore_ms": 0.0,
+        "bytes": 0,
+        "files": 0
+       },
+       "threads": 16,
+       "kernels": "neon",
+       "device": "cpu",
+       "bytes_per_token": 2040981504,
+       "sleeping": false
+      }
+     },
+     {
+      "cold": false,
+      "idle_before_pct": 76.1,
+      "load_s": 0.159,
+      "cmd": "/Volumes/ARGUS5/PROJECTS/LLMario/.claude/worktrees/llmario-performance-optimization-3de13c/target/baseline/llmario-engine serve --model /Volumes/ARGUS5/AIPROJECTS/LLMario-models/qwen3-1.7b-gguf-q4km/Qwen3-1.7B-Q4_K_M.gguf --listen 127.0.0.1:56488 --ctx 8192 --parallel 1 --device cpu",
+      "after_load": {
+       "footprint": 80938376,
+       "footprint_peak": 81773984,
+       "resident": 1195114496,
+       "cpu_s": 0.45604612499999997,
+       "disk_read": 0,
+       "pageins": 0,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 0.456
+       }
+      },
+      "threads_os": 19,
+      "engine_model": {
+       "backend": "native",
+       "plan_hash": "81f3f85b0ce1cdcb939c404479f844af",
+       "arch": "qwen3",
+       "context": 8192,
+       "kernels": "neon",
+       "kv_type": "f16",
+       "slots": 1,
+       "device": "cpu",
+       "capabilities": {
+        "tools": true,
+        "json_schema": true,
+        "vision": false,
+        "web_tools": []
+       }
+      },
+      "plan": {
+       "planned_peak": 2364034560,
+       "ctx_per_slot": 8192,
+       "kv_dtype": "f16",
+       "slots": 1,
+       "degradations": [],
+       "fits": true
+      },
+      "requests": [
+       {
+        "ttft_s": 0.6653418748173863,
+        "total_s": 1.3575901668518782,
+        "usage": {
+         "prompt_tokens": 176,
+         "completion_tokens": 64,
+         "total_tokens": 240,
+         "prompt_tokens_details": {
+          "cached_tokens": 0
+         }
+        },
+        "timings": {
+         "prompt_n": 176,
+         "prompt_ms": 652.583792,
+         "predicted_n": 64,
+         "predicted_ms": 703.741667
+        },
+        "decode_tok_s": 90.94246227145736,
+        "prefill_tok_s": 269.6971671034085,
+        "idle_before_pct": 78.55,
+        "prompt_words": 40,
+        "avg_cores": 12.51,
+        "footprint_after": 129041848,
+        "resident_after": 1243643904
+       },
+       {
+        "ttft_s": 2.79136358294636,
+        "total_s": 3.691106667043641,
+        "usage": {
+         "prompt_tokens": 804,
+         "completion_tokens": 64,
+         "total_tokens": 868,
+         "prompt_tokens_details": {
+          "cached_tokens": 160
+         }
+        },
+        "timings": {
+         "prompt_n": 644,
+         "prompt_ms": 2773.659458,
+         "predicted_n": 64,
+         "predicted_ms": 916.25225
+        },
+        "decode_tok_s": 69.84976025979745,
+        "prefill_tok_s": 232.1842352140693,
+        "idle_before_pct": 83.86,
+        "prompt_words": 700,
+        "avg_cores": 11.23,
+        "footprint_after": 236799488,
+        "resident_after": 1351352320
+       },
+       {
+        "ttft_s": 22.887924208072945,
+        "total_s": 29.383444332983345,
+        "usage": {
+         "prompt_tokens": 3159,
+         "completion_tokens": 64,
+         "total_tokens": 3223,
+         "prompt_tokens_details": {
+          "cached_tokens": 788
+         }
+        },
+        "timings": {
+         "prompt_n": 2371,
+         "prompt_ms": 22785.565458,
+         "predicted_n": 64,
+         "predicted_ms": 6595.8914159999995
+        },
+        "decode_tok_s": 9.703009944152786,
+        "prefill_tok_s": 104.05710599416102,
+        "idle_before_pct": 86.54,
+        "prompt_words": 2800,
+        "avg_cores": 7.57,
+        "footprint_after": 509249216,
+        "resident_after": 1623670784
+       }
+      ],
+      "quality": {
+       "correct": 10,
+       "of": 12,
+       "answers": [
+        {
+         "q": "What is the capital of France? Answer with one word.",
+         "answer": "Paris",
+         "ok": true
+        },
+        {
+         "q": "What is 17 + 26? Answer with the number only.",
+         "answer": "43",
+         "ok": true
+        },
+        {
+         "q": "What is the chemical symbol for gold? Answer with the symbol only.",
+         "answer": "Au",
+         "ok": true
+        },
+        {
+         "q": "How many days are in a leap year? Answer with the number only.",
+         "answer": "366",
+         "ok": true
+        },
+        {
+         "q": "Which planet is known as the Red Planet? Answer with one word.",
+         "answer": "Mars",
+         "ok": true
+        },
+        {
+         "q": "What is the opposite of 'hot'? Answer with one word.",
+         "answer": "cold",
+         "ok": true
+        },
+        {
+         "q": "What is 9 times 8? Answer with the number only.",
+         "answer": "",
+         "ok": false
+        },
+        {
+         "q": "Who wrote the play 'Romeo and Juliet'? Answer with the surname only.",
+         "answer": "Shakespeare",
+         "ok": true
+        },
+        {
+         "q": "What is the largest ocean on Earth? Answer with one word.",
+         "answer": "Pacific",
+         "ok": true
+        },
+        {
+         "q": "What is the square root of 144? Answer with the number only.",
+         "answer": "To find the square root of 144, we are looking for a number that, when",
+         "ok": false
+        },
+        {
+         "q": "Spell the word 'cat' backwards. Answer with the three letters only.",
+         "answer": "TAC",
+         "ok": true
+        },
+        {
+         "q": "What gas do plants absorb from the air for photosynthesis? Answer briefly.",
+         "answer": "Plants absorb **carbon dioxide** (CO\u2082) from the air during photosynthesis.",
+         "ok": true
+        }
+       ]
+      },
+      "at_end": {
+       "footprint": 167675320,
+       "footprint_peak": 509298368,
+       "resident": 1282277376,
+       "cpu_s": 721.2261013333333,
+       "disk_read": 0,
+       "pageins": 0,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 721.226
+       }
+      },
+      "stats": {
+       "requests": 15,
+       "cancelled": 0,
+       "prompt_tokens": 3417,
+       "cached_prompt_tokens": 993,
+       "completion_tokens": 2946,
+       "prefill_tok_s": 124.72400661544599,
+       "decode_tok_s": 74.55605173825562,
+       "steps": 2951,
+       "max_seqs_in_step": 1,
+       "kv_disk": {
+        "enabled": false,
+        "trimmable": false,
+        "saves": 0,
+        "restores": 0,
+        "restored_tokens": 0,
+        "save_ms": 0.0,
+        "restore_ms": 0.0,
+        "bytes": 0,
+        "files": 0
+       },
+       "threads": 16,
+       "kernels": "neon",
+       "device": "cpu",
+       "bytes_per_token": 2040981504,
+       "sleeping": false
+      }
+     },
+     {
+      "cold": true,
+      "idle_before_pct": 89.72,
+      "resident_after_evict": 0.0,
+      "load_s": 0.557,
+      "cmd": "/Volumes/ARGUS5/PROJECTS/LLMario/.claude/worktrees/llmario-performance-optimization-3de13c/target/baseline/llmario-engine serve --model /Volumes/ARGUS5/AIPROJECTS/LLMario-models/qwen3-1.7b-gguf-q4km/Qwen3-1.7B-Q4_K_M.gguf --listen 127.0.0.1:56597 --ctx 8192 --parallel 1 --device cpu",
+      "after_load": {
+       "footprint": 78218656,
+       "footprint_peak": 79037856,
+       "resident": 1192378368,
+       "cpu_s": 1.39553325,
+       "disk_read": 1107410944,
+       "pageins": 67774,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 1.395
+       }
+      },
+      "threads_os": 19,
+      "engine_model": {
+       "backend": "native",
+       "plan_hash": "81f3f85b0ce1cdcb939c404479f844af",
+       "arch": "qwen3",
+       "context": 8192,
+       "kernels": "neon",
+       "kv_type": "f16",
+       "slots": 1,
+       "device": "cpu",
+       "capabilities": {
+        "tools": true,
+        "json_schema": true,
+        "vision": false,
+        "web_tools": []
+       }
+      },
+      "plan": {
+       "planned_peak": 2364034560,
+       "ctx_per_slot": 8192,
+       "kv_dtype": "f16",
+       "slots": 1,
+       "degradations": [],
+       "fits": true
+      },
+      "requests": [
+       {
+        "ttft_s": 0.653123666997999,
+        "total_s": 1.3541693750303239,
+        "usage": {
+         "prompt_tokens": 176,
+         "completion_tokens": 64,
+         "total_tokens": 240,
+         "prompt_tokens_details": {
+          "cached_tokens": 0
+         }
+        },
+        "timings": {
+         "prompt_n": 176,
+         "prompt_ms": 637.241667,
+         "predicted_n": 64,
+         "predicted_ms": 716.021458
+        },
+        "decode_tok_s": 89.38279612285027,
+        "prefill_tok_s": 276.19035150129315,
+        "idle_before_pct": 90.15,
+        "prompt_words": 40,
+        "avg_cores": 12.49,
+        "footprint_after": 125371808,
+        "resident_after": 1239990272
+       },
+       {
+        "ttft_s": 3.0120740830898285,
+        "total_s": 4.418805791065097,
+        "usage": {
+         "prompt_tokens": 804,
+         "completion_tokens": 64,
+         "total_tokens": 868,
+         "prompt_tokens_details": {
+          "cached_tokens": 160
+         }
+        },
+        "timings": {
+         "prompt_n": 644,
+         "prompt_ms": 2990.244,
+         "predicted_n": 64,
+         "predicted_ms": 1427.384166
+        },
+        "decode_tok_s": 44.837263523350586,
+        "prefill_tok_s": 215.3670402816626,
+        "idle_before_pct": 90.19,
+        "prompt_words": 700,
+        "avg_cores": 9.95,
+        "footprint_after": 232408552,
+        "resident_after": 1346977792
+       },
+       {
+        "ttft_s": 15.820176542038098,
+        "total_s": 17.594796458957717,
+        "usage": {
+         "prompt_tokens": 3159,
+         "completion_tokens": 64,
+         "total_tokens": 3223,
+         "prompt_tokens_details": {
+          "cached_tokens": 788
+         }
+        },
+        "timings": {
+         "prompt_n": 2371,
+         "prompt_ms": 15787.435792,
+         "predicted_n": 64,
+         "predicted_ms": 1805.320666
+        },
+        "decode_tok_s": 35.45076573116678,
+        "prefill_tok_s": 150.18271689196428,
+        "idle_before_pct": 75.8,
+        "prompt_words": 2800,
+        "avg_cores": 11.32,
+        "footprint_after": 507201216,
+        "resident_after": 1621622784
+       }
+      ],
+      "quality": {
+       "correct": 10,
+       "of": 12,
+       "answers": [
+        {
+         "q": "What is the capital of France? Answer with one word.",
+         "answer": "Paris",
+         "ok": true
+        },
+        {
+         "q": "What is 17 + 26? Answer with the number only.",
+         "answer": "43",
+         "ok": true
+        },
+        {
+         "q": "What is the chemical symbol for gold? Answer with the symbol only.",
+         "answer": "Au",
+         "ok": true
+        },
+        {
+         "q": "How many days are in a leap year? Answer with the number only.",
+         "answer": "366",
+         "ok": true
+        },
+        {
+         "q": "Which planet is known as the Red Planet? Answer with one word.",
+         "answer": "Mars",
+         "ok": true
+        },
+        {
+         "q": "What is the opposite of 'hot'? Answer with one word.",
+         "answer": "cold",
+         "ok": true
+        },
+        {
+         "q": "What is 9 times 8? Answer with the number only.",
+         "answer": "",
+         "ok": false
+        },
+        {
+         "q": "Who wrote the play 'Romeo and Juliet'? Answer with the surname only.",
+         "answer": "Shakespeare",
+         "ok": true
+        },
+        {
+         "q": "What is the largest ocean on Earth? Answer with one word.",
+         "answer": "Pacific",
+         "ok": true
+        },
+        {
+         "q": "What is the square root of 144? Answer with the number only.",
+         "answer": "To find the square root of 144, we are looking for a number that, when",
+         "ok": false
+        },
+        {
+         "q": "Spell the word 'cat' backwards. Answer with the three letters only.",
+         "answer": "TAC",
+         "ok": true
+        },
+        {
+         "q": "What gas do plants absorb from the air for photosynthesis? Answer briefly.",
+         "answer": "Plants absorb **carbon dioxide** (CO\u2082) from the air during photosynthesis.",
+         "ok": true
+        }
+       ]
+      },
+      "at_end": {
+       "footprint": 165496248,
+       "footprint_peak": 507233984,
+       "resident": 1280098304,
+       "cpu_s": 687.9409605833333,
+       "disk_read": 1107410944,
+       "pageins": 67774,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 687.94
+       }
+      },
+      "stats": {
+       "requests": 15,
+       "cancelled": 0,
+       "prompt_tokens": 3417,
+       "cached_prompt_tokens": 993,
+       "completion_tokens": 2946,
+       "prefill_tok_s": 167.11394221789695,
+       "decode_tok_s": 89.6509264978955,
+       "steps": 2951,
+       "max_seqs_in_step": 1,
+       "kv_disk": {
+        "enabled": false,
+        "trimmable": false,
+        "saves": 0,
+        "restores": 0,
+        "restored_tokens": 0,
+        "save_ms": 0.0,
+        "restore_ms": 0.0,
+        "bytes": 0,
+        "files": 0
+       },
+       "threads": 16,
+       "kernels": "neon",
+       "device": "cpu",
+       "bytes_per_token": 2040981504,
+       "sleeping": false
+      }
+     },
+     {
+      "cold": false,
+      "idle_before_pct": 88.89,
+      "load_s": 0.128,
+      "cmd": "/Volumes/ARGUS5/PROJECTS/LLMario/.claude/worktrees/llmario-performance-optimization-3de13c/target/baseline/llmario-engine serve --model /Volumes/ARGUS5/AIPROJECTS/LLMario-models/qwen3-1.7b-gguf-q4km/Qwen3-1.7B-Q4_K_M.gguf --listen 127.0.0.1:56691 --ctx 8192 --parallel 1 --device cpu",
+      "after_load": {
+       "footprint": 78300576,
+       "footprint_peak": 79021496,
+       "resident": 1192460288,
+       "cpu_s": 0.535825,
+       "disk_read": 0,
+       "pageins": 0,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 0.535
+       }
+      },
+      "threads_os": 19,
+      "engine_model": {
+       "backend": "native",
+       "plan_hash": "81f3f85b0ce1cdcb939c404479f844af",
+       "arch": "qwen3",
+       "context": 8192,
+       "kernels": "neon",
+       "kv_type": "f16",
+       "slots": 1,
+       "device": "cpu",
+       "capabilities": {
+        "tools": true,
+        "json_schema": true,
+        "vision": false,
+        "web_tools": []
+       }
+      },
+      "plan": {
+       "planned_peak": 2364034560,
+       "ctx_per_slot": 8192,
+       "kv_dtype": "f16",
+       "slots": 1,
+       "degradations": [],
+       "fits": true
+      },
+      "requests": [
+       {
+        "ttft_s": 0.6567317079752684,
+        "total_s": 1.3705724170431495,
+        "usage": {
+         "prompt_tokens": 176,
+         "completion_tokens": 64,
+         "total_tokens": 240,
+         "prompt_tokens_details": {
+          "cached_tokens": 0
+         }
+        },
+        "timings": {
+         "prompt_n": 176,
+         "prompt_ms": 641.156209,
+         "predicted_n": 64,
+         "predicted_ms": 728.505334
+        },
+        "decode_tok_s": 87.85110693506604,
+        "prefill_tok_s": 274.50408734948394,
+        "idle_before_pct": 89.48,
+        "prompt_words": 40,
+        "avg_cores": 12.88,
+        "footprint_after": 126715296,
+        "resident_after": 1241333760
+       },
+       {
+        "ttft_s": 2.6752110421657562,
+        "total_s": 3.631429459201172,
+        "usage": {
+         "prompt_tokens": 804,
+         "completion_tokens": 64,
+         "total_tokens": 868,
+         "prompt_tokens_details": {
+          "cached_tokens": 160
+         }
+        },
+        "timings": {
+         "prompt_n": 644,
+         "prompt_ms": 2656.3568330000003,
+         "predicted_n": 64,
+         "predicted_ms": 973.8622919999999
+        },
+        "decode_tok_s": 65.71771032284717,
+        "prefill_tok_s": 242.43730812049375,
+        "idle_before_pct": 88.68,
+        "prompt_words": 700,
+        "avg_cores": 11.62,
+        "footprint_after": 234735104,
+        "resident_after": 1349287936
+       },
+       {
+        "ttft_s": 15.423169000074267,
+        "total_s": 17.238065749872476,
+        "usage": {
+         "prompt_tokens": 3159,
+         "completion_tokens": 64,
+         "total_tokens": 3223,
+         "prompt_tokens_details": {
+          "cached_tokens": 788
+         }
+        },
+        "timings": {
+         "prompt_n": 2371,
+         "prompt_ms": 15390.767958,
+         "predicted_n": 64,
+         "predicted_ms": 1845.239791
+        },
+        "decode_tok_s": 34.68383909351758,
+        "prefill_tok_s": 154.05339138828177,
+        "idle_before_pct": 88.83,
+        "prompt_words": 2800,
+        "avg_cores": 11.46,
+        "footprint_after": 506857152,
+        "resident_after": 1621278720
+       }
+      ],
+      "quality": {
+       "correct": 10,
+       "of": 12,
+       "answers": [
+        {
+         "q": "What is the capital of France? Answer with one word.",
+         "answer": "Paris",
+         "ok": true
+        },
+        {
+         "q": "What is 17 + 26? Answer with the number only.",
+         "answer": "43",
+         "ok": true
+        },
+        {
+         "q": "What is the chemical symbol for gold? Answer with the symbol only.",
+         "answer": "Au",
+         "ok": true
+        },
+        {
+         "q": "How many days are in a leap year? Answer with the number only.",
+         "answer": "366",
+         "ok": true
+        },
+        {
+         "q": "Which planet is known as the Red Planet? Answer with one word.",
+         "answer": "Mars",
+         "ok": true
+        },
+        {
+         "q": "What is the opposite of 'hot'? Answer with one word.",
+         "answer": "cold",
+         "ok": true
+        },
+        {
+         "q": "What is 9 times 8? Answer with the number only.",
+         "answer": "",
+         "ok": false
+        },
+        {
+         "q": "Who wrote the play 'Romeo and Juliet'? Answer with the surname only.",
+         "answer": "Shakespeare",
+         "ok": true
+        },
+        {
+         "q": "What is the largest ocean on Earth? Answer with one word.",
+         "answer": "Pacific",
+         "ok": true
+        },
+        {
+         "q": "What is the square root of 144? Answer with the number only.",
+         "answer": "To find the square root of 144, we are looking for a number that, when",
+         "ok": false
+        },
+        {
+         "q": "Spell the word 'cat' backwards. Answer with the three letters only.",
+         "answer": "TAC",
+         "ok": true
+        },
+        {
+         "q": "What gas do plants absorb from the air for photosynthesis? Answer briefly.",
+         "answer": "Plants absorb **carbon dioxide** (CO\u2082) from the air during photosynthesis.",
+         "ok": true
+        }
+       ]
+      },
+      "at_end": {
+       "footprint": 165168568,
+       "footprint_peak": 506873536,
+       "resident": 1279770624,
+       "cpu_s": 693.6104103749999,
+       "disk_read": 0,
+       "pageins": 0,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 693.61
+       }
+      },
+      "stats": {
+       "requests": 15,
+       "cancelled": 0,
+       "prompt_tokens": 3417,
+       "cached_prompt_tokens": 993,
+       "completion_tokens": 2946,
+       "prefill_tok_s": 173.32141606995387,
+       "decode_tok_s": 88.18008516532,
+       "steps": 2951,
+       "max_seqs_in_step": 1,
+       "kv_disk": {
+        "enabled": false,
+        "trimmable": false,
+        "saves": 0,
+        "restores": 0,
+        "restored_tokens": 0,
+        "save_ms": 0.0,
+        "restore_ms": 0.0,
+        "bytes": 0,
+        "files": 0
+       },
+       "threads": 16,
+       "kernels": "neon",
+       "device": "cpu",
+       "bytes_per_token": 2040981504,
+       "sleeping": false
+      }
+     },
+     {
+      "cold": true,
+      "idle_before_pct": 90.17,
+      "resident_after_evict": 0.0,
+      "load_s": 0.535,
+      "cmd": "/Volumes/ARGUS5/PROJECTS/LLMario/.claude/worktrees/llmario-performance-optimization-3de13c/target/baseline/llmario-engine serve --model /Volumes/ARGUS5/AIPROJECTS/LLMario-models/qwen3-1.7b-gguf-q4km/Qwen3-1.7B-Q4_K_M.gguf --listen 127.0.0.1:56719 --ctx 8192 --parallel 1 --device cpu",
+      "after_load": {
+       "footprint": 78333368,
+       "footprint_peak": 79136184,
+       "resident": 1192476672,
+       "cpu_s": 1.37453425,
+       "disk_read": 1107410944,
+       "pageins": 67770,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 1.374
+       }
+      },
+      "threads_os": 19,
+      "engine_model": {
+       "backend": "native",
+       "plan_hash": "81f3f85b0ce1cdcb939c404479f844af",
+       "arch": "qwen3",
+       "context": 8192,
+       "kernels": "neon",
+       "kv_type": "f16",
+       "slots": 1,
+       "device": "cpu",
+       "capabilities": {
+        "tools": true,
+        "json_schema": true,
+        "vision": false,
+        "web_tools": []
+       }
+      },
+      "plan": {
+       "planned_peak": 2364034560,
+       "ctx_per_slot": 8192,
+       "kv_dtype": "f16",
+       "slots": 1,
+       "degradations": [],
+       "fits": true
+      },
+      "requests": [
+       {
+        "ttft_s": 0.6441885000094771,
+        "total_s": 1.312349749961868,
+        "usage": {
+         "prompt_tokens": 176,
+         "completion_tokens": 64,
+         "total_tokens": 240,
+         "prompt_tokens_details": {
+          "cached_tokens": 0
+         }
+        },
+        "timings": {
+         "prompt_n": 176,
+         "prompt_ms": 632.1231670000001,
+         "predicted_n": 64,
+         "predicted_ms": 679.2870829999999
+        },
+        "decode_tok_s": 94.21642425077587,
+        "prefill_tok_s": 278.4267516017175,
+        "idle_before_pct": 85.78,
+        "prompt_words": 40,
+        "avg_cores": 13.12,
+        "footprint_after": 127174096,
+        "resident_after": 1241759744
+       },
+       {
+        "ttft_s": 2.674330374924466,
+        "total_s": 3.5301200000103563,
+        "usage": {
+         "prompt_tokens": 804,
+         "completion_tokens": 64,
+         "total_tokens": 868,
+         "prompt_tokens_details": {
+          "cached_tokens": 160
+         }
+        },
+        "timings": {
+         "prompt_n": 644,
+         "prompt_ms": 2657.9997080000003,
+         "predicted_n": 64,
+         "predicted_ms": 870.942042
+        },
+        "decode_tok_s": 73.48364978803032,
+        "prefill_tok_s": 242.28746077800545,
+        "idle_before_pct": 85.73,
+        "prompt_words": 700,
+        "avg_cores": 11.68,
+        "footprint_after": 234653184,
+        "resident_after": 1349206016
+       },
+       {
+        "ttft_s": 15.58018545806408,
+        "total_s": 17.3795725828968,
+        "usage": {
+         "prompt_tokens": 3159,
+         "completion_tokens": 64,
+         "total_tokens": 3223,
+         "prompt_tokens_details": {
+          "cached_tokens": 788
+         }
+        },
+        "timings": {
+         "prompt_n": 2371,
+         "prompt_ms": 15548.20625,
+         "predicted_n": 64,
+         "predicted_ms": 1829.313709
+        },
+        "decode_tok_s": 34.98579805373338,
+        "prefill_tok_s": 152.49347493058886,
+        "idle_before_pct": 89.24,
+        "prompt_words": 2800,
+        "avg_cores": 11.35,
+        "footprint_after": 506889920,
+        "resident_after": 1621311488
+       }
+      ],
+      "quality": {
+       "correct": 10,
+       "of": 12,
+       "answers": [
+        {
+         "q": "What is the capital of France? Answer with one word.",
+         "answer": "Paris",
+         "ok": true
+        },
+        {
+         "q": "What is 17 + 26? Answer with the number only.",
+         "answer": "43",
+         "ok": true
+        },
+        {
+         "q": "What is the chemical symbol for gold? Answer with the symbol only.",
+         "answer": "Au",
+         "ok": true
+        },
+        {
+         "q": "How many days are in a leap year? Answer with the number only.",
+         "answer": "366",
+         "ok": true
+        },
+        {
+         "q": "Which planet is known as the Red Planet? Answer with one word.",
+         "answer": "Mars",
+         "ok": true
+        },
+        {
+         "q": "What is the opposite of 'hot'? Answer with one word.",
+         "answer": "cold",
+         "ok": true
+        },
+        {
+         "q": "What is 9 times 8? Answer with the number only.",
+         "answer": "",
+         "ok": false
+        },
+        {
+         "q": "Who wrote the play 'Romeo and Juliet'? Answer with the surname only.",
+         "answer": "Shakespeare",
+         "ok": true
+        },
+        {
+         "q": "What is the largest ocean on Earth? Answer with one word.",
+         "answer": "Pacific",
+         "ok": true
+        },
+        {
+         "q": "What is the square root of 144? Answer with the number only.",
+         "answer": "To find the square root of 144, we are looking for a number that, when",
+         "ok": false
+        },
+        {
+         "q": "Spell the word 'cat' backwards. Answer with the three letters only.",
+         "answer": "TAC",
+         "ok": true
+        },
+        {
+         "q": "What gas do plants absorb from the air for photosynthesis? Answer briefly.",
+         "answer": "Plants absorb **carbon dioxide** (CO\u2082) from the air during photosynthesis.",
+         "ok": true
+        }
+       ]
+      },
+      "at_end": {
+       "footprint": 165152208,
+       "footprint_peak": 506906304,
+       "resident": 1279737856,
+       "cpu_s": 674.8865152916666,
+       "disk_read": 1107410944,
+       "pageins": 67770,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 674.886
+       }
+      },
+      "stats": {
+       "requests": 15,
+       "cancelled": 0,
+       "prompt_tokens": 3417,
+       "cached_prompt_tokens": 993,
+       "completion_tokens": 2946,
+       "prefill_tok_s": 171.990364915536,
+       "decode_tok_s": 91.83855455467325,
+       "steps": 2951,
+       "max_seqs_in_step": 1,
+       "kv_disk": {
+        "enabled": false,
+        "trimmable": false,
+        "saves": 0,
+        "restores": 0,
+        "restored_tokens": 0,
+        "save_ms": 0.0,
+        "restore_ms": 0.0,
+        "bytes": 0,
+        "files": 0
+       },
+       "threads": 16,
+       "kernels": "neon",
+       "device": "cpu",
+       "bytes_per_token": 2040981504,
+       "sleeping": false
+      }
+     },
+     {
+      "cold": false,
+      "idle_before_pct": 87.57,
+      "load_s": 0.128,
+      "cmd": "/Volumes/ARGUS5/PROJECTS/LLMario/.claude/worktrees/llmario-performance-optimization-3de13c/target/baseline/llmario-engine serve --model /Volumes/ARGUS5/AIPROJECTS/LLMario-models/qwen3-1.7b-gguf-q4km/Qwen3-1.7B-Q4_K_M.gguf --listen 127.0.0.1:56763 --ctx 8192 --parallel 1 --device cpu",
+      "after_load": {
+       "footprint": 78300576,
+       "footprint_peak": 79005088,
+       "resident": 1192460288,
+       "cpu_s": 0.6115441666666666,
+       "disk_read": 0,
+       "pageins": 0,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 0.611
+       }
+      },
+      "threads_os": 19,
+      "engine_model": {
+       "backend": "native",
+       "plan_hash": "81f3f85b0ce1cdcb939c404479f844af",
+       "arch": "qwen3",
+       "context": 8192,
+       "kernels": "neon",
+       "kv_type": "f16",
+       "slots": 1,
+       "device": "cpu",
+       "capabilities": {
+        "tools": true,
+        "json_schema": true,
+        "vision": false,
+        "web_tools": []
+       }
+      },
+      "plan": {
+       "planned_peak": 2364034560,
+       "ctx_per_slot": 8192,
+       "kv_dtype": "f16",
+       "slots": 1,
+       "degradations": [],
+       "fits": true
+      },
+      "requests": [
+       {
+        "ttft_s": 0.6585702078882605,
+        "total_s": 1.3626890419982374,
+        "usage": {
+         "prompt_tokens": 176,
+         "completion_tokens": 64,
+         "total_tokens": 240,
+         "prompt_tokens_details": {
+          "cached_tokens": 0
+         }
+        },
+        "timings": {
+         "prompt_n": 176,
+         "prompt_ms": 643.4645409999999,
+         "predicted_n": 64,
+         "predicted_ms": 718.2475000000001
+        },
+        "decode_tok_s": 89.10577481996108,
+        "prefill_tok_s": 273.51934533405785,
+        "idle_before_pct": 89.57,
+        "prompt_words": 40,
+        "avg_cores": 12.51,
+        "footprint_after": 127157712,
+        "resident_after": 1241743360
+       },
+       {
+        "ttft_s": 2.652659999905154,
+        "total_s": 3.517494041007012,
+        "usage": {
+         "prompt_tokens": 804,
+         "completion_tokens": 64,
+         "total_tokens": 868,
+         "prompt_tokens_details": {
+          "cached_tokens": 160
+         }
+        },
+        "timings": {
+         "prompt_n": 644,
+         "prompt_ms": 2637.245458,
+         "predicted_n": 64,
+         "predicted_ms": 879.03575
+        },
+        "decode_tok_s": 72.80705022520415,
+        "prefill_tok_s": 244.1941830050163,
+        "idle_before_pct": 86.93,
+        "prompt_words": 700,
+        "avg_cores": 11.83,
+        "footprint_after": 234702336,
+        "resident_after": 1349255168
+       },
+       {
+        "ttft_s": 16.400690082926303,
+        "total_s": 18.450969457859173,
+        "usage": {
+         "prompt_tokens": 3159,
+         "completion_tokens": 64,
+         "total_tokens": 3223,
+         "prompt_tokens_details": {
+          "cached_tokens": 788
+         }
+        },
+        "timings": {
+         "prompt_n": 2371,
+         "prompt_ms": 16366.006292000002,
+         "predicted_n": 64,
+         "predicted_ms": 2082.9476250000002
+        },
+        "decode_tok_s": 30.725688553978884,
+        "prefill_tok_s": 144.8734625721724,
+        "idle_before_pct": 87.5,
+        "prompt_words": 2800,
+        "avg_cores": 10.96,
+        "footprint_after": 507037376,
+        "resident_after": 1621458944
+       }
+      ],
+      "quality": {
+       "correct": 10,
+       "of": 12,
+       "answers": [
+        {
+         "q": "What is the capital of France? Answer with one word.",
+         "answer": "Paris",
+         "ok": true
+        },
+        {
+         "q": "What is 17 + 26? Answer with the number only.",
+         "answer": "43",
+         "ok": true
+        },
+        {
+         "q": "What is the chemical symbol for gold? Answer with the symbol only.",
+         "answer": "Au",
+         "ok": true
+        },
+        {
+         "q": "How many days are in a leap year? Answer with the number only.",
+         "answer": "366",
+         "ok": true
+        },
+        {
+         "q": "Which planet is known as the Red Planet? Answer with one word.",
+         "answer": "Mars",
+         "ok": true
+        },
+        {
+         "q": "What is the opposite of 'hot'? Answer with one word.",
+         "answer": "cold",
+         "ok": true
+        },
+        {
+         "q": "What is 9 times 8? Answer with the number only.",
+         "answer": "",
+         "ok": false
+        },
+        {
+         "q": "Who wrote the play 'Romeo and Juliet'? Answer with the surname only.",
+         "answer": "Shakespeare",
+         "ok": true
+        },
+        {
+         "q": "What is the largest ocean on Earth? Answer with one word.",
+         "answer": "Pacific",
+         "ok": true
+        },
+        {
+         "q": "What is the square root of 144? Answer with the number only.",
+         "answer": "To find the square root of 144, we are looking for a number that, when",
+         "ok": false
+        },
+        {
+         "q": "Spell the word 'cat' backwards. Answer with the three letters only.",
+         "answer": "TAC",
+         "ok": true
+        },
+        {
+         "q": "What gas do plants absorb from the air for photosynthesis? Answer briefly.",
+         "answer": "Plants absorb **carbon dioxide** (CO\u2082) from the air during photosynthesis.",
+         "ok": true
+        }
+       ]
+      },
+      "at_end": {
+       "footprint": 165496272,
+       "footprint_peak": 507037376,
+       "resident": 1280081920,
+       "cpu_s": 685.8306554583332,
+       "disk_read": 0,
+       "pageins": 0,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 685.83
+       }
+      },
+      "stats": {
+       "requests": 15,
+       "cancelled": 0,
+       "prompt_tokens": 3417,
+       "cached_prompt_tokens": 993,
+       "completion_tokens": 2946,
+       "prefill_tok_s": 164.70332939321065,
+       "decode_tok_s": 90.33117875381241,
+       "steps": 2951,
+       "max_seqs_in_step": 1,
+       "kv_disk": {
+        "enabled": false,
+        "trimmable": false,
+        "saves": 0,
+        "restores": 0,
+        "restored_tokens": 0,
+        "save_ms": 0.0,
+        "restore_ms": 0.0,
+        "bytes": 0,
+        "files": 0
+       },
+       "threads": 16,
+       "kernels": "neon",
+       "device": "cpu",
+       "bytes_per_token": 2040981504,
+       "sleeping": false
+      }
+     }
+    ]
+   },
+   "concurrency": {
+    "base": [
+     {
+      "parallel": 1,
+      "idle_before_pct": 75.14,
+      "load_s": 0.132,
+      "after_load": {
+       "footprint": 78333344,
+       "footprint_peak": 79103416,
+       "resident": 1192493056,
+       "cpu_s": 0.45479224999999995,
+       "disk_read": 0,
+       "pageins": 0,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 0.454
+       }
+      },
+      "wall_s": 1.393,
+      "aggregate_tok_s": 45.95,
+      "ttft_s": [
+       0.678
+      ],
+      "decode_tok_s": [
+       89.49
+      ],
+      "at_end": {
+       "footprint": 126797216,
+       "footprint_peak": 126797216,
+       "resident": 1241415680,
+       "cpu_s": 17.597855541666664,
+       "disk_read": 0,
+       "pageins": 0,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 17.597
+       }
+      }
+     },
+     {
+      "parallel": 2,
+      "idle_before_pct": 82.16,
+      "load_s": 0.119,
+      "after_load": {
+       "footprint": 77088136,
+       "footprint_peak": 77923720,
+       "resident": 1191264256,
+       "cpu_s": 0.5369226666666667,
+       "disk_read": 0,
+       "pageins": 0,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 0.536
+       }
+      },
+      "wall_s": 3.903,
+      "aggregate_tok_s": 32.8,
+      "ttft_s": [
+       1.332,
+       1.368
+      ],
+      "decode_tok_s": [
+       19.84,
+       24.9
+      ],
+      "at_end": {
+       "footprint": 158025144,
+       "footprint_peak": 158025144,
+       "resident": 1272627200,
+       "cpu_s": 52.50248179166666,
+       "disk_read": 0,
+       "pageins": 0,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 52.502
+       }
+      }
+     },
+     {
+      "parallel": 4,
+      "idle_before_pct": 87.79,
+      "load_s": 0.143,
+      "after_load": {
+       "footprint": 78153096,
+       "footprint_peak": 79021520,
+       "resident": 1192329216,
+       "cpu_s": 0.5903625416666666,
+       "disk_read": 0,
+       "pageins": 0,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 0.59
+       }
+      },
+      "wall_s": 5.358,
+      "aggregate_tok_s": 47.78,
+      "ttft_s": [
+       2.354,
+       2.519,
+       2.52,
+       2.567
+      ],
+      "decode_tok_s": [
+       13.77,
+       21.38,
+       21.38,
+       22.55
+      ],
+      "at_end": {
+       "footprint": 253330944,
+       "footprint_peak": 253330944,
+       "resident": 1367883776,
+       "cpu_s": 68.35603520833332,
+       "disk_read": 0,
+       "pageins": 0,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 68.356
+       }
+      }
+     },
+     {
+      "parallel": 1,
+      "idle_before_pct": 79.56,
+      "load_s": 0.123,
+      "after_load": {
+       "footprint": 78366088,
+       "footprint_peak": 79087032,
+       "resident": 1192542208,
+       "cpu_s": 0.5203329583333333,
+       "disk_read": 0,
+       "pageins": 0,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 0.52
+       }
+      },
+      "wall_s": 1.304,
+      "aggregate_tok_s": 49.07,
+      "ttft_s": [
+       0.662
+      ],
+      "decode_tok_s": [
+       97.51
+      ],
+      "at_end": {
+       "footprint": 126387616,
+       "footprint_peak": 126387616,
+       "resident": 1241006080,
+       "cpu_s": 17.576572791666663,
+       "disk_read": 0,
+       "pageins": 0,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 17.576
+       }
+      }
+     },
+     {
+      "parallel": 2,
+      "idle_before_pct": 89.94,
+      "load_s": 0.131,
+      "after_load": {
+       "footprint": 77038984,
+       "footprint_peak": 77825416,
+       "resident": 1191215104,
+       "cpu_s": 0.5668864583333333,
+       "disk_read": 0,
+       "pageins": 0,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 0.566
+       }
+      },
+      "wall_s": 3.62,
+      "aggregate_tok_s": 35.36,
+      "ttft_s": [
+       1.267,
+       1.268
+      ],
+      "decode_tok_s": [
+       26.73,
+       26.73
+      ],
+      "at_end": {
+       "footprint": 174409144,
+       "footprint_peak": 174409144,
+       "resident": 1289011200,
+       "cpu_s": 48.20738766666666,
+       "disk_read": 0,
+       "pageins": 0,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 48.207
+       }
+      }
+     },
+     {
+      "parallel": 4,
+      "idle_before_pct": 87.99,
+      "load_s": 0.151,
+      "after_load": {
+       "footprint": 78120328,
+       "footprint_peak": 78890376,
+       "resident": 1192296448,
+       "cpu_s": 0.5668749583333332,
+       "disk_read": 0,
+       "pageins": 0,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 0.566
+       }
+      },
+      "wall_s": 5.155,
+      "aggregate_tok_s": 49.66,
+      "ttft_s": [
+       2.352,
+       2.514,
+       2.514,
+       2.558
+      ],
+      "decode_tok_s": [
+       14.4,
+       22.94,
+       22.94,
+       24.24
+      ],
+      "at_end": {
+       "footprint": 252675584,
+       "footprint_peak": 252675584,
+       "resident": 1367228416,
+       "cpu_s": 65.31500583333333,
+       "disk_read": 0,
+       "pageins": 0,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 65.315
+       }
+      }
+     },
+     {
+      "parallel": 1,
+      "idle_before_pct": 77.6,
+      "load_s": 0.152,
+      "after_load": {
+       "footprint": 78218632,
+       "footprint_peak": 79037856,
+       "resident": 1192394752,
+       "cpu_s": 0.5976279999999999,
+       "disk_read": 0,
+       "pageins": 0,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 0.597
+       }
+      },
+      "wall_s": 1.414,
+      "aggregate_tok_s": 45.26,
+      "ttft_s": [
+       0.673
+      ],
+      "decode_tok_s": [
+       85.05
+      ],
+      "at_end": {
+       "footprint": 126731680,
+       "footprint_peak": 126731680,
+       "resident": 1241350144,
+       "cpu_s": 18.7798375,
+       "disk_read": 0,
+       "pageins": 0,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 18.779
+       }
+      }
+     },
+     {
+      "parallel": 2,
+      "idle_before_pct": 88.52,
+      "load_s": 0.127,
+      "after_load": {
+       "footprint": 77088160,
+       "footprint_peak": 77907360,
+       "resident": 1191247872,
+       "cpu_s": 0.5846897499999999,
+       "disk_read": 0,
+       "pageins": 0,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 0.584
+       }
+      },
+      "wall_s": 3.781,
+      "aggregate_tok_s": 33.85,
+      "ttft_s": [
+       1.31,
+       1.357
+      ],
+      "decode_tok_s": [
+       20.57,
+       25.9
+      ],
+      "at_end": {
+       "footprint": 158008784,
+       "footprint_peak": 158008784,
+       "resident": 1272594432,
+       "cpu_s": 50.136752708333326,
+       "disk_read": 0,
+       "pageins": 0,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 50.136
+       }
+      }
+     },
+     {
+      "parallel": 4,
+      "idle_before_pct": 88.23,
+      "load_s": 0.128,
+      "after_load": {
+       "footprint": 78267808,
+       "footprint_peak": 79103440,
+       "resident": 1192427520,
+       "cpu_s": 0.5755464166666666,
+       "disk_read": 4096,
+       "pageins": 0,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 0.575
+       }
+      },
+      "wall_s": 5.417,
+      "aggregate_tok_s": 47.25,
+      "ttft_s": [
+       2.355,
+       2.515,
+       2.516,
+       2.562
+      ],
+      "decode_tok_s": [
+       13.63,
+       20.98,
+       20.98,
+       22.06
+      ],
+      "at_end": {
+       "footprint": 253707800,
+       "footprint_peak": 253707800,
+       "resident": 1368244224,
+       "cpu_s": 68.38434370833333,
+       "disk_read": 4096,
+       "pageins": 0,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 68.384
+       }
+      }
+     }
+    ]
+   }
+  }
+ ]
+}

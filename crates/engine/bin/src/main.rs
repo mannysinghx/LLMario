@@ -275,11 +275,7 @@ fn main() -> Result<()> {
                 kv_cache_gb.is_finite() && kv_cache_gb >= 0.0,
                 "--kv-cache-gb must be a number of GiB, 0 or more"
             );
-            let threads = threads.unwrap_or_else(|| {
-                std::thread::available_parallelism()
-                    .map(|n| n.get())
-                    .unwrap_or(1)
-            });
+            let threads = threads.unwrap_or_else(llmario_engine_server::default_threads);
             let opts = llmario_engine_server::ServeOptions {
                 model_id: model_id.unwrap_or_else(|| {
                     model
@@ -478,11 +474,7 @@ fn raw_run(
     anyhow::ensure!(!prompt.is_empty(), "empty prompt");
     let t0 = Instant::now();
     let f = GgufFile::open(path)?;
-    let threads = threads.unwrap_or_else(|| {
-        std::thread::available_parallelism()
-            .map(|n| n.get())
-            .unwrap_or(1)
-    });
+    let threads = threads.unwrap_or_else(llmario_engine_server::default_threads);
     let use_metal = match device {
         Device::Cpu => false,
         Device::Metal => true,

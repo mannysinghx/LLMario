@@ -190,6 +190,39 @@ interleaved A/B against `main`): decode attention splits a task's keys across th
 are fewer (row, KV head) tasks than threads, and the thread pool hands work over with less
 waiting. With the paged cache Metal prefill is unchanged and decode is about 2 % slower.
 
+## Memory pressure, read-ahead and planning (2026-11-16)
+
+Measured on the CPU backend; tables, method and the state of the machine are in
+`benchmarks/results/2026-11-16-apple-m4-max-64gb-cpu-shared/SUMMARY.md`.
+
+- **Pressure relief** (`crates/engine/server/src/pressure.rs`, on by default, `--pressure-relief
+  off` to disable). An idle engine that holds KV caches reads the system's memory pressure every
+  two seconds (macOS `kern.memorystatus_vm_pressure_level`, Linux PSI). On a warning it frees
+  each cache that has been idle for `--pressure-idle-secs` (30) once the cache is on the disk
+  tier; on critical pressure, or `/engine/control` `sleep`, it frees every idle cache at once.
+  Qwen3-1.7B, 3,159-token conversation: 476 → 127 MiB, next turn 1.01 s (read back) against
+  0.83 s from memory and 20.9 s recomputed. Cost: one write of the conversation per idle period
+  under pressure (350 MiB here). An engine with nothing cached still sleeps without waking.
+- **Read-ahead at load** (`stream::readahead`, `--readahead off` to disable): dense models only,
+  and only when the system has 1.25× the file size available. Cold load 0.54 → 0.37 s (1.03 GiB),
+  1.81 → 1.30 s (5.29 GiB), 2.49 → 1.61 s (6.50 GiB) from an external PCIe SSD; warm loads
+  unchanged. Two cases where it hurt and is now skipped: a model larger than the memory available
+  (the file was read twice: 11.3 s against 8.7 s) and a mixture-of-experts model (0.9 → 3.5 s).
+- **A model that does not fit what is free is reported.** `plan` notes when the weights or the
+  whole plan exceed the memory available right now; `/engine/stats` `paging` reports bytes read
+  from storage per token and sets `model_does_not_fit_memory` when a job reads more than 1/20 of
+  the weights per token (one warning in the log per change of state).
+- **Headroom is taken once.** `--memory-headroom`; LLMario's adapter passes 0 because its budget
+  is already net of headroom. Before, a 6 GiB budget (an 8 GB machine) left the engine 5 GiB and
+  Qwen3.5-9B Q4_K_M (5.28 GiB of weights, 5.89 GiB planned) was refused; now it fits. The
+  supervisor's estimate for this engine uses the engine's own overhead and 8-bit KV rule
+  (`native_overhead` in `crates/supervisor/src/memory.rs`) instead of 600 MiB + weights / 12.
+- **Default threads** are the performance cores (`default_threads`): 12 instead of 16 on this
+  machine, decode 93–100 against 77–86 tok/s, prompts 246–249 against 269–273 tok/s.
+- **Browser guard** on the HTTP port and hardened GGUF parsing: docs/THREAT_MODEL.md, T17–T18.
+- Tried and dropped: raising the worker threads' scheduling class to user-initiated or
+  user-interactive (no difference in three interleaved rounds on a loaded machine).
+
 ## Kernel results (M1, 2026-10-09)
 
 - CPU kernel sets: `scalar` (f32 dequant reference), `int8` (portable int8-activation kernels for
@@ -212,6 +245,13 @@ waiting. With the paged cache Metal prefill is unchanged and decode is about 2 %
   use stable `asm!` for `sdot`.
 
 ## Open items carried forward
+
+- Prompts run 7–9 % faster on all 16 cores and decode 15–20 % faster on the 12 performance cores
+  (Qwen3-1.7B); a pool that uses different thread counts for the two is not built.
+- Pressure relief exists only in this engine; a loaded llama.cpp or MLX engine is not asked to
+  give memory back. On Linux the pressure source (PSI) is unit-tested, not exercised.
+- The gateway does not yet read `/engine/stats` `paging`, so the desktop app cannot tell the user
+  that a model is being read from disk.
 
 - MoE models run on Metal only when every weight fits in memory; a plan that streams experts from
   disk runs on the CPU until the GPU has an expert cache. MoE prefill on Metal is 0.74 × llama.cpp.

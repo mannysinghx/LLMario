@@ -1,0 +1,1064 @@
+{
+ "schema": 1,
+ "environment": {
+  "date_utc": "2026-11-17T06:13:41Z",
+  "os": "macOS-27.0.1-arm64-arm-64bit-Mach-O",
+  "machine": "arm64",
+  "logical_cpus": 16,
+  "load_average": [
+   6.068359375,
+   5.78857421875,
+   12.2822265625
+  ],
+  "cpu": "Apple M4 Max",
+  "ram_bytes": 68719476736,
+  "performance_cores": 12,
+  "efficiency_cores": 4,
+  "ram_free_bytes": 55056793600,
+  "ram_wired_bytes": 6044336128,
+  "load_average_end": [
+   10.4345703125,
+   6.75146484375,
+   11.93212890625
+  ]
+ },
+ "args": {
+  "engine": [
+   {
+    "label": "base",
+    "path": "/Volumes/ARGUS5/PROJECTS/LLMario/.claude/worktrees/llmario-performance-optimization-3de13c/target/baseline/llmario-engine",
+    "env": {},
+    "version": "llmario-engine 0.2.1"
+   },
+   {
+    "label": "new",
+    "path": "/Volumes/ARGUS5/PROJECTS/LLMario/.claude/worktrees/llmario-performance-optimization-3de13c/target/release/llmario-engine",
+    "env": {},
+    "version": "llmario-engine 0.2.1"
+   }
+  ],
+  "model": [
+   "/Volumes/ARGUS5/AIPROJECTS/llmario-engine-moe-home/models/qwen3-coder-30b-a3b-gguf-q4km/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf"
+  ],
+  "modes": "serve,raw",
+  "threads": "12",
+  "serve_threads": 12,
+  "serve_arg": [],
+  "prompt_tokens": 256,
+  "decode_tokens": 32,
+  "rounds": 2,
+  "ctx": 8192,
+  "max_tokens": 64,
+  "prompt_words": [
+   40
+  ],
+  "concurrency": "1,2,4",
+  "no_quality": true,
+  "no_cold": false,
+  "quiet_idle": 75.0,
+  "quiet_wait": 45,
+  "out": "benchmarks/results/2026-11-16-apple-m4-max-64gb-cpu-shared/ab/moe"
+ },
+ "models": [
+  {
+   "info": {
+    "file": "Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf",
+    "bytes": 18556689568,
+    "general.name": "\"Qwen3-Coder-30B-A3B-Instruct\"",
+    "general.architecture": "\"qwen3moe\"",
+    "general.file_type": "15",
+    "general.size_label": "\"30B-A3B\"",
+    "general.quantization_version": "2",
+    "context_length": 262144,
+    "bytes_by_type_pct": {
+     "f32": 0.3,
+     "q4_K": 76.9,
+     "q6_K": 22.9
+    }
+   },
+   "storage": {
+    "path_volume": "/Volumes/ARGUS5",
+    "solid_state": "Yes",
+    "protocol": "PCI-Express",
+    "file_system_personality": "APFS",
+    "device_location": "External"
+   },
+   "raw": {
+    "base": {
+     "12": [
+      {
+       "wall_s": 6.383,
+       "idle_before_pct": 87.16,
+       "output_ids": "865,23327,323,8604,279,3100,19675,369,4279,315,1817,3729,11,18774,279,4115,979,279,5496,572,1429,11406,13,576,74642,7341,2937,6139,429,902,26182,572,5558",
+       "load_s": 0.04,
+       "prefill_tok_s": 46.5,
+       "decode_tok_s": 41.19,
+       "threads_used": 12
+      },
+      {
+       "wall_s": 3.378,
+       "idle_before_pct": 87.2,
+       "output_ids": "865,23327,323,8604,279,3100,19675,369,4279,315,1817,3729,11,18774,279,4115,979,279,5496,572,1429,11406,13,576,74642,7341,2937,6139,429,902,26182,572,5558",
+       "load_s": 0.01,
+       "prefill_tok_s": 96.6,
+       "decode_tok_s": 48.53,
+       "threads_used": 12
+      }
+     ]
+    },
+    "new": {
+     "12": [
+      {
+       "wall_s": 3.352,
+       "idle_before_pct": 85.3,
+       "output_ids": "865,23327,323,8604,279,3100,19675,369,4279,315,1817,3729,11,18774,279,4115,979,279,5496,572,1429,11406,13,576,74642,7341,2937,6139,429,902,26182,572,5558",
+       "load_s": 0.01,
+       "prefill_tok_s": 97.1,
+       "decode_tok_s": 49.38,
+       "threads_used": 12
+      },
+      {
+       "wall_s": 3.446,
+       "idle_before_pct": 84.61,
+       "output_ids": "865,23327,323,8604,279,3100,19675,369,4279,315,1817,3729,11,18774,279,4115,979,279,5496,572,1429,11406,13,576,74642,7341,2937,6139,429,902,26182,572,5558",
+       "load_s": 0.01,
+       "prefill_tok_s": 93.9,
+       "decode_tok_s": 49.29,
+       "threads_used": 12
+      }
+     ]
+    }
+   },
+   "serve": {
+    "base": [
+     {
+      "cold": true,
+      "idle_before_pct": 87.64,
+      "resident_after_evict": 0.0,
+      "load_s": 0.91,
+      "cmd": "/Volumes/ARGUS5/PROJECTS/LLMario/.claude/worktrees/llmario-performance-optimization-3de13c/target/baseline/llmario-engine serve --model /Volumes/ARGUS5/AIPROJECTS/llmario-engine-moe-home/models/qwen3-coder-30b-a3b-gguf-q4km/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf --listen 127.0.0.1:58357 --ctx 8192 --parallel 1 --device cpu --threads 12",
+      "after_load": {
+       "footprint": 85914512,
+       "footprint_peak": 87389072,
+       "resident": 2029355008,
+       "cpu_s": 1.7389319583333331,
+       "disk_read": 1986543616,
+       "pageins": 118907,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 1.739
+       }
+      },
+      "threads_os": 15,
+      "engine_model": {
+       "backend": "native",
+       "plan_hash": "8d404190487757fdfda3c44aaf7757c8",
+       "arch": "qwen3moe",
+       "context": 8192,
+       "kernels": "neon",
+       "kv_type": "f16",
+       "slots": 1,
+       "device": "cpu",
+       "capabilities": {
+        "tools": true,
+        "json_schema": true,
+        "vision": false,
+        "web_tools": []
+       }
+      },
+      "plan": {
+       "planned_peak": 19721838080,
+       "ctx_per_slot": 8192,
+       "kv_dtype": "f16",
+       "slots": 1,
+       "degradations": [],
+       "fits": true
+      },
+      "requests": [
+       {
+        "ttft_s": 4.425060082925484,
+        "total_s": 5.520800666883588,
+        "usage": {
+         "prompt_tokens": 176,
+         "completion_tokens": 45,
+         "total_tokens": 221,
+         "prompt_tokens_details": {
+          "cached_tokens": 0
+         }
+        },
+        "timings": {
+         "prompt_n": 176,
+         "prompt_ms": 4422.960833,
+         "predicted_n": 45,
+         "predicted_ms": 1096.0629159999999
+        },
+        "decode_tok_s": 41.05603733426558,
+        "prefill_tok_s": 39.79234875580459,
+        "idle_before_pct": 86.45,
+        "prompt_words": 40,
+        "avg_cores": 4.98,
+        "footprint_after": 157480568,
+        "resident_after": 11474108416
+       }
+      ],
+      "at_end": {
+       "footprint": 157480568,
+       "footprint_peak": 157480568,
+       "resident": 11474108416,
+       "cpu_s": 29.254139125,
+       "disk_read": 11494055936,
+       "pageins": 691028,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 29.254
+       }
+      },
+      "stats": {
+       "requests": 1,
+       "cancelled": 0,
+       "prompt_tokens": 176,
+       "cached_prompt_tokens": 0,
+       "completion_tokens": 45,
+       "prefill_tok_s": 39.79235625011305,
+       "decode_tok_s": 41.05607164558209,
+       "steps": 45,
+       "max_seqs_in_step": 1,
+       "kv_disk": {
+        "enabled": false,
+        "trimmable": false,
+        "saves": 0,
+        "restores": 0,
+        "restored_tokens": 0,
+        "save_ms": 0.0,
+        "restore_ms": 0.0,
+        "bytes": 0,
+        "files": 0
+       },
+       "threads": 12,
+       "kernels": "neon",
+       "device": "cpu",
+       "bytes_per_token": 2899933184,
+       "sleeping": false
+      }
+     },
+     {
+      "cold": false,
+      "idle_before_pct": 87.68,
+      "load_s": 0.143,
+      "cmd": "/Volumes/ARGUS5/PROJECTS/LLMario/.claude/worktrees/llmario-performance-optimization-3de13c/target/baseline/llmario-engine serve --model /Volumes/ARGUS5/AIPROJECTS/llmario-engine-moe-home/models/qwen3-coder-30b-a3b-gguf-q4km/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf --listen 127.0.0.1:58438 --ctx 8192 --parallel 1 --device cpu --threads 12",
+      "after_load": {
+       "footprint": 85783440,
+       "footprint_peak": 87274384,
+       "resident": 2029223936,
+       "cpu_s": 0.6243819583333333,
+       "disk_read": 0,
+       "pageins": 0,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 0.624
+       }
+      },
+      "threads_os": 15,
+      "engine_model": {
+       "backend": "native",
+       "plan_hash": "8d404190487757fdfda3c44aaf7757c8",
+       "arch": "qwen3moe",
+       "context": 8192,
+       "kernels": "neon",
+       "kv_type": "f16",
+       "slots": 1,
+       "device": "cpu",
+       "capabilities": {
+        "tools": true,
+        "json_schema": true,
+        "vision": false,
+        "web_tools": []
+       }
+      },
+      "plan": {
+       "planned_peak": 19721838080,
+       "ctx_per_slot": 8192,
+       "kv_dtype": "f16",
+       "slots": 1,
+       "degradations": [],
+       "fits": true
+      },
+      "requests": [
+       {
+        "ttft_s": 1.7897399589419365,
+        "total_s": 2.782334958901629,
+        "usage": {
+         "prompt_tokens": 176,
+         "completion_tokens": 45,
+         "total_tokens": 221,
+         "prompt_tokens_details": {
+          "cached_tokens": 0
+         }
+        },
+        "timings": {
+         "prompt_n": 176,
+         "prompt_ms": 1788.51825,
+         "predicted_n": 45,
+         "predicted_ms": 992.866333
+        },
+        "decode_tok_s": 45.32332148279218,
+        "prefill_tok_s": 98.40548174445522,
+        "idle_before_pct": 84.97,
+        "prompt_words": 40,
+        "avg_cores": 8.85,
+        "footprint_after": 157742712,
+        "resident_after": 11474370560
+       }
+      ],
+      "at_end": {
+       "footprint": 157742712,
+       "footprint_peak": 157742712,
+       "resident": 11474370560,
+       "cpu_s": 25.245474166666664,
+       "disk_read": 0,
+       "pageins": 0,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 25.245
+       }
+      },
+      "stats": {
+       "requests": 1,
+       "cancelled": 0,
+       "prompt_tokens": 176,
+       "cached_prompt_tokens": 0,
+       "completion_tokens": 45,
+       "prefill_tok_s": 98.40549549962594,
+       "decode_tok_s": 45.323336683902966,
+       "steps": 45,
+       "max_seqs_in_step": 1,
+       "kv_disk": {
+        "enabled": false,
+        "trimmable": false,
+        "saves": 0,
+        "restores": 0,
+        "restored_tokens": 0,
+        "save_ms": 0.0,
+        "restore_ms": 0.0,
+        "bytes": 0,
+        "files": 0
+       },
+       "threads": 12,
+       "kernels": "neon",
+       "device": "cpu",
+       "bytes_per_token": 2899933184,
+       "sleeping": false
+      }
+     },
+     {
+      "cold": true,
+      "idle_before_pct": 87.72,
+      "resident_after_evict": 0.0,
+      "load_s": 0.894,
+      "cmd": "/Volumes/ARGUS5/PROJECTS/LLMario/.claude/worktrees/llmario-performance-optimization-3de13c/target/baseline/llmario-engine serve --model /Volumes/ARGUS5/AIPROJECTS/llmario-engine-moe-home/models/qwen3-coder-30b-a3b-gguf-q4km/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf --listen 127.0.0.1:58463 --ctx 8192 --parallel 1 --device cpu --threads 12",
+      "after_load": {
+       "footprint": 85881744,
+       "footprint_peak": 87372688,
+       "resident": 2029322240,
+       "cpu_s": 1.7741260416666664,
+       "disk_read": 1984774144,
+       "pageins": 118816,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 1.774
+       }
+      },
+      "threads_os": 15,
+      "engine_model": {
+       "backend": "native",
+       "plan_hash": "8d404190487757fdfda3c44aaf7757c8",
+       "arch": "qwen3moe",
+       "context": 8192,
+       "kernels": "neon",
+       "kv_type": "f16",
+       "slots": 1,
+       "device": "cpu",
+       "capabilities": {
+        "tools": true,
+        "json_schema": true,
+        "vision": false,
+        "web_tools": []
+       }
+      },
+      "plan": {
+       "planned_peak": 19721838080,
+       "ctx_per_slot": 8192,
+       "kv_dtype": "f16",
+       "slots": 1,
+       "degradations": [],
+       "fits": true
+      },
+      "requests": [
+       {
+        "ttft_s": 4.434678750112653,
+        "total_s": 5.528445583069697,
+        "usage": {
+         "prompt_tokens": 176,
+         "completion_tokens": 45,
+         "total_tokens": 221,
+         "prompt_tokens_details": {
+          "cached_tokens": 0
+         }
+        },
+        "timings": {
+         "prompt_n": 176,
+         "prompt_ms": 4433.444083,
+         "predicted_n": 45,
+         "predicted_ms": 1094.0247080000001
+        },
+        "decode_tok_s": 41.13252623175673,
+        "prefill_tok_s": 39.69825641308308,
+        "idle_before_pct": 87.84,
+        "prompt_words": 40,
+        "avg_cores": 4.95,
+        "footprint_after": 158135952,
+        "resident_after": 11474747392
+       }
+      ],
+      "at_end": {
+       "footprint": 158135952,
+       "footprint_peak": 158135952,
+       "resident": 11474747392,
+       "cpu_s": 29.16673683333333,
+       "disk_read": 11492040704,
+       "pageins": 690921,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 29.166
+       }
+      },
+      "stats": {
+       "requests": 1,
+       "cancelled": 0,
+       "prompt_tokens": 176,
+       "cached_prompt_tokens": 0,
+       "completion_tokens": 45,
+       "prefill_tok_s": 39.69825715628753,
+       "decode_tok_s": 41.13255285076013,
+       "steps": 45,
+       "max_seqs_in_step": 1,
+       "kv_disk": {
+        "enabled": false,
+        "trimmable": false,
+        "saves": 0,
+        "restores": 0,
+        "restored_tokens": 0,
+        "save_ms": 0.0,
+        "restore_ms": 0.0,
+        "bytes": 0,
+        "files": 0
+       },
+       "threads": 12,
+       "kernels": "neon",
+       "device": "cpu",
+       "bytes_per_token": 2899933184,
+       "sleeping": false
+      }
+     },
+     {
+      "cold": false,
+      "idle_before_pct": 84.16,
+      "load_s": 0.141,
+      "cmd": "/Volumes/ARGUS5/PROJECTS/LLMario/.claude/worktrees/llmario-performance-optimization-3de13c/target/baseline/llmario-engine serve --model /Volumes/ARGUS5/AIPROJECTS/llmario-engine-moe-home/models/qwen3-coder-30b-a3b-gguf-q4km/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf --listen 127.0.0.1:58546 --ctx 8192 --parallel 1 --device cpu --threads 12",
+      "after_load": {
+       "footprint": 85848952,
+       "footprint_peak": 87339896,
+       "resident": 2029305856,
+       "cpu_s": 0.6520270833333333,
+       "disk_read": 0,
+       "pageins": 0,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 0.652
+       }
+      },
+      "threads_os": 15,
+      "engine_model": {
+       "backend": "native",
+       "plan_hash": "8d404190487757fdfda3c44aaf7757c8",
+       "arch": "qwen3moe",
+       "context": 8192,
+       "kernels": "neon",
+       "kv_type": "f16",
+       "slots": 1,
+       "device": "cpu",
+       "capabilities": {
+        "tools": true,
+        "json_schema": true,
+        "vision": false,
+        "web_tools": []
+       }
+      },
+      "plan": {
+       "planned_peak": 19721838080,
+       "ctx_per_slot": 8192,
+       "kv_dtype": "f16",
+       "slots": 1,
+       "degradations": [],
+       "fits": true
+      },
+      "requests": [
+       {
+        "ttft_s": 1.7972022918984294,
+        "total_s": 2.793301957892254,
+        "usage": {
+         "prompt_tokens": 176,
+         "completion_tokens": 45,
+         "total_tokens": 221,
+         "prompt_tokens_details": {
+          "cached_tokens": 0
+         }
+        },
+        "timings": {
+         "prompt_n": 176,
+         "prompt_ms": 1796.0810000000001,
+         "predicted_n": 45,
+         "predicted_ms": 996.310625
+        },
+        "decode_tok_s": 45.166636660127956,
+        "prefill_tok_s": 97.99112623539807,
+        "idle_before_pct": 87.37,
+        "prompt_words": 40,
+        "avg_cores": 8.82,
+        "footprint_after": 158037648,
+        "resident_after": 11474649088
+       }
+      ],
+      "at_end": {
+       "footprint": 158037648,
+       "footprint_peak": 158037648,
+       "resident": 11474649088,
+       "cpu_s": 25.28607720833333,
+       "disk_read": 0,
+       "pageins": 0,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 25.286
+       }
+      },
+      "stats": {
+       "requests": 1,
+       "cancelled": 0,
+       "prompt_tokens": 176,
+       "cached_prompt_tokens": 0,
+       "completion_tokens": 45,
+       "prefill_tok_s": 97.99112623539807,
+       "decode_tok_s": 45.16666499382722,
+       "steps": 45,
+       "max_seqs_in_step": 1,
+       "kv_disk": {
+        "enabled": false,
+        "trimmable": false,
+        "saves": 0,
+        "restores": 0,
+        "restored_tokens": 0,
+        "save_ms": 0.0,
+        "restore_ms": 0.0,
+        "bytes": 0,
+        "files": 0
+       },
+       "threads": 12,
+       "kernels": "neon",
+       "device": "cpu",
+       "bytes_per_token": 2899933184,
+       "sleeping": false
+      }
+     }
+    ],
+    "new": [
+     {
+      "cold": true,
+      "idle_before_pct": 88.1,
+      "resident_after_evict": 0.0,
+      "load_s": 0.908,
+      "cmd": "/Volumes/ARGUS5/PROJECTS/LLMario/.claude/worktrees/llmario-performance-optimization-3de13c/target/release/llmario-engine serve --model /Volumes/ARGUS5/AIPROJECTS/llmario-engine-moe-home/models/qwen3-coder-30b-a3b-gguf-q4km/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf --listen 127.0.0.1:58398 --ctx 8192 --parallel 1 --device cpu --threads 12",
+      "after_load": {
+       "footprint": 85947232,
+       "footprint_peak": 87356256,
+       "resident": 2029420544,
+       "cpu_s": 1.7386416666666664,
+       "disk_read": 1985314816,
+       "pageins": 118806,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 1.738
+       }
+      },
+      "threads_os": 15,
+      "engine_model": {
+       "backend": "native",
+       "plan_hash": "8d404190487757fdfda3c44aaf7757c8",
+       "arch": "qwen3moe",
+       "context": 8192,
+       "kernels": "neon",
+       "kv_type": "f16",
+       "slots": 1,
+       "device": "cpu",
+       "capabilities": {
+        "tools": true,
+        "json_schema": true,
+        "vision": false,
+        "web_tools": []
+       }
+      },
+      "plan": {
+       "planned_peak": 19721838080,
+       "ctx_per_slot": 8192,
+       "kv_dtype": "f16",
+       "slots": 1,
+       "degradations": [],
+       "fits": true
+      },
+      "requests": [
+       {
+        "ttft_s": 4.46305683394894,
+        "total_s": 5.550881417002529,
+        "usage": {
+         "prompt_tokens": 176,
+         "completion_tokens": 45,
+         "total_tokens": 221,
+         "prompt_tokens_details": {
+          "cached_tokens": 0
+         }
+        },
+        "timings": {
+         "prompt_n": 176,
+         "prompt_ms": 4461.7339170000005,
+         "predicted_n": 45,
+         "predicted_ms": 1088.0413330000001
+        },
+        "decode_tok_s": 41.358722904325546,
+        "prefill_tok_s": 39.44654774893874,
+        "idle_before_pct": 86.38,
+        "prompt_words": 40,
+        "avg_cores": 4.96,
+        "footprint_after": 157726304,
+        "resident_after": 11474419712
+       }
+      ],
+      "at_end": {
+       "footprint": 157726304,
+       "footprint_peak": 157726304,
+       "resident": 11474419712,
+       "cpu_s": 29.299233875,
+       "disk_read": 11492433920,
+       "pageins": 690908,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 29.299
+       }
+      },
+      "stats": {
+       "requests": 1,
+       "cancelled": 0,
+       "prompt_tokens": 176,
+       "cached_prompt_tokens": 0,
+       "completion_tokens": 45,
+       "prefill_tok_s": 39.44655585621103,
+       "decode_tok_s": 41.358735562354724,
+       "steps": 45,
+       "max_seqs_in_step": 1,
+       "kv_disk": {
+        "enabled": false,
+        "trimmable": false,
+        "saves": 0,
+        "restores": 0,
+        "restored_tokens": 0,
+        "save_ms": 0.0,
+        "restore_ms": 0.0,
+        "bytes": 0,
+        "files": 0
+       },
+       "memory_pressure": {
+        "relief": true,
+        "level": "unknown",
+        "sheds": 0,
+        "released_bytes": 0
+       },
+       "paging": {
+        "bytes": 9507119104,
+        "tokens": 221,
+        "bytes_per_token_last": 43018638,
+        "model_does_not_fit_memory": false
+       },
+       "threads": 12,
+       "kernels": "neon",
+       "device": "cpu",
+       "bytes_per_token": 2899933184,
+       "sleeping": false
+      }
+     },
+     {
+      "cold": false,
+      "idle_before_pct": 85.15,
+      "load_s": 0.146,
+      "cmd": "/Volumes/ARGUS5/PROJECTS/LLMario/.claude/worktrees/llmario-performance-optimization-3de13c/target/release/llmario-engine serve --model /Volumes/ARGUS5/AIPROJECTS/llmario-engine-moe-home/models/qwen3-coder-30b-a3b-gguf-q4km/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf --listen 127.0.0.1:58450 --ctx 8192 --parallel 1 --device cpu --threads 12",
+      "after_load": {
+       "footprint": 85848952,
+       "footprint_peak": 87290744,
+       "resident": 2029305856,
+       "cpu_s": 0.6280625,
+       "disk_read": 0,
+       "pageins": 0,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 0.628
+       }
+      },
+      "threads_os": 15,
+      "engine_model": {
+       "backend": "native",
+       "plan_hash": "8d404190487757fdfda3c44aaf7757c8",
+       "arch": "qwen3moe",
+       "context": 8192,
+       "kernels": "neon",
+       "kv_type": "f16",
+       "slots": 1,
+       "device": "cpu",
+       "capabilities": {
+        "tools": true,
+        "json_schema": true,
+        "vision": false,
+        "web_tools": []
+       }
+      },
+      "plan": {
+       "planned_peak": 19721838080,
+       "ctx_per_slot": 8192,
+       "kv_dtype": "f16",
+       "slots": 1,
+       "degradations": [],
+       "fits": true
+      },
+      "requests": [
+       {
+        "ttft_s": 1.7825340828858316,
+        "total_s": 2.799192582955584,
+        "usage": {
+         "prompt_tokens": 176,
+         "completion_tokens": 45,
+         "total_tokens": 221,
+         "prompt_tokens_details": {
+          "cached_tokens": 0
+         }
+        },
+        "timings": {
+         "prompt_n": 176,
+         "prompt_ms": 1781.3109160000001,
+         "predicted_n": 45,
+         "predicted_ms": 1016.859084
+        },
+        "decode_tok_s": 44.2539194545859,
+        "prefill_tok_s": 98.80363861195806,
+        "idle_before_pct": 87.66,
+        "prompt_words": 40,
+        "avg_cores": 8.85,
+        "footprint_after": 157234808,
+        "resident_after": 11473911808
+       }
+      ],
+      "at_end": {
+       "footprint": 157234808,
+       "footprint_peak": 157234808,
+       "resident": 11473911808,
+       "cpu_s": 25.414103875,
+       "disk_read": 0,
+       "pageins": 0,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 25.414
+       }
+      },
+      "stats": {
+       "requests": 1,
+       "cancelled": 0,
+       "prompt_tokens": 176,
+       "cached_prompt_tokens": 0,
+       "completion_tokens": 45,
+       "prefill_tok_s": 98.80368941958447,
+       "decode_tok_s": 44.25392311028373,
+       "steps": 45,
+       "max_seqs_in_step": 1,
+       "kv_disk": {
+        "enabled": false,
+        "trimmable": false,
+        "saves": 0,
+        "restores": 0,
+        "restored_tokens": 0,
+        "save_ms": 0.0,
+        "restore_ms": 0.0,
+        "bytes": 0,
+        "files": 0
+       },
+       "memory_pressure": {
+        "relief": true,
+        "level": "unknown",
+        "sheds": 0,
+        "released_bytes": 0
+       },
+       "paging": {
+        "bytes": 0,
+        "tokens": 221,
+        "bytes_per_token_last": 0,
+        "model_does_not_fit_memory": false
+       },
+       "threads": 12,
+       "kernels": "neon",
+       "device": "cpu",
+       "bytes_per_token": 2899933184,
+       "sleeping": false
+      }
+     },
+     {
+      "cold": true,
+      "idle_before_pct": 87.54,
+      "resident_after_evict": 0.0,
+      "load_s": 0.906,
+      "cmd": "/Volumes/ARGUS5/PROJECTS/LLMario/.claude/worktrees/llmario-performance-optimization-3de13c/target/release/llmario-engine serve --model /Volumes/ARGUS5/AIPROJECTS/llmario-engine-moe-home/models/qwen3-coder-30b-a3b-gguf-q4km/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf --listen 127.0.0.1:58504 --ctx 8192 --parallel 1 --device cpu --threads 12",
+      "after_load": {
+       "footprint": 85980024,
+       "footprint_peak": 87405432,
+       "resident": 2029436928,
+       "cpu_s": 1.7327057916666666,
+       "disk_read": 1984790528,
+       "pageins": 118810,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 1.732
+       }
+      },
+      "threads_os": 15,
+      "engine_model": {
+       "backend": "native",
+       "plan_hash": "8d404190487757fdfda3c44aaf7757c8",
+       "arch": "qwen3moe",
+       "context": 8192,
+       "kernels": "neon",
+       "kv_type": "f16",
+       "slots": 1,
+       "device": "cpu",
+       "capabilities": {
+        "tools": true,
+        "json_schema": true,
+        "vision": false,
+        "web_tools": []
+       }
+      },
+      "plan": {
+       "planned_peak": 19721838080,
+       "ctx_per_slot": 8192,
+       "kv_dtype": "f16",
+       "slots": 1,
+       "degradations": [],
+       "fits": true
+      },
+      "requests": [
+       {
+        "ttft_s": 4.437960375100374,
+        "total_s": 5.548591458005831,
+        "usage": {
+         "prompt_tokens": 176,
+         "completion_tokens": 45,
+         "total_tokens": 221,
+         "prompt_tokens_details": {
+          "cached_tokens": 0
+         }
+        },
+        "timings": {
+         "prompt_n": 176,
+         "prompt_ms": 4436.7600410000005,
+         "predicted_n": 45,
+         "predicted_ms": 1110.859042
+        },
+        "decode_tok_s": 40.50919000396452,
+        "prefill_tok_s": 39.66858662032382,
+        "idle_before_pct": 86.64,
+        "prompt_words": 40,
+        "avg_cores": 4.94,
+        "footprint_after": 157251144,
+        "resident_after": 11473960960
+       }
+      ],
+      "at_end": {
+       "footprint": 157251144,
+       "footprint_peak": 157251144,
+       "resident": 11473960960,
+       "cpu_s": 29.139736666666664,
+       "disk_read": 11492024320,
+       "pageins": 690915,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 29.139
+       }
+      },
+      "stats": {
+       "requests": 1,
+       "cancelled": 0,
+       "prompt_tokens": 176,
+       "cached_prompt_tokens": 0,
+       "completion_tokens": 45,
+       "prefill_tok_s": 39.66858698690035,
+       "decode_tok_s": 40.50919153555942,
+       "steps": 45,
+       "max_seqs_in_step": 1,
+       "kv_disk": {
+        "enabled": false,
+        "trimmable": false,
+        "saves": 0,
+        "restores": 0,
+        "restored_tokens": 0,
+        "save_ms": 0.0,
+        "restore_ms": 0.0,
+        "bytes": 0,
+        "files": 0
+       },
+       "memory_pressure": {
+        "relief": true,
+        "level": "unknown",
+        "sheds": 0,
+        "released_bytes": 0
+       },
+       "paging": {
+        "bytes": 9507233792,
+        "tokens": 221,
+        "bytes_per_token_last": 43019157,
+        "model_does_not_fit_memory": false
+       },
+       "threads": 12,
+       "kernels": "neon",
+       "device": "cpu",
+       "bytes_per_token": 2899933184,
+       "sleeping": false
+      }
+     },
+     {
+      "cold": false,
+      "idle_before_pct": 79.62,
+      "load_s": 0.141,
+      "cmd": "/Volumes/ARGUS5/PROJECTS/LLMario/.claude/worktrees/llmario-performance-optimization-3de13c/target/release/llmario-engine serve --model /Volumes/ARGUS5/AIPROJECTS/llmario-engine-moe-home/models/qwen3-coder-30b-a3b-gguf-q4km/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf --listen 127.0.0.1:58560 --ctx 8192 --parallel 1 --device cpu --threads 12",
+      "after_load": {
+       "footprint": 85799776,
+       "footprint_peak": 87257952,
+       "resident": 2029273088,
+       "cpu_s": 0.6510536666666666,
+       "disk_read": 0,
+       "pageins": 0,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 0.651
+       }
+      },
+      "threads_os": 15,
+      "engine_model": {
+       "backend": "native",
+       "plan_hash": "8d404190487757fdfda3c44aaf7757c8",
+       "arch": "qwen3moe",
+       "context": 8192,
+       "kernels": "neon",
+       "kv_type": "f16",
+       "slots": 1,
+       "device": "cpu",
+       "capabilities": {
+        "tools": true,
+        "json_schema": true,
+        "vision": false,
+        "web_tools": []
+       }
+      },
+      "plan": {
+       "planned_peak": 19721838080,
+       "ctx_per_slot": 8192,
+       "kv_dtype": "f16",
+       "slots": 1,
+       "degradations": [],
+       "fits": true
+      },
+      "requests": [
+       {
+        "ttft_s": 1.761194792110473,
+        "total_s": 2.800032125087455,
+        "usage": {
+         "prompt_tokens": 176,
+         "completion_tokens": 45,
+         "total_tokens": 221,
+         "prompt_tokens_details": {
+          "cached_tokens": 0
+         }
+        },
+        "timings": {
+         "prompt_n": 176,
+         "prompt_ms": 1759.712958,
+         "predicted_n": 45,
+         "predicted_ms": 1039.39925
+        },
+        "decode_tok_s": 43.29423943686702,
+        "prefill_tok_s": 100.01631186488085,
+        "idle_before_pct": 77.57,
+        "prompt_words": 40,
+        "avg_cores": 8.91,
+        "footprint_after": 157791864,
+        "resident_after": 11474468864
+       }
+      ],
+      "at_end": {
+       "footprint": 157791864,
+       "footprint_peak": 157791864,
+       "resident": 11474468864,
+       "cpu_s": 25.593708208333332,
+       "disk_read": 0,
+       "pageins": 0,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 25.593
+       }
+      },
+      "stats": {
+       "requests": 1,
+       "cancelled": 0,
+       "prompt_tokens": 176,
+       "cached_prompt_tokens": 0,
+       "completion_tokens": 45,
+       "prefill_tok_s": 100.01636631448783,
+       "decode_tok_s": 43.29424985015379,
+       "steps": 45,
+       "max_seqs_in_step": 1,
+       "kv_disk": {
+        "enabled": false,
+        "trimmable": false,
+        "saves": 0,
+        "restores": 0,
+        "restored_tokens": 0,
+        "save_ms": 0.0,
+        "restore_ms": 0.0,
+        "bytes": 0,
+        "files": 0
+       },
+       "memory_pressure": {
+        "relief": true,
+        "level": "unknown",
+        "sheds": 0,
+        "released_bytes": 0
+       },
+       "paging": {
+        "bytes": 0,
+        "tokens": 221,
+        "bytes_per_token_last": 0,
+        "model_does_not_fit_memory": false
+       },
+       "threads": 12,
+       "kernels": "neon",
+       "device": "cpu",
+       "bytes_per_token": 2899933184,
+       "sleeping": false
+      }
+     }
+    ]
+   }
+  }
+ ]
+}

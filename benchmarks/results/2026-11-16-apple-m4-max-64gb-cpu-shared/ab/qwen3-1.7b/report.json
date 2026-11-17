@@ -1,0 +1,2753 @@
+{
+ "schema": 1,
+ "environment": {
+  "date_utc": "2026-11-17T05:40:35Z",
+  "os": "macOS-27.0.1-arm64-arm-64bit-Mach-O",
+  "machine": "arm64",
+  "logical_cpus": 16,
+  "load_average": [
+   6.4228515625,
+   21.0029296875,
+   42.6083984375
+  ],
+  "cpu": "Apple M4 Max",
+  "ram_bytes": 68719476736,
+  "performance_cores": 12,
+  "efficiency_cores": 4,
+  "ram_free_bytes": 46997716992,
+  "ram_wired_bytes": 6185107456,
+  "load_average_end": [
+   20.89404296875,
+   23.30078125,
+   32.74755859375
+  ]
+ },
+ "args": {
+  "engine": [
+   {
+    "label": "base",
+    "path": "/Volumes/ARGUS5/PROJECTS/LLMario/.claude/worktrees/llmario-performance-optimization-3de13c/target/baseline/llmario-engine",
+    "env": {},
+    "version": "llmario-engine 0.2.1"
+   },
+   {
+    "label": "new",
+    "path": "/Volumes/ARGUS5/PROJECTS/LLMario/.claude/worktrees/llmario-performance-optimization-3de13c/target/release/llmario-engine",
+    "env": {},
+    "version": "llmario-engine 0.2.1"
+   }
+  ],
+  "model": [
+   "/Volumes/ARGUS5/AIPROJECTS/LLMario-models/qwen3-1.7b-gguf-q4km/Qwen3-1.7B-Q4_K_M.gguf"
+  ],
+  "modes": "raw,serve",
+  "threads": "8,12,16",
+  "serve_threads": 0,
+  "serve_arg": [],
+  "prompt_tokens": 512,
+  "decode_tokens": 64,
+  "rounds": 3,
+  "ctx": 8192,
+  "max_tokens": 64,
+  "prompt_words": [
+   40,
+   700
+  ],
+  "concurrency": "1,2,4",
+  "no_quality": false,
+  "no_cold": false,
+  "quiet_idle": 75.0,
+  "quiet_wait": 45,
+  "out": "benchmarks/results/2026-11-16-apple-m4-max-64gb-cpu-shared/ab/qwen3-1.7b"
+ },
+ "models": [
+  {
+   "info": {
+    "file": "Qwen3-1.7B-Q4_K_M.gguf",
+    "bytes": 1107409472,
+    "general.name": "\"Qwen3-1.7B\"",
+    "general.architecture": "\"qwen3\"",
+    "general.file_type": "15",
+    "general.size_label": "\"1.7B\"",
+    "general.quantization_version": "2",
+    "context_length": 40960,
+    "bytes_by_type_pct": {
+     "f32": 0.0,
+     "q4_K": 61.5,
+     "q6_K": 38.5
+    }
+   },
+   "storage": {
+    "path_volume": "/Volumes/ARGUS5",
+    "solid_state": "Yes",
+    "protocol": "PCI-Express",
+    "file_system_personality": "APFS",
+    "device_location": "External"
+   },
+   "raw": {
+    "base": {
+     "8": [
+      {
+       "wall_s": 3.195,
+       "idle_before_pct": 88.9,
+       "output_ids": "35398,1635,566,1030,13628,1172,2326,21461,11,1817,315,1105,2337,279,2244,13458,429,62008,279,15134,504,279,708,587,1530,323,36967,279,19948,25099,3156,279,13648,13,3197,279,8149,15328,4641,311,17331,304,279,2086,12406,315,279,4116,11,566,65801,291,279,5590,11,50981,279,289,865,23327,323,8604,279,3100,19675",
+       "load_s": 0.01,
+       "prefill_tok_s": 205.5,
+       "decode_tok_s": 96.31,
+       "threads_used": 8
+      },
+      {
+       "wall_s": 3.194,
+       "idle_before_pct": 88.8,
+       "output_ids": "35398,1635,566,1030,13628,1172,2326,21461,11,1817,315,1105,2337,279,2244,13458,429,62008,279,15134,504,279,708,587,1530,323,36967,279,19948,25099,3156,279,13648,13,3197,279,8149,15328,4641,311,17331,304,279,2086,12406,315,279,4116,11,566,65801,291,279,5590,11,50981,279,289,865,23327,323,8604,279,3100,19675",
+       "load_s": 0.01,
+       "prefill_tok_s": 205.6,
+       "decode_tok_s": 96.14,
+       "threads_used": 8
+      },
+      {
+       "wall_s": 3.292,
+       "idle_before_pct": 85.99,
+       "output_ids": "35398,1635,566,1030,13628,1172,2326,21461,11,1817,315,1105,2337,279,2244,13458,429,62008,279,15134,504,279,708,587,1530,323,36967,279,19948,25099,3156,279,13648,13,3197,279,8149,15328,4641,311,17331,304,279,2086,12406,315,279,4116,11,566,65801,291,279,5590,11,50981,279,289,865,23327,323,8604,279,3100,19675",
+       "load_s": 0.01,
+       "prefill_tok_s": 198.8,
+       "decode_tok_s": 94.28,
+       "threads_used": 8
+      }
+     ],
+     "12": [
+      {
+       "wall_s": 2.757,
+       "idle_before_pct": 87.87,
+       "output_ids": "35398,1635,566,1030,13628,1172,2326,21461,11,1817,315,1105,2337,279,2244,13458,429,62008,279,15134,504,279,708,587,1530,323,36967,279,19948,25099,3156,279,13648,13,3197,279,8149,15328,4641,311,17331,304,279,2086,12406,315,279,4116,11,566,65801,291,279,5590,11,50981,279,289,865,23327,323,8604,279,3100,19675",
+       "load_s": 0.01,
+       "prefill_tok_s": 247.1,
+       "decode_tok_s": 99.01,
+       "threads_used": 12
+      },
+      {
+       "wall_s": 2.774,
+       "idle_before_pct": 85.68,
+       "output_ids": "35398,1635,566,1030,13628,1172,2326,21461,11,1817,315,1105,2337,279,2244,13458,429,62008,279,15134,504,279,708,587,1530,323,36967,279,19948,25099,3156,279,13648,13,3197,279,8149,15328,4641,311,17331,304,279,2086,12406,315,279,4116,11,566,65801,291,279,5590,11,50981,279,289,865,23327,323,8604,279,3100,19675",
+       "load_s": 0.01,
+       "prefill_tok_s": 245.1,
+       "decode_tok_s": 99.12,
+       "threads_used": 12
+      },
+      {
+       "wall_s": 2.893,
+       "idle_before_pct": 84.68,
+       "output_ids": "35398,1635,566,1030,13628,1172,2326,21461,11,1817,315,1105,2337,279,2244,13458,429,62008,279,15134,504,279,708,587,1530,323,36967,279,19948,25099,3156,279,13648,13,3197,279,8149,15328,4641,311,17331,304,279,2086,12406,315,279,4116,11,566,65801,291,279,5590,11,50981,279,289,865,23327,323,8604,279,3100,19675",
+       "load_s": 0.01,
+       "prefill_tok_s": 239.2,
+       "decode_tok_s": 89.84,
+       "threads_used": 12
+      }
+     ],
+     "16": [
+      {
+       "wall_s": 2.743,
+       "idle_before_pct": 88.54,
+       "output_ids": "35398,1635,566,1030,13628,1172,2326,21461,11,1817,315,1105,2337,279,2244,13458,429,62008,279,15134,504,279,708,587,1530,323,36967,279,19948,25099,3156,279,13648,13,3197,279,8149,15328,4641,311,17331,304,279,2086,12406,315,279,4116,11,566,65801,291,279,5590,11,50981,279,289,865,23327,323,8604,279,3100,19675",
+       "load_s": 0.01,
+       "prefill_tok_s": 268.8,
+       "decode_tok_s": 80.01,
+       "threads_used": 16
+      },
+      {
+       "wall_s": 2.803,
+       "idle_before_pct": 86.98,
+       "output_ids": "35398,1635,566,1030,13628,1172,2326,21461,11,1817,315,1105,2337,279,2244,13458,429,62008,279,15134,504,279,708,587,1530,323,36967,279,19948,25099,3156,279,13648,13,3197,279,8149,15328,4641,311,17331,304,279,2086,12406,315,279,4116,11,566,65801,291,279,5590,11,50981,279,289,865,23327,323,8604,279,3100,19675",
+       "load_s": 0.01,
+       "prefill_tok_s": 263.9,
+       "decode_tok_s": 77.64,
+       "threads_used": 16
+      },
+      {
+       "wall_s": 2.836,
+       "idle_before_pct": 87.93,
+       "output_ids": "35398,1635,566,1030,13628,1172,2326,21461,11,1817,315,1105,2337,279,2244,13458,429,62008,279,15134,504,279,708,587,1530,323,36967,279,19948,25099,3156,279,13648,13,3197,279,8149,15328,4641,311,17331,304,279,2086,12406,315,279,4116,11,566,65801,291,279,5590,11,50981,279,289,865,23327,323,8604,279,3100,19675",
+       "load_s": 0.01,
+       "prefill_tok_s": 256.9,
+       "decode_tok_s": 79.77,
+       "threads_used": 16
+      }
+     ]
+    },
+    "new": {
+     "8": [
+      {
+       "wall_s": 3.198,
+       "idle_before_pct": 85.9,
+       "output_ids": "35398,1635,566,1030,13628,1172,2326,21461,11,1817,315,1105,2337,279,2244,13458,429,62008,279,15134,504,279,708,587,1530,323,36967,279,19948,25099,3156,279,13648,13,3197,279,8149,15328,4641,311,17331,304,279,2086,12406,315,279,4116,11,566,65801,291,279,5590,11,50981,279,289,865,23327,323,8604,279,3100,19675",
+       "load_s": 0.01,
+       "prefill_tok_s": 206.1,
+       "decode_tok_s": 95.25,
+       "threads_used": 8
+      },
+      {
+       "wall_s": 3.25,
+       "idle_before_pct": 86.25,
+       "output_ids": "35398,1635,566,1030,13628,1172,2326,21461,11,1817,315,1105,2337,279,2244,13458,429,62008,279,15134,504,279,708,587,1530,323,36967,279,19948,25099,3156,279,13648,13,3197,279,8149,15328,4641,311,17331,304,279,2086,12406,315,279,4116,11,566,65801,291,279,5590,11,50981,279,289,865,23327,323,8604,279,3100,19675",
+       "load_s": 0.01,
+       "prefill_tok_s": 204.1,
+       "decode_tok_s": 91.15,
+       "threads_used": 8
+      },
+      {
+       "wall_s": 3.285,
+       "idle_before_pct": 86.83,
+       "output_ids": "35398,1635,566,1030,13628,1172,2326,21461,11,1817,315,1105,2337,279,2244,13458,429,62008,279,15134,504,279,708,587,1530,323,36967,279,19948,25099,3156,279,13648,13,3197,279,8149,15328,4641,311,17331,304,279,2086,12406,315,279,4116,11,566,65801,291,279,5590,11,50981,279,289,865,23327,323,8604,279,3100,19675",
+       "load_s": 0.01,
+       "prefill_tok_s": 200.1,
+       "decode_tok_s": 93.01,
+       "threads_used": 8
+      }
+     ],
+     "12": [
+      {
+       "wall_s": 2.773,
+       "idle_before_pct": 88.59,
+       "output_ids": "35398,1635,566,1030,13628,1172,2326,21461,11,1817,315,1105,2337,279,2244,13458,429,62008,279,15134,504,279,708,587,1530,323,36967,279,19948,25099,3156,279,13648,13,3197,279,8149,15328,4641,311,17331,304,279,2086,12406,315,279,4116,11,566,65801,291,279,5590,11,50981,279,289,865,23327,323,8604,279,3100,19675",
+       "load_s": 0.01,
+       "prefill_tok_s": 245.2,
+       "decode_tok_s": 99.17,
+       "threads_used": 12
+      },
+      {
+       "wall_s": 2.799,
+       "idle_before_pct": 88.52,
+       "output_ids": "35398,1635,566,1030,13628,1172,2326,21461,11,1817,315,1105,2337,279,2244,13458,429,62008,279,15134,504,279,708,587,1530,323,36967,279,19948,25099,3156,279,13648,13,3197,279,8149,15328,4641,311,17331,304,279,2086,12406,315,279,4116,11,566,65801,291,279,5590,11,50981,279,289,865,23327,323,8604,279,3100,19675",
+       "load_s": 0.01,
+       "prefill_tok_s": 242.9,
+       "decode_tok_s": 98.34,
+       "threads_used": 12
+      },
+      {
+       "wall_s": 2.871,
+       "idle_before_pct": 81.71,
+       "output_ids": "35398,1635,566,1030,13628,1172,2326,21461,11,1817,315,1105,2337,279,2244,13458,429,62008,279,15134,504,279,708,587,1530,323,36967,279,19948,25099,3156,279,13648,13,3197,279,8149,15328,4641,311,17331,304,279,2086,12406,315,279,4116,11,566,65801,291,279,5590,11,50981,279,289,865,23327,323,8604,279,3100,19675",
+       "load_s": 0.01,
+       "prefill_tok_s": 237.1,
+       "decode_tok_s": 95.27,
+       "threads_used": 12
+      }
+     ],
+     "16": [
+      {
+       "wall_s": 2.923,
+       "idle_before_pct": 85.98,
+       "output_ids": "35398,1635,566,1030,13628,1172,2326,21461,11,1817,315,1105,2337,279,2244,13458,429,62008,279,15134,504,279,708,587,1530,323,36967,279,19948,25099,3156,279,13648,13,3197,279,8149,15328,4641,311,17331,304,279,2086,12406,315,279,4116,11,566,65801,291,279,5590,11,50981,279,289,865,23327,323,8604,279,3100,19675",
+       "load_s": 0.01,
+       "prefill_tok_s": 261.4,
+       "decode_tok_s": 69.19,
+       "threads_used": 16
+      },
+      {
+       "wall_s": 2.852,
+       "idle_before_pct": 88.0,
+       "output_ids": "35398,1635,566,1030,13628,1172,2326,21461,11,1817,315,1105,2337,279,2244,13458,429,62008,279,15134,504,279,708,587,1530,323,36967,279,19948,25099,3156,279,13648,13,3197,279,8149,15328,4641,311,17331,304,279,2086,12406,315,279,4116,11,566,65801,291,279,5590,11,50981,279,289,865,23327,323,8604,279,3100,19675",
+       "load_s": 0.01,
+       "prefill_tok_s": 265.4,
+       "decode_tok_s": 72.4,
+       "threads_used": 16
+      },
+      {
+       "wall_s": 2.946,
+       "idle_before_pct": 88.1,
+       "output_ids": "35398,1635,566,1030,13628,1172,2326,21461,11,1817,315,1105,2337,279,2244,13458,429,62008,279,15134,504,279,708,587,1530,323,36967,279,19948,25099,3156,279,13648,13,3197,279,8149,15328,4641,311,17331,304,279,2086,12406,315,279,4116,11,566,65801,291,279,5590,11,50981,279,289,865,23327,323,8604,279,3100,19675",
+       "load_s": 0.01,
+       "prefill_tok_s": 250.3,
+       "decode_tok_s": 74.27,
+       "threads_used": 16
+      }
+     ]
+    }
+   },
+   "serve": {
+    "base": [
+     {
+      "cold": true,
+      "idle_before_pct": 86.49,
+      "resident_after_evict": 0.0,
+      "load_s": 0.537,
+      "cmd": "/Volumes/ARGUS5/PROJECTS/LLMario/.claude/worktrees/llmario-performance-optimization-3de13c/target/baseline/llmario-engine serve --model /Volumes/ARGUS5/AIPROJECTS/LLMario-models/qwen3-1.7b-gguf-q4km/Qwen3-1.7B-Q4_K_M.gguf --listen 127.0.0.1:56903 --ctx 8192 --parallel 1 --device cpu",
+      "after_load": {
+       "footprint": 78267784,
+       "footprint_peak": 79103368,
+       "resident": 1192443904,
+       "cpu_s": 1.3326724166666666,
+       "disk_read": 1107410944,
+       "pageins": 67747,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 1.332
+       }
+      },
+      "threads_os": 19,
+      "engine_model": {
+       "backend": "native",
+       "plan_hash": "81f3f85b0ce1cdcb939c404479f844af",
+       "arch": "qwen3",
+       "context": 8192,
+       "kernels": "neon",
+       "kv_type": "f16",
+       "slots": 1,
+       "device": "cpu",
+       "capabilities": {
+        "tools": true,
+        "json_schema": true,
+        "vision": false,
+        "web_tools": []
+       }
+      },
+      "plan": {
+       "planned_peak": 2364034560,
+       "ctx_per_slot": 8192,
+       "kv_dtype": "f16",
+       "slots": 1,
+       "degradations": [],
+       "fits": true
+      },
+      "requests": [
+       {
+        "ttft_s": 0.6595001250971109,
+        "total_s": 1.3505599580239505,
+        "usage": {
+         "prompt_tokens": 176,
+         "completion_tokens": 64,
+         "total_tokens": 240,
+         "prompt_tokens_details": {
+          "cached_tokens": 0
+         }
+        },
+        "timings": {
+         "prompt_n": 176,
+         "prompt_ms": 641.598292,
+         "predicted_n": 64,
+         "predicted_ms": 708.015584
+        },
+        "decode_tok_s": 90.39349054780128,
+        "prefill_tok_s": 274.3149447162181,
+        "idle_before_pct": 88.37,
+        "prompt_words": 40,
+        "avg_cores": 12.99,
+        "footprint_after": 126633376,
+        "resident_after": 1241251840
+       },
+       {
+        "ttft_s": 2.7750462079420686,
+        "total_s": 3.6675474580843,
+        "usage": {
+         "prompt_tokens": 804,
+         "completion_tokens": 64,
+         "total_tokens": 868,
+         "prompt_tokens_details": {
+          "cached_tokens": 160
+         }
+        },
+        "timings": {
+         "prompt_n": 644,
+         "prompt_ms": 2757.9572080000003,
+         "predicted_n": 64,
+         "predicted_ms": 908.391209
+        },
+        "decode_tok_s": 70.45422651156457,
+        "prefill_tok_s": 233.50616105715878,
+        "idle_before_pct": 88.43,
+        "prompt_words": 700,
+        "avg_cores": 11.55,
+        "footprint_after": 234685904,
+        "resident_after": 1349271552
+       }
+      ],
+      "quality": {
+       "correct": 10,
+       "of": 12,
+       "answers": [
+        {
+         "q": "What is the capital of France? Answer with one word.",
+         "answer": "Paris",
+         "ok": true
+        },
+        {
+         "q": "What is 17 + 26? Answer with the number only.",
+         "answer": "43",
+         "ok": true
+        },
+        {
+         "q": "What is the chemical symbol for gold? Answer with the symbol only.",
+         "answer": "Au",
+         "ok": true
+        },
+        {
+         "q": "How many days are in a leap year? Answer with the number only.",
+         "answer": "366",
+         "ok": true
+        },
+        {
+         "q": "Which planet is known as the Red Planet? Answer with one word.",
+         "answer": "Mars",
+         "ok": true
+        },
+        {
+         "q": "What is the opposite of 'hot'? Answer with one word.",
+         "answer": "cold",
+         "ok": true
+        },
+        {
+         "q": "What is 9 times 8? Answer with the number only.",
+         "answer": "",
+         "ok": false
+        },
+        {
+         "q": "Who wrote the play 'Romeo and Juliet'? Answer with the surname only.",
+         "answer": "Shakespeare",
+         "ok": true
+        },
+        {
+         "q": "What is the largest ocean on Earth? Answer with one word.",
+         "answer": "Pacific",
+         "ok": true
+        },
+        {
+         "q": "What is the square root of 144? Answer with the number only.",
+         "answer": "To find the square root of 144, we are looking for a number that, when",
+         "ok": false
+        },
+        {
+         "q": "Spell the word 'cat' backwards. Answer with the three letters only.",
+         "answer": "TAC",
+         "ok": true
+        },
+        {
+         "q": "What gas do plants absorb from the air for photosynthesis? Answer briefly.",
+         "answer": "Plants absorb **carbon dioxide** (CO\u2082) from the air during photosynthesis.",
+         "ok": true
+        }
+       ]
+      },
+      "at_end": {
+       "footprint": 162940320,
+       "footprint_peak": 234718672,
+       "resident": 1277558784,
+       "cpu_s": 500.73293125,
+       "disk_read": 1107410944,
+       "pageins": 67747,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 500.733
+       }
+      },
+      "stats": {
+       "requests": 14,
+       "cancelled": 0,
+       "prompt_tokens": 1046,
+       "cached_prompt_tokens": 205,
+       "completion_tokens": 2882,
+       "prefill_tok_s": 235.69207168824474,
+       "decode_tok_s": 90.47386203219489,
+       "steps": 2883,
+       "max_seqs_in_step": 1,
+       "kv_disk": {
+        "enabled": false,
+        "trimmable": false,
+        "saves": 0,
+        "restores": 0,
+        "restored_tokens": 0,
+        "save_ms": 0.0,
+        "restore_ms": 0.0,
+        "bytes": 0,
+        "files": 0
+       },
+       "threads": 16,
+       "kernels": "neon",
+       "device": "cpu",
+       "bytes_per_token": 2040981504,
+       "sleeping": false
+      }
+     },
+     {
+      "cold": false,
+      "idle_before_pct": 83.5,
+      "load_s": 0.129,
+      "cmd": "/Volumes/ARGUS5/PROJECTS/LLMario/.claude/worktrees/llmario-performance-optimization-3de13c/target/baseline/llmario-engine serve --model /Volumes/ARGUS5/AIPROJECTS/LLMario-models/qwen3-1.7b-gguf-q4km/Qwen3-1.7B-Q4_K_M.gguf --listen 127.0.0.1:56981 --ctx 8192 --parallel 1 --device cpu",
+      "after_load": {
+       "footprint": 78153072,
+       "footprint_peak": 78988656,
+       "resident": 1192345600,
+       "cpu_s": 0.5959244583333333,
+       "disk_read": 0,
+       "pageins": 0,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 0.596
+       }
+      },
+      "threads_os": 19,
+      "engine_model": {
+       "backend": "native",
+       "plan_hash": "81f3f85b0ce1cdcb939c404479f844af",
+       "arch": "qwen3",
+       "context": 8192,
+       "kernels": "neon",
+       "kv_type": "f16",
+       "slots": 1,
+       "device": "cpu",
+       "capabilities": {
+        "tools": true,
+        "json_schema": true,
+        "vision": false,
+        "web_tools": []
+       }
+      },
+      "plan": {
+       "planned_peak": 2364034560,
+       "ctx_per_slot": 8192,
+       "kv_dtype": "f16",
+       "slots": 1,
+       "degradations": [],
+       "fits": true
+      },
+      "requests": [
+       {
+        "ttft_s": 0.6654931660741568,
+        "total_s": 1.391203833045438,
+        "usage": {
+         "prompt_tokens": 176,
+         "completion_tokens": 64,
+         "total_tokens": 240,
+         "prompt_tokens_details": {
+          "cached_tokens": 0
+         }
+        },
+        "timings": {
+         "prompt_n": 176,
+         "prompt_ms": 647.218125,
+         "predicted_n": 64,
+         "predicted_ms": 743.0487909999999
+        },
+        "decode_tok_s": 86.13162523805251,
+        "prefill_tok_s": 271.93305193670216,
+        "idle_before_pct": 79.76,
+        "prompt_words": 40,
+        "avg_cores": 12.49,
+        "footprint_after": 125470064,
+        "resident_after": 1240121344
+       },
+       {
+        "ttft_s": 2.708436416927725,
+        "total_s": 3.6025241250172257,
+        "usage": {
+         "prompt_tokens": 804,
+         "completion_tokens": 64,
+         "total_tokens": 868,
+         "prompt_tokens_details": {
+          "cached_tokens": 160
+         }
+        },
+        "timings": {
+         "prompt_n": 644,
+         "prompt_ms": 2690.684792,
+         "predicted_n": 64,
+         "predicted_ms": 910.569292
+        },
+        "decode_tok_s": 70.28569990475805,
+        "prefill_tok_s": 239.34427470462325,
+        "idle_before_pct": 84.12,
+        "prompt_words": 700,
+        "avg_cores": 11.68,
+        "footprint_after": 231769552,
+        "resident_after": 1346355200
+       }
+      ],
+      "quality": {
+       "correct": 10,
+       "of": 12,
+       "answers": [
+        {
+         "q": "What is the capital of France? Answer with one word.",
+         "answer": "Paris",
+         "ok": true
+        },
+        {
+         "q": "What is 17 + 26? Answer with the number only.",
+         "answer": "43",
+         "ok": true
+        },
+        {
+         "q": "What is the chemical symbol for gold? Answer with the symbol only.",
+         "answer": "Au",
+         "ok": true
+        },
+        {
+         "q": "How many days are in a leap year? Answer with the number only.",
+         "answer": "366",
+         "ok": true
+        },
+        {
+         "q": "Which planet is known as the Red Planet? Answer with one word.",
+         "answer": "Mars",
+         "ok": true
+        },
+        {
+         "q": "What is the opposite of 'hot'? Answer with one word.",
+         "answer": "cold",
+         "ok": true
+        },
+        {
+         "q": "What is 9 times 8? Answer with the number only.",
+         "answer": "",
+         "ok": false
+        },
+        {
+         "q": "Who wrote the play 'Romeo and Juliet'? Answer with the surname only.",
+         "answer": "Shakespeare",
+         "ok": true
+        },
+        {
+         "q": "What is the largest ocean on Earth? Answer with one word.",
+         "answer": "Pacific",
+         "ok": true
+        },
+        {
+         "q": "What is the square root of 144? Answer with the number only.",
+         "answer": "To find the square root of 144, we are looking for a number that, when",
+         "ok": false
+        },
+        {
+         "q": "Spell the word 'cat' backwards. Answer with the three letters only.",
+         "answer": "TAC",
+         "ok": true
+        },
+        {
+         "q": "What gas do plants absorb from the air for photosynthesis? Answer briefly.",
+         "answer": "Plants absorb **carbon dioxide** (CO\u2082) from the air during photosynthesis.",
+         "ok": true
+        }
+       ]
+      },
+      "at_end": {
+       "footprint": 160875912,
+       "footprint_peak": 231785936,
+       "resident": 1275510784,
+       "cpu_s": 494.4583427083333,
+       "disk_read": 0,
+       "pageins": 0,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 494.458
+       }
+      },
+      "stats": {
+       "requests": 14,
+       "cancelled": 0,
+       "prompt_tokens": 1046,
+       "cached_prompt_tokens": 205,
+       "completion_tokens": 2882,
+       "prefill_tok_s": 235.61917723855677,
+       "decode_tok_s": 89.99972800220995,
+       "steps": 2883,
+       "max_seqs_in_step": 1,
+       "kv_disk": {
+        "enabled": false,
+        "trimmable": false,
+        "saves": 0,
+        "restores": 0,
+        "restored_tokens": 0,
+        "save_ms": 0.0,
+        "restore_ms": 0.0,
+        "bytes": 0,
+        "files": 0
+       },
+       "threads": 16,
+       "kernels": "neon",
+       "device": "cpu",
+       "bytes_per_token": 2040981504,
+       "sleeping": false
+      }
+     },
+     {
+      "cold": true,
+      "idle_before_pct": 87.31,
+      "resident_after_evict": 0.0,
+      "load_s": 0.538,
+      "cmd": "/Volumes/ARGUS5/PROJECTS/LLMario/.claude/worktrees/llmario-performance-optimization-3de13c/target/baseline/llmario-engine serve --model /Volumes/ARGUS5/AIPROJECTS/LLMario-models/qwen3-1.7b-gguf-q4km/Qwen3-1.7B-Q4_K_M.gguf --listen 127.0.0.1:57031 --ctx 8192 --parallel 1 --device cpu",
+      "after_load": {
+       "footprint": 78267808,
+       "footprint_peak": 79037856,
+       "resident": 1192427520,
+       "cpu_s": 1.33973025,
+       "disk_read": 1107410944,
+       "pageins": 67746,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 1.339
+       }
+      },
+      "threads_os": 19,
+      "engine_model": {
+       "backend": "native",
+       "plan_hash": "81f3f85b0ce1cdcb939c404479f844af",
+       "arch": "qwen3",
+       "context": 8192,
+       "kernels": "neon",
+       "kv_type": "f16",
+       "slots": 1,
+       "device": "cpu",
+       "capabilities": {
+        "tools": true,
+        "json_schema": true,
+        "vision": false,
+        "web_tools": []
+       }
+      },
+      "plan": {
+       "planned_peak": 2364034560,
+       "ctx_per_slot": 8192,
+       "kv_dtype": "f16",
+       "slots": 1,
+       "degradations": [],
+       "fits": true
+      },
+      "requests": [
+       {
+        "ttft_s": 0.6674456249456853,
+        "total_s": 1.3828259580768645,
+        "usage": {
+         "prompt_tokens": 176,
+         "completion_tokens": 64,
+         "total_tokens": 240,
+         "prompt_tokens_details": {
+          "cached_tokens": 0
+         }
+        },
+        "timings": {
+         "prompt_n": 176,
+         "prompt_ms": 649.466875,
+         "predicted_n": 64,
+         "predicted_ms": 732.0487089999999
+        },
+        "decode_tok_s": 87.42587646582409,
+        "prefill_tok_s": 270.9914959096259,
+        "idle_before_pct": 88.14,
+        "prompt_words": 40,
+        "avg_cores": 13.0,
+        "footprint_after": 127108536,
+        "resident_after": 1241710592
+       },
+       {
+        "ttft_s": 2.6656019592192024,
+        "total_s": 3.598873875103891,
+        "usage": {
+         "prompt_tokens": 804,
+         "completion_tokens": 64,
+         "total_tokens": 868,
+         "prompt_tokens_details": {
+          "cached_tokens": 160
+         }
+        },
+        "timings": {
+         "prompt_n": 644,
+         "prompt_ms": 2646.357042,
+         "predicted_n": 64,
+         "predicted_ms": 951.266791
+        },
+        "decode_tok_s": 67.2787073043108,
+        "prefill_tok_s": 243.3534061274261,
+        "idle_before_pct": 85.75,
+        "prompt_words": 700,
+        "avg_cores": 11.67,
+        "footprint_after": 234718720,
+        "resident_after": 1349271552
+       }
+      ],
+      "quality": {
+       "correct": 10,
+       "of": 12,
+       "answers": [
+        {
+         "q": "What is the capital of France? Answer with one word.",
+         "answer": "Paris",
+         "ok": true
+        },
+        {
+         "q": "What is 17 + 26? Answer with the number only.",
+         "answer": "43",
+         "ok": true
+        },
+        {
+         "q": "What is the chemical symbol for gold? Answer with the symbol only.",
+         "answer": "Au",
+         "ok": true
+        },
+        {
+         "q": "How many days are in a leap year? Answer with the number only.",
+         "answer": "366",
+         "ok": true
+        },
+        {
+         "q": "Which planet is known as the Red Planet? Answer with one word.",
+         "answer": "Mars",
+         "ok": true
+        },
+        {
+         "q": "What is the opposite of 'hot'? Answer with one word.",
+         "answer": "cold",
+         "ok": true
+        },
+        {
+         "q": "What is 9 times 8? Answer with the number only.",
+         "answer": "",
+         "ok": false
+        },
+        {
+         "q": "Who wrote the play 'Romeo and Juliet'? Answer with the surname only.",
+         "answer": "Shakespeare",
+         "ok": true
+        },
+        {
+         "q": "What is the largest ocean on Earth? Answer with one word.",
+         "answer": "Pacific",
+         "ok": true
+        },
+        {
+         "q": "What is the square root of 144? Answer with the number only.",
+         "answer": "To find the square root of 144, we are looking for a number that, when",
+         "ok": false
+        },
+        {
+         "q": "Spell the word 'cat' backwards. Answer with the three letters only.",
+         "answer": "TAC",
+         "ok": true
+        },
+        {
+         "q": "What gas do plants absorb from the air for photosynthesis? Answer briefly.",
+         "answer": "Plants absorb **carbon dioxide** (CO\u2082) from the air during photosynthesis.",
+         "ok": true
+        }
+       ]
+      },
+      "at_end": {
+       "footprint": 163104208,
+       "footprint_peak": 234735104,
+       "resident": 1277689856,
+       "cpu_s": 505.8520127916666,
+       "disk_read": 1107410944,
+       "pageins": 67746,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 505.852
+       }
+      },
+      "stats": {
+       "requests": 14,
+       "cancelled": 0,
+       "prompt_tokens": 1046,
+       "cached_prompt_tokens": 205,
+       "completion_tokens": 2882,
+       "prefill_tok_s": 237.17901187958472,
+       "decode_tok_s": 85.92627495793802,
+       "steps": 2883,
+       "max_seqs_in_step": 1,
+       "kv_disk": {
+        "enabled": false,
+        "trimmable": false,
+        "saves": 0,
+        "restores": 0,
+        "restored_tokens": 0,
+        "save_ms": 0.0,
+        "restore_ms": 0.0,
+        "bytes": 0,
+        "files": 0
+       },
+       "threads": 16,
+       "kernels": "neon",
+       "device": "cpu",
+       "bytes_per_token": 2040981504,
+       "sleeping": false
+      }
+     },
+     {
+      "cold": false,
+      "idle_before_pct": 89.56,
+      "load_s": 0.128,
+      "cmd": "/Volumes/ARGUS5/PROJECTS/LLMario/.claude/worktrees/llmario-performance-optimization-3de13c/target/baseline/llmario-engine serve --model /Volumes/ARGUS5/AIPROJECTS/LLMario-models/qwen3-1.7b-gguf-q4km/Qwen3-1.7B-Q4_K_M.gguf --listen 127.0.0.1:57109 --ctx 8192 --parallel 1 --device cpu",
+      "after_load": {
+       "footprint": 78333320,
+       "footprint_peak": 79054264,
+       "resident": 1192509440,
+       "cpu_s": 0.5483977916666666,
+       "disk_read": 0,
+       "pageins": 0,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 0.548
+       }
+      },
+      "threads_os": 19,
+      "engine_model": {
+       "backend": "native",
+       "plan_hash": "81f3f85b0ce1cdcb939c404479f844af",
+       "arch": "qwen3",
+       "context": 8192,
+       "kernels": "neon",
+       "kv_type": "f16",
+       "slots": 1,
+       "device": "cpu",
+       "capabilities": {
+        "tools": true,
+        "json_schema": true,
+        "vision": false,
+        "web_tools": []
+       }
+      },
+      "plan": {
+       "planned_peak": 2364034560,
+       "ctx_per_slot": 8192,
+       "kv_dtype": "f16",
+       "slots": 1,
+       "degradations": [],
+       "fits": true
+      },
+      "requests": [
+       {
+        "ttft_s": 0.6596232501324266,
+        "total_s": 1.316353667061776,
+        "usage": {
+         "prompt_tokens": 176,
+         "completion_tokens": 64,
+         "total_tokens": 240,
+         "prompt_tokens_details": {
+          "cached_tokens": 0
+         }
+        },
+        "timings": {
+         "prompt_n": 176,
+         "prompt_ms": 637.258541,
+         "predicted_n": 64,
+         "predicted_ms": 678.175458
+        },
+        "decode_tok_s": 94.3708582270755,
+        "prefill_tok_s": 276.1830382435,
+        "idle_before_pct": 90.13,
+        "prompt_words": 40,
+        "avg_cores": 13.06,
+        "footprint_after": 125486496,
+        "resident_after": 1240104960
+       },
+       {
+        "ttft_s": 2.709672291064635,
+        "total_s": 3.569016791181639,
+        "usage": {
+         "prompt_tokens": 804,
+         "completion_tokens": 64,
+         "total_tokens": 868,
+         "prompt_tokens_details": {
+          "cached_tokens": 160
+         }
+        },
+        "timings": {
+         "prompt_n": 644,
+         "prompt_ms": 2693.827792,
+         "predicted_n": 64,
+         "predicted_ms": 873.993625
+        },
+        "decode_tok_s": 73.22707874442447,
+        "prefill_tok_s": 239.06502186684693,
+        "idle_before_pct": 89.27,
+        "prompt_words": 700,
+        "avg_cores": 11.04,
+        "footprint_after": 232490424,
+        "resident_after": 1347092480
+       }
+      ],
+      "quality": {
+       "correct": 10,
+       "of": 12,
+       "answers": [
+        {
+         "q": "What is the capital of France? Answer with one word.",
+         "answer": "Paris",
+         "ok": true
+        },
+        {
+         "q": "What is 17 + 26? Answer with the number only.",
+         "answer": "43",
+         "ok": true
+        },
+        {
+         "q": "What is the chemical symbol for gold? Answer with the symbol only.",
+         "answer": "Au",
+         "ok": true
+        },
+        {
+         "q": "How many days are in a leap year? Answer with the number only.",
+         "answer": "366",
+         "ok": true
+        },
+        {
+         "q": "Which planet is known as the Red Planet? Answer with one word.",
+         "answer": "Mars",
+         "ok": true
+        },
+        {
+         "q": "What is the opposite of 'hot'? Answer with one word.",
+         "answer": "cold",
+         "ok": true
+        },
+        {
+         "q": "What is 9 times 8? Answer with the number only.",
+         "answer": "",
+         "ok": false
+        },
+        {
+         "q": "Who wrote the play 'Romeo and Juliet'? Answer with the surname only.",
+         "answer": "Shakespeare",
+         "ok": true
+        },
+        {
+         "q": "What is the largest ocean on Earth? Answer with one word.",
+         "answer": "Pacific",
+         "ok": true
+        },
+        {
+         "q": "What is the square root of 144? Answer with the number only.",
+         "answer": "To find the square root of 144, we are looking for a number that, when",
+         "ok": false
+        },
+        {
+         "q": "Spell the word 'cat' backwards. Answer with the three letters only.",
+         "answer": "TAC",
+         "ok": true
+        },
+        {
+         "q": "What gas do plants absorb from the air for photosynthesis? Answer briefly.",
+         "answer": "Plants absorb **carbon dioxide** (CO\u2082) from the air during photosynthesis.",
+         "ok": true
+        }
+       ]
+      },
+      "at_end": {
+       "footprint": 162301344,
+       "footprint_peak": 232621496,
+       "resident": 1276919808,
+       "cpu_s": 480.97953149999995,
+       "disk_read": 0,
+       "pageins": 0,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 480.979
+       }
+      },
+      "stats": {
+       "requests": 14,
+       "cancelled": 0,
+       "prompt_tokens": 1046,
+       "cached_prompt_tokens": 205,
+       "completion_tokens": 2882,
+       "prefill_tok_s": 236.68960398616068,
+       "decode_tok_s": 91.59525208605643,
+       "steps": 2883,
+       "max_seqs_in_step": 1,
+       "kv_disk": {
+        "enabled": false,
+        "trimmable": false,
+        "saves": 0,
+        "restores": 0,
+        "restored_tokens": 0,
+        "save_ms": 0.0,
+        "restore_ms": 0.0,
+        "bytes": 0,
+        "files": 0
+       },
+       "threads": 16,
+       "kernels": "neon",
+       "device": "cpu",
+       "bytes_per_token": 2040981504,
+       "sleeping": false
+      }
+     },
+     {
+      "cold": true,
+      "idle_before_pct": 88.44,
+      "resident_after_evict": 0.0,
+      "load_s": 0.544,
+      "cmd": "/Volumes/ARGUS5/PROJECTS/LLMario/.claude/worktrees/llmario-performance-optimization-3de13c/target/baseline/llmario-engine serve --model /Volumes/ARGUS5/AIPROJECTS/LLMario-models/qwen3-1.7b-gguf-q4km/Qwen3-1.7B-Q4_K_M.gguf --listen 127.0.0.1:57160 --ctx 8192 --parallel 1 --device cpu",
+      "after_load": {
+       "footprint": 78103944,
+       "footprint_peak": 78939552,
+       "resident": 1192280064,
+       "cpu_s": 1.4245167499999998,
+       "disk_read": 1107410944,
+       "pageins": 67860,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 1.424
+       }
+      },
+      "threads_os": 19,
+      "engine_model": {
+       "backend": "native",
+       "plan_hash": "81f3f85b0ce1cdcb939c404479f844af",
+       "arch": "qwen3",
+       "context": 8192,
+       "kernels": "neon",
+       "kv_type": "f16",
+       "slots": 1,
+       "device": "cpu",
+       "capabilities": {
+        "tools": true,
+        "json_schema": true,
+        "vision": false,
+        "web_tools": []
+       }
+      },
+      "plan": {
+       "planned_peak": 2364034560,
+       "ctx_per_slot": 8192,
+       "kv_dtype": "f16",
+       "slots": 1,
+       "degradations": [],
+       "fits": true
+      },
+      "requests": [
+       {
+        "ttft_s": 0.6688855409156531,
+        "total_s": 1.322230540914461,
+        "usage": {
+         "prompt_tokens": 176,
+         "completion_tokens": 64,
+         "total_tokens": 240,
+         "prompt_tokens_details": {
+          "cached_tokens": 0
+         }
+        },
+        "timings": {
+         "prompt_n": 176,
+         "prompt_ms": 648.329834,
+         "predicted_n": 64,
+         "predicted_ms": 672.9472499999999
+        },
+        "decode_tok_s": 95.10403675771022,
+        "prefill_tok_s": 271.46676085247066,
+        "idle_before_pct": 75.12,
+        "prompt_words": 40,
+        "avg_cores": 12.96,
+        "footprint_after": 125322656,
+        "resident_after": 1239941120
+       },
+       {
+        "ttft_s": 2.683344417018816,
+        "total_s": 3.5400402499362826,
+        "usage": {
+         "prompt_tokens": 804,
+         "completion_tokens": 64,
+         "total_tokens": 868,
+         "prompt_tokens_details": {
+          "cached_tokens": 160
+         }
+        },
+        "timings": {
+         "prompt_n": 644,
+         "prompt_ms": 2666.412416,
+         "predicted_n": 64,
+         "predicted_ms": 872.427417
+        },
+        "decode_tok_s": 73.35853820375752,
+        "prefill_tok_s": 241.52302777155984,
+        "idle_before_pct": 90.42,
+        "prompt_words": 700,
+        "avg_cores": 11.69,
+        "footprint_after": 235177448,
+        "resident_after": 1349746688
+       }
+      ],
+      "quality": {
+       "correct": 10,
+       "of": 12,
+       "answers": [
+        {
+         "q": "What is the capital of France? Answer with one word.",
+         "answer": "Paris",
+         "ok": true
+        },
+        {
+         "q": "What is 17 + 26? Answer with the number only.",
+         "answer": "43",
+         "ok": true
+        },
+        {
+         "q": "What is the chemical symbol for gold? Answer with the symbol only.",
+         "answer": "Au",
+         "ok": true
+        },
+        {
+         "q": "How many days are in a leap year? Answer with the number only.",
+         "answer": "366",
+         "ok": true
+        },
+        {
+         "q": "Which planet is known as the Red Planet? Answer with one word.",
+         "answer": "Mars",
+         "ok": true
+        },
+        {
+         "q": "What is the opposite of 'hot'? Answer with one word.",
+         "answer": "cold",
+         "ok": true
+        },
+        {
+         "q": "What is 9 times 8? Answer with the number only.",
+         "answer": "",
+         "ok": false
+        },
+        {
+         "q": "Who wrote the play 'Romeo and Juliet'? Answer with the surname only.",
+         "answer": "Shakespeare",
+         "ok": true
+        },
+        {
+         "q": "What is the largest ocean on Earth? Answer with one word.",
+         "answer": "Pacific",
+         "ok": true
+        },
+        {
+         "q": "What is the square root of 144? Answer with the number only.",
+         "answer": "To find the square root of 144, we are looking for a number that, when",
+         "ok": false
+        },
+        {
+         "q": "Spell the word 'cat' backwards. Answer with the three letters only.",
+         "answer": "TAC",
+         "ok": true
+        },
+        {
+         "q": "What gas do plants absorb from the air for photosynthesis? Answer briefly.",
+         "answer": "Plants absorb **carbon dioxide** (CO\u2082) from the air during photosynthesis.",
+         "ok": true
+        }
+       ]
+      },
+      "at_end": {
+       "footprint": 163530192,
+       "footprint_peak": 235193832,
+       "resident": 1278115840,
+       "cpu_s": 476.2281329583333,
+       "disk_read": 1107410944,
+       "pageins": 67860,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 476.228
+       }
+      },
+      "stats": {
+       "requests": 14,
+       "cancelled": 0,
+       "prompt_tokens": 1046,
+       "cached_prompt_tokens": 205,
+       "completion_tokens": 2882,
+       "prefill_tok_s": 241.26659889981508,
+       "decode_tok_s": 97.48240031705795,
+       "steps": 2883,
+       "max_seqs_in_step": 1,
+       "kv_disk": {
+        "enabled": false,
+        "trimmable": false,
+        "saves": 0,
+        "restores": 0,
+        "restored_tokens": 0,
+        "save_ms": 0.0,
+        "restore_ms": 0.0,
+        "bytes": 0,
+        "files": 0
+       },
+       "threads": 16,
+       "kernels": "neon",
+       "device": "cpu",
+       "bytes_per_token": 2040981504,
+       "sleeping": false
+      }
+     },
+     {
+      "cold": false,
+      "idle_before_pct": 86.84,
+      "load_s": 0.122,
+      "cmd": "/Volumes/ARGUS5/PROJECTS/LLMario/.claude/worktrees/llmario-performance-optimization-3de13c/target/baseline/llmario-engine serve --model /Volumes/ARGUS5/AIPROJECTS/LLMario-models/qwen3-1.7b-gguf-q4km/Qwen3-1.7B-Q4_K_M.gguf --listen 127.0.0.1:57242 --ctx 8192 --parallel 1 --device cpu",
+      "after_load": {
+       "footprint": 78185864,
+       "footprint_peak": 79005064,
+       "resident": 1192361984,
+       "cpu_s": 0.5536885416666666,
+       "disk_read": 0,
+       "pageins": 0,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 0.553
+       }
+      },
+      "threads_os": 19,
+      "engine_model": {
+       "backend": "native",
+       "plan_hash": "81f3f85b0ce1cdcb939c404479f844af",
+       "arch": "qwen3",
+       "context": 8192,
+       "kernels": "neon",
+       "kv_type": "f16",
+       "slots": 1,
+       "device": "cpu",
+       "capabilities": {
+        "tools": true,
+        "json_schema": true,
+        "vision": false,
+        "web_tools": []
+       }
+      },
+      "plan": {
+       "planned_peak": 2364034560,
+       "ctx_per_slot": 8192,
+       "kv_dtype": "f16",
+       "slots": 1,
+       "degradations": [],
+       "fits": true
+      },
+      "requests": [
+       {
+        "ttft_s": 0.6563286671880633,
+        "total_s": 1.3107650422025472,
+        "usage": {
+         "prompt_tokens": 176,
+         "completion_tokens": 64,
+         "total_tokens": 240,
+         "prompt_tokens_details": {
+          "cached_tokens": 0
+         }
+        },
+        "timings": {
+         "prompt_n": 176,
+         "prompt_ms": 644.543125,
+         "predicted_n": 64,
+         "predicted_ms": 665.001
+        },
+        "decode_tok_s": 96.24045678126801,
+        "prefill_tok_s": 273.0616357128935,
+        "idle_before_pct": 89.99,
+        "prompt_words": 40,
+        "avg_cores": 13.1,
+        "footprint_after": 125470112,
+        "resident_after": 1240088576
+       },
+       {
+        "ttft_s": 2.6719562080688775,
+        "total_s": 3.528985582990572,
+        "usage": {
+         "prompt_tokens": 804,
+         "completion_tokens": 64,
+         "total_tokens": 868,
+         "prompt_tokens_details": {
+          "cached_tokens": 160
+         }
+        },
+        "timings": {
+         "prompt_n": 644,
+         "prompt_ms": 2647.625084,
+         "predicted_n": 64,
+         "predicted_ms": 880.1660420000001
+        },
+        "decode_tok_s": 72.71355283665896,
+        "prefill_tok_s": 243.23685550941093,
+        "idle_before_pct": 89.8,
+        "prompt_words": 700,
+        "avg_cores": 11.77,
+        "footprint_after": 232506832,
+        "resident_after": 1347092480
+       }
+      ],
+      "quality": {
+       "correct": 10,
+       "of": 12,
+       "answers": [
+        {
+         "q": "What is the capital of France? Answer with one word.",
+         "answer": "Paris",
+         "ok": true
+        },
+        {
+         "q": "What is 17 + 26? Answer with the number only.",
+         "answer": "43",
+         "ok": true
+        },
+        {
+         "q": "What is the chemical symbol for gold? Answer with the symbol only.",
+         "answer": "Au",
+         "ok": true
+        },
+        {
+         "q": "How many days are in a leap year? Answer with the number only.",
+         "answer": "366",
+         "ok": true
+        },
+        {
+         "q": "Which planet is known as the Red Planet? Answer with one word.",
+         "answer": "Mars",
+         "ok": true
+        },
+        {
+         "q": "What is the opposite of 'hot'? Answer with one word.",
+         "answer": "cold",
+         "ok": true
+        },
+        {
+         "q": "What is 9 times 8? Answer with the number only.",
+         "answer": "",
+         "ok": false
+        },
+        {
+         "q": "Who wrote the play 'Romeo and Juliet'? Answer with the surname only.",
+         "answer": "Shakespeare",
+         "ok": true
+        },
+        {
+         "q": "What is the largest ocean on Earth? Answer with one word.",
+         "answer": "Pacific",
+         "ok": true
+        },
+        {
+         "q": "What is the square root of 144? Answer with the number only.",
+         "answer": "To find the square root of 144, we are looking for a number that, when",
+         "ok": false
+        },
+        {
+         "q": "Spell the word 'cat' backwards. Answer with the three letters only.",
+         "answer": "TAC",
+         "ok": true
+        },
+        {
+         "q": "What gas do plants absorb from the air for photosynthesis? Answer briefly.",
+         "answer": "Plants absorb **carbon dioxide** (CO\u2082) from the air during photosynthesis.",
+         "ok": true
+        }
+       ]
+      },
+      "at_end": {
+       "footprint": 162039200,
+       "footprint_peak": 232506832,
+       "resident": 1276657664,
+       "cpu_s": 475.9899665,
+       "disk_read": 0,
+       "pageins": 0,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 475.99
+       }
+      },
+      "stats": {
+       "requests": 14,
+       "cancelled": 0,
+       "prompt_tokens": 1046,
+       "cached_prompt_tokens": 205,
+       "completion_tokens": 2882,
+       "prefill_tok_s": 242.6197552323873,
+       "decode_tok_s": 97.18626540226954,
+       "steps": 2883,
+       "max_seqs_in_step": 1,
+       "kv_disk": {
+        "enabled": false,
+        "trimmable": false,
+        "saves": 0,
+        "restores": 0,
+        "restored_tokens": 0,
+        "save_ms": 0.0,
+        "restore_ms": 0.0,
+        "bytes": 0,
+        "files": 0
+       },
+       "threads": 16,
+       "kernels": "neon",
+       "device": "cpu",
+       "bytes_per_token": 2040981504,
+       "sleeping": false
+      }
+     }
+    ],
+    "new": [
+     {
+      "cold": true,
+      "idle_before_pct": 76.78,
+      "resident_after_evict": 0.0,
+      "load_s": 0.379,
+      "cmd": "/Volumes/ARGUS5/PROJECTS/LLMario/.claude/worktrees/llmario-performance-optimization-3de13c/target/release/llmario-engine serve --model /Volumes/ARGUS5/AIPROJECTS/LLMario-models/qwen3-1.7b-gguf-q4km/Qwen3-1.7B-Q4_K_M.gguf --listen 127.0.0.1:56945 --ctx 8192 --parallel 1 --device cpu",
+      "after_load": {
+       "footprint": 77104520,
+       "footprint_peak": 77890976,
+       "resident": 1191329792,
+       "cpu_s": 0.8395104583333333,
+       "disk_read": 1109114880,
+       "pageins": 67699,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 0.839
+       }
+      },
+      "threads_os": 19,
+      "engine_model": {
+       "backend": "native",
+       "plan_hash": "81f3f85b0ce1cdcb939c404479f844af",
+       "arch": "qwen3",
+       "context": 8192,
+       "kernels": "neon",
+       "kv_type": "f16",
+       "slots": 1,
+       "device": "cpu",
+       "capabilities": {
+        "tools": true,
+        "json_schema": true,
+        "vision": false,
+        "web_tools": []
+       }
+      },
+      "plan": {
+       "planned_peak": 2364034560,
+       "ctx_per_slot": 8192,
+       "kv_dtype": "f16",
+       "slots": 1,
+       "degradations": [],
+       "fits": true
+      },
+      "requests": [
+       {
+        "ttft_s": 0.6670577079057693,
+        "total_s": 1.3452372078318149,
+        "usage": {
+         "prompt_tokens": 176,
+         "completion_tokens": 64,
+         "total_tokens": 240,
+         "prompt_tokens_details": {
+          "cached_tokens": 0
+         }
+        },
+        "timings": {
+         "prompt_n": 176,
+         "prompt_ms": 648.283708,
+         "predicted_n": 64,
+         "predicted_ms": 695.303583
+        },
+        "decode_tok_s": 92.04612426109128,
+        "prefill_tok_s": 271.48607596968947,
+        "idle_before_pct": 88.5,
+        "prompt_words": 40,
+        "avg_cores": 12.97,
+        "footprint_after": 125683104,
+        "resident_after": 1240367104
+       },
+       {
+        "ttft_s": 2.696718458086252,
+        "total_s": 3.5881116250529885,
+        "usage": {
+         "prompt_tokens": 804,
+         "completion_tokens": 64,
+         "total_tokens": 868,
+         "prompt_tokens_details": {
+          "cached_tokens": 160
+         }
+        },
+        "timings": {
+         "prompt_n": 644,
+         "prompt_ms": 2680.671875,
+         "predicted_n": 64,
+         "predicted_ms": 906.205292
+        },
+        "decode_tok_s": 70.62417375510095,
+        "prefill_tok_s": 240.23827981557795,
+        "idle_before_pct": 88.13,
+        "prompt_words": 700,
+        "avg_cores": 11.66,
+        "footprint_after": 232867280,
+        "resident_after": 1347518464
+       }
+      ],
+      "quality": {
+       "correct": 10,
+       "of": 12,
+       "answers": [
+        {
+         "q": "What is the capital of France? Answer with one word.",
+         "answer": "Paris",
+         "ok": true
+        },
+        {
+         "q": "What is 17 + 26? Answer with the number only.",
+         "answer": "43",
+         "ok": true
+        },
+        {
+         "q": "What is the chemical symbol for gold? Answer with the symbol only.",
+         "answer": "Au",
+         "ok": true
+        },
+        {
+         "q": "How many days are in a leap year? Answer with the number only.",
+         "answer": "366",
+         "ok": true
+        },
+        {
+         "q": "Which planet is known as the Red Planet? Answer with one word.",
+         "answer": "Mars",
+         "ok": true
+        },
+        {
+         "q": "What is the opposite of 'hot'? Answer with one word.",
+         "answer": "cold",
+         "ok": true
+        },
+        {
+         "q": "What is 9 times 8? Answer with the number only.",
+         "answer": "",
+         "ok": false
+        },
+        {
+         "q": "Who wrote the play 'Romeo and Juliet'? Answer with the surname only.",
+         "answer": "Shakespeare",
+         "ok": true
+        },
+        {
+         "q": "What is the largest ocean on Earth? Answer with one word.",
+         "answer": "Pacific",
+         "ok": true
+        },
+        {
+         "q": "What is the square root of 144? Answer with the number only.",
+         "answer": "To find the square root of 144, we are looking for a number that, when",
+         "ok": false
+        },
+        {
+         "q": "Spell the word 'cat' backwards. Answer with the three letters only.",
+         "answer": "TAC",
+         "ok": true
+        },
+        {
+         "q": "What gas do plants absorb from the air for photosynthesis? Answer briefly.",
+         "answer": "Plants absorb **carbon dioxide** (CO\u2082) from the air during photosynthesis.",
+         "ok": true
+        }
+       ]
+      },
+      "at_end": {
+       "footprint": 162301344,
+       "footprint_peak": 232883664,
+       "resident": 1276985344,
+       "cpu_s": 493.12344924999996,
+       "disk_read": 1109377024,
+       "pageins": 67728,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 493.123
+       }
+      },
+      "stats": {
+       "requests": 14,
+       "cancelled": 0,
+       "prompt_tokens": 1046,
+       "cached_prompt_tokens": 205,
+       "completion_tokens": 2882,
+       "prefill_tok_s": 239.63751046409493,
+       "decode_tok_s": 92.38150381253209,
+       "steps": 2883,
+       "max_seqs_in_step": 1,
+       "kv_disk": {
+        "enabled": false,
+        "trimmable": false,
+        "saves": 0,
+        "restores": 0,
+        "restored_tokens": 0,
+        "save_ms": 0.0,
+        "restore_ms": 0.0,
+        "bytes": 0,
+        "files": 0
+       },
+       "memory_pressure": {
+        "relief": true,
+        "level": "unknown",
+        "sheds": 0,
+        "released_bytes": 0
+       },
+       "paging": {
+        "bytes": 0,
+        "tokens": 3928,
+        "bytes_per_token_last": 0,
+        "model_does_not_fit_memory": false
+       },
+       "threads": 16,
+       "kernels": "neon",
+       "device": "cpu",
+       "bytes_per_token": 2040981504,
+       "sleeping": false
+      }
+     },
+     {
+      "cold": false,
+      "idle_before_pct": 83.71,
+      "load_s": 0.141,
+      "cmd": "/Volumes/ARGUS5/PROJECTS/LLMario/.claude/worktrees/llmario-performance-optimization-3de13c/target/release/llmario-engine serve --model /Volumes/ARGUS5/AIPROJECTS/LLMario-models/qwen3-1.7b-gguf-q4km/Qwen3-1.7B-Q4_K_M.gguf --listen 127.0.0.1:57006 --ctx 8192 --parallel 1 --device cpu",
+      "after_load": {
+       "footprint": 78349728,
+       "footprint_peak": 79103392,
+       "resident": 1192558592,
+       "cpu_s": 0.5797956666666666,
+       "disk_read": 0,
+       "pageins": 0,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 0.579
+       }
+      },
+      "threads_os": 19,
+      "engine_model": {
+       "backend": "native",
+       "plan_hash": "81f3f85b0ce1cdcb939c404479f844af",
+       "arch": "qwen3",
+       "context": 8192,
+       "kernels": "neon",
+       "kv_type": "f16",
+       "slots": 1,
+       "device": "cpu",
+       "capabilities": {
+        "tools": true,
+        "json_schema": true,
+        "vision": false,
+        "web_tools": []
+       }
+      },
+      "plan": {
+       "planned_peak": 2364034560,
+       "ctx_per_slot": 8192,
+       "kv_dtype": "f16",
+       "slots": 1,
+       "degradations": [],
+       "fits": true
+      },
+      "requests": [
+       {
+        "ttft_s": 0.6659639999270439,
+        "total_s": 1.4003357500769198,
+        "usage": {
+         "prompt_tokens": 176,
+         "completion_tokens": 64,
+         "total_tokens": 240,
+         "prompt_tokens_details": {
+          "cached_tokens": 0
+         }
+        },
+        "timings": {
+         "prompt_n": 176,
+         "prompt_ms": 646.843167,
+         "predicted_n": 64,
+         "predicted_ms": 752.706
+        },
+        "decode_tok_s": 85.02655751382346,
+        "prefill_tok_s": 272.0906843868693,
+        "idle_before_pct": 83.27,
+        "prompt_words": 40,
+        "avg_cores": 12.75,
+        "footprint_after": 125568464,
+        "resident_after": 1240219648
+       },
+       {
+        "ttft_s": 2.693910792004317,
+        "total_s": 3.6515579998958856,
+        "usage": {
+         "prompt_tokens": 804,
+         "completion_tokens": 64,
+         "total_tokens": 868,
+         "prompt_tokens_details": {
+          "cached_tokens": 160
+         }
+        },
+        "timings": {
+         "prompt_n": 644,
+         "prompt_ms": 2675.629791,
+         "predicted_n": 64,
+         "predicted_ms": 974.654625
+        },
+        "decode_tok_s": 65.66428595154925,
+        "prefill_tok_s": 240.69099625300143,
+        "idle_before_pct": 88.72,
+        "prompt_words": 700,
+        "avg_cores": 11.58,
+        "footprint_after": 231736832,
+        "resident_after": 1346355200
+       }
+      ],
+      "quality": {
+       "correct": 10,
+       "of": 12,
+       "answers": [
+        {
+         "q": "What is the capital of France? Answer with one word.",
+         "answer": "Paris",
+         "ok": true
+        },
+        {
+         "q": "What is 17 + 26? Answer with the number only.",
+         "answer": "43",
+         "ok": true
+        },
+        {
+         "q": "What is the chemical symbol for gold? Answer with the symbol only.",
+         "answer": "Au",
+         "ok": true
+        },
+        {
+         "q": "How many days are in a leap year? Answer with the number only.",
+         "answer": "366",
+         "ok": true
+        },
+        {
+         "q": "Which planet is known as the Red Planet? Answer with one word.",
+         "answer": "Mars",
+         "ok": true
+        },
+        {
+         "q": "What is the opposite of 'hot'? Answer with one word.",
+         "answer": "cold",
+         "ok": true
+        },
+        {
+         "q": "What is 9 times 8? Answer with the number only.",
+         "answer": "",
+         "ok": false
+        },
+        {
+         "q": "Who wrote the play 'Romeo and Juliet'? Answer with the surname only.",
+         "answer": "Shakespeare",
+         "ok": true
+        },
+        {
+         "q": "What is the largest ocean on Earth? Answer with one word.",
+         "answer": "Pacific",
+         "ok": true
+        },
+        {
+         "q": "What is the square root of 144? Answer with the number only.",
+         "answer": "To find the square root of 144, we are looking for a number that, when",
+         "ok": false
+        },
+        {
+         "q": "Spell the word 'cat' backwards. Answer with the three letters only.",
+         "answer": "TAC",
+         "ok": true
+        },
+        {
+         "q": "What gas do plants absorb from the air for photosynthesis? Answer briefly.",
+         "answer": "Plants absorb **carbon dioxide** (CO\u2082) from the air during photosynthesis.",
+         "ok": true
+        }
+       ]
+      },
+      "at_end": {
+       "footprint": 160744912,
+       "footprint_peak": 231736832,
+       "resident": 1275396096,
+       "cpu_s": 517.781515875,
+       "disk_read": 0,
+       "pageins": 0,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 517.781
+       }
+      },
+      "stats": {
+       "requests": 14,
+       "cancelled": 0,
+       "prompt_tokens": 1046,
+       "cached_prompt_tokens": 205,
+       "completion_tokens": 2882,
+       "prefill_tok_s": 232.62320245201758,
+       "decode_tok_s": 85.07413301503053,
+       "steps": 2883,
+       "max_seqs_in_step": 1,
+       "kv_disk": {
+        "enabled": false,
+        "trimmable": false,
+        "saves": 0,
+        "restores": 0,
+        "restored_tokens": 0,
+        "save_ms": 0.0,
+        "restore_ms": 0.0,
+        "bytes": 0,
+        "files": 0
+       },
+       "memory_pressure": {
+        "relief": true,
+        "level": "unknown",
+        "sheds": 0,
+        "released_bytes": 0
+       },
+       "paging": {
+        "bytes": 0,
+        "tokens": 3928,
+        "bytes_per_token_last": 0,
+        "model_does_not_fit_memory": false
+       },
+       "threads": 16,
+       "kernels": "neon",
+       "device": "cpu",
+       "bytes_per_token": 2040981504,
+       "sleeping": false
+      }
+     },
+     {
+      "cold": true,
+      "idle_before_pct": 82.21,
+      "resident_after_evict": 0.0,
+      "load_s": 0.349,
+      "cmd": "/Volumes/ARGUS5/PROJECTS/LLMario/.claude/worktrees/llmario-performance-optimization-3de13c/target/release/llmario-engine serve --model /Volumes/ARGUS5/AIPROJECTS/LLMario-models/qwen3-1.7b-gguf-q4km/Qwen3-1.7B-Q4_K_M.gguf --listen 127.0.0.1:57073 --ctx 8192 --parallel 1 --device cpu",
+      "after_load": {
+       "footprint": 78710152,
+       "footprint_peak": 79463840,
+       "resident": 1192935424,
+       "cpu_s": 0.9111537916666665,
+       "disk_read": 1107410944,
+       "pageins": 67596,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 0.911
+       }
+      },
+      "threads_os": 19,
+      "engine_model": {
+       "backend": "native",
+       "plan_hash": "81f3f85b0ce1cdcb939c404479f844af",
+       "arch": "qwen3",
+       "context": 8192,
+       "kernels": "neon",
+       "kv_type": "f16",
+       "slots": 1,
+       "device": "cpu",
+       "capabilities": {
+        "tools": true,
+        "json_schema": true,
+        "vision": false,
+        "web_tools": []
+       }
+      },
+      "plan": {
+       "planned_peak": 2364034560,
+       "ctx_per_slot": 8192,
+       "kv_dtype": "f16",
+       "slots": 1,
+       "degradations": [],
+       "fits": true
+      },
+      "requests": [
+       {
+        "ttft_s": 0.6501649590209126,
+        "total_s": 1.4147105000447482,
+        "usage": {
+         "prompt_tokens": 176,
+         "completion_tokens": 64,
+         "total_tokens": 240,
+         "prompt_tokens_details": {
+          "cached_tokens": 0
+         }
+        },
+        "timings": {
+         "prompt_n": 176,
+         "prompt_ms": 635.988459,
+         "predicted_n": 64,
+         "predicted_ms": 777.7971670000001
+        },
+        "decode_tok_s": 82.28366303627845,
+        "prefill_tok_s": 276.7345814367993,
+        "idle_before_pct": 86.8,
+        "prompt_words": 40,
+        "avg_cores": 12.87,
+        "footprint_after": 125715896,
+        "resident_after": 1240383488
+       },
+       {
+        "ttft_s": 2.783322958042845,
+        "total_s": 3.7852527080103755,
+        "usage": {
+         "prompt_tokens": 804,
+         "completion_tokens": 64,
+         "total_tokens": 868,
+         "prompt_tokens_details": {
+          "cached_tokens": 160
+         }
+        },
+        "timings": {
+         "prompt_n": 644,
+         "prompt_ms": 2765.723541,
+         "predicted_n": 64,
+         "predicted_ms": 1018.2017500000001
+        },
+        "decode_tok_s": 62.85591239653635,
+        "prefill_tok_s": 232.8504604502696,
+        "idle_before_pct": 77.15,
+        "prompt_words": 700,
+        "avg_cores": 11.14,
+        "footprint_after": 232736256,
+        "resident_after": 1347354624
+       }
+      ],
+      "quality": {
+       "correct": 10,
+       "of": 12,
+       "answers": [
+        {
+         "q": "What is the capital of France? Answer with one word.",
+         "answer": "Paris",
+         "ok": true
+        },
+        {
+         "q": "What is 17 + 26? Answer with the number only.",
+         "answer": "43",
+         "ok": true
+        },
+        {
+         "q": "What is the chemical symbol for gold? Answer with the symbol only.",
+         "answer": "Au",
+         "ok": true
+        },
+        {
+         "q": "How many days are in a leap year? Answer with the number only.",
+         "answer": "366",
+         "ok": true
+        },
+        {
+         "q": "Which planet is known as the Red Planet? Answer with one word.",
+         "answer": "Mars",
+         "ok": true
+        },
+        {
+         "q": "What is the opposite of 'hot'? Answer with one word.",
+         "answer": "cold",
+         "ok": true
+        },
+        {
+         "q": "What is 9 times 8? Answer with the number only.",
+         "answer": "",
+         "ok": false
+        },
+        {
+         "q": "Who wrote the play 'Romeo and Juliet'? Answer with the surname only.",
+         "answer": "Shakespeare",
+         "ok": true
+        },
+        {
+         "q": "What is the largest ocean on Earth? Answer with one word.",
+         "answer": "Pacific",
+         "ok": true
+        },
+        {
+         "q": "What is the square root of 144? Answer with the number only.",
+         "answer": "To find the square root of 144, we are looking for a number that, when",
+         "ok": false
+        },
+        {
+         "q": "Spell the word 'cat' backwards. Answer with the three letters only.",
+         "answer": "TAC",
+         "ok": true
+        },
+        {
+         "q": "What gas do plants absorb from the air for photosynthesis? Answer briefly.",
+         "answer": "Plants absorb **carbon dioxide** (CO\u2082) from the air during photosynthesis.",
+         "ok": true
+        }
+       ]
+      },
+      "at_end": {
+       "footprint": 161826256,
+       "footprint_peak": 232785408,
+       "resident": 1276477440,
+       "cpu_s": 523.7929597916666,
+       "disk_read": 1107410944,
+       "pageins": 67596,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 523.793
+       }
+      },
+      "stats": {
+       "requests": 14,
+       "cancelled": 0,
+       "prompt_tokens": 1046,
+       "cached_prompt_tokens": 205,
+       "completion_tokens": 2882,
+       "prefill_tok_s": 232.32549379162316,
+       "decode_tok_s": 84.93627716222063,
+       "steps": 2883,
+       "max_seqs_in_step": 1,
+       "kv_disk": {
+        "enabled": false,
+        "trimmable": false,
+        "saves": 0,
+        "restores": 0,
+        "restored_tokens": 0,
+        "save_ms": 0.0,
+        "restore_ms": 0.0,
+        "bytes": 0,
+        "files": 0
+       },
+       "memory_pressure": {
+        "relief": true,
+        "level": "unknown",
+        "sheds": 0,
+        "released_bytes": 0
+       },
+       "paging": {
+        "bytes": 0,
+        "tokens": 3928,
+        "bytes_per_token_last": 0,
+        "model_does_not_fit_memory": false
+       },
+       "threads": 16,
+       "kernels": "neon",
+       "device": "cpu",
+       "bytes_per_token": 2040981504,
+       "sleeping": false
+      }
+     },
+     {
+      "cold": false,
+      "idle_before_pct": 82.58,
+      "load_s": 0.122,
+      "cmd": "/Volumes/ARGUS5/PROJECTS/LLMario/.claude/worktrees/llmario-performance-optimization-3de13c/target/release/llmario-engine serve --model /Volumes/ARGUS5/AIPROJECTS/LLMario-models/qwen3-1.7b-gguf-q4km/Qwen3-1.7B-Q4_K_M.gguf --listen 127.0.0.1:57135 --ctx 8192 --parallel 1 --device cpu",
+      "after_load": {
+       "footprint": 78349704,
+       "footprint_peak": 79103392,
+       "resident": 1192574976,
+       "cpu_s": 0.584805625,
+       "disk_read": 0,
+       "pageins": 0,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 0.584
+       }
+      },
+      "threads_os": 19,
+      "engine_model": {
+       "backend": "native",
+       "plan_hash": "81f3f85b0ce1cdcb939c404479f844af",
+       "arch": "qwen3",
+       "context": 8192,
+       "kernels": "neon",
+       "kv_type": "f16",
+       "slots": 1,
+       "device": "cpu",
+       "capabilities": {
+        "tools": true,
+        "json_schema": true,
+        "vision": false,
+        "web_tools": []
+       }
+      },
+      "plan": {
+       "planned_peak": 2364034560,
+       "ctx_per_slot": 8192,
+       "kv_dtype": "f16",
+       "slots": 1,
+       "degradations": [],
+       "fits": true
+      },
+      "requests": [
+       {
+        "ttft_s": 0.6578162498772144,
+        "total_s": 1.3147641669493169,
+        "usage": {
+         "prompt_tokens": 176,
+         "completion_tokens": 64,
+         "total_tokens": 240,
+         "prompt_tokens_details": {
+          "cached_tokens": 0
+         }
+        },
+        "timings": {
+         "prompt_n": 176,
+         "prompt_ms": 645.6404580000001,
+         "predicted_n": 64,
+         "predicted_ms": 668.255833
+        },
+        "decode_tok_s": 95.77170424788495,
+        "prefill_tok_s": 272.5975391089881,
+        "idle_before_pct": 89.37,
+        "prompt_words": 40,
+        "avg_cores": 13.11,
+        "footprint_after": 124290488,
+        "resident_after": 1238958080
+       },
+       {
+        "ttft_s": 2.6686386249493808,
+        "total_s": 3.5408844579942524,
+        "usage": {
+         "prompt_tokens": 804,
+         "completion_tokens": 64,
+         "total_tokens": 868,
+         "prompt_tokens_details": {
+          "cached_tokens": 160
+         }
+        },
+        "timings": {
+         "prompt_n": 644,
+         "prompt_ms": 2652.531208,
+         "predicted_n": 64,
+         "predicted_ms": 887.162875
+        },
+        "decode_tok_s": 72.14007912583132,
+        "prefill_tok_s": 242.7869644125974,
+        "idle_before_pct": 90.54,
+        "prompt_words": 700,
+        "avg_cores": 11.79,
+        "footprint_after": 232670696,
+        "resident_after": 1347305472
+       }
+      ],
+      "quality": {
+       "correct": 10,
+       "of": 12,
+       "answers": [
+        {
+         "q": "What is the capital of France? Answer with one word.",
+         "answer": "Paris",
+         "ok": true
+        },
+        {
+         "q": "What is 17 + 26? Answer with the number only.",
+         "answer": "43",
+         "ok": true
+        },
+        {
+         "q": "What is the chemical symbol for gold? Answer with the symbol only.",
+         "answer": "Au",
+         "ok": true
+        },
+        {
+         "q": "How many days are in a leap year? Answer with the number only.",
+         "answer": "366",
+         "ok": true
+        },
+        {
+         "q": "Which planet is known as the Red Planet? Answer with one word.",
+         "answer": "Mars",
+         "ok": true
+        },
+        {
+         "q": "What is the opposite of 'hot'? Answer with one word.",
+         "answer": "cold",
+         "ok": true
+        },
+        {
+         "q": "What is 9 times 8? Answer with the number only.",
+         "answer": "",
+         "ok": false
+        },
+        {
+         "q": "Who wrote the play 'Romeo and Juliet'? Answer with the surname only.",
+         "answer": "Shakespeare",
+         "ok": true
+        },
+        {
+         "q": "What is the largest ocean on Earth? Answer with one word.",
+         "answer": "Pacific",
+         "ok": true
+        },
+        {
+         "q": "What is the square root of 144? Answer with the number only.",
+         "answer": "To find the square root of 144, we are looking for a number that, when",
+         "ok": false
+        },
+        {
+         "q": "Spell the word 'cat' backwards. Answer with the three letters only.",
+         "answer": "TAC",
+         "ok": true
+        },
+        {
+         "q": "What gas do plants absorb from the air for photosynthesis? Answer briefly.",
+         "answer": "Plants absorb **carbon dioxide** (CO\u2082) from the air during photosynthesis.",
+         "ok": true
+        }
+       ]
+      },
+      "at_end": {
+       "footprint": 161809872,
+       "footprint_peak": 232687080,
+       "resident": 1276461056,
+       "cpu_s": 482.495236,
+       "disk_read": 0,
+       "pageins": 0,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 482.495
+       }
+      },
+      "stats": {
+       "requests": 14,
+       "cancelled": 0,
+       "prompt_tokens": 1046,
+       "cached_prompt_tokens": 205,
+       "completion_tokens": 2882,
+       "prefill_tok_s": 240.06589648202478,
+       "decode_tok_s": 95.74724746597036,
+       "steps": 2883,
+       "max_seqs_in_step": 1,
+       "kv_disk": {
+        "enabled": false,
+        "trimmable": false,
+        "saves": 0,
+        "restores": 0,
+        "restored_tokens": 0,
+        "save_ms": 0.0,
+        "restore_ms": 0.0,
+        "bytes": 0,
+        "files": 0
+       },
+       "memory_pressure": {
+        "relief": true,
+        "level": "unknown",
+        "sheds": 0,
+        "released_bytes": 0
+       },
+       "paging": {
+        "bytes": 0,
+        "tokens": 3928,
+        "bytes_per_token_last": 0,
+        "model_does_not_fit_memory": false
+       },
+       "threads": 16,
+       "kernels": "neon",
+       "device": "cpu",
+       "bytes_per_token": 2040981504,
+       "sleeping": false
+      }
+     },
+     {
+      "cold": true,
+      "idle_before_pct": 85.82,
+      "resident_after_evict": 0.0,
+      "load_s": 0.373,
+      "cmd": "/Volumes/ARGUS5/PROJECTS/LLMario/.claude/worktrees/llmario-performance-optimization-3de13c/target/release/llmario-engine serve --model /Volumes/ARGUS5/AIPROJECTS/LLMario-models/qwen3-1.7b-gguf-q4km/Qwen3-1.7B-Q4_K_M.gguf --listen 127.0.0.1:57206 --ctx 8192 --parallel 1 --device cpu",
+      "after_load": {
+       "footprint": 78480800,
+       "footprint_peak": 79234464,
+       "resident": 1192689664,
+       "cpu_s": 0.8793225833333332,
+       "disk_read": 1107410944,
+       "pageins": 67596,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 0.879
+       }
+      },
+      "threads_os": 19,
+      "engine_model": {
+       "backend": "native",
+       "plan_hash": "81f3f85b0ce1cdcb939c404479f844af",
+       "arch": "qwen3",
+       "context": 8192,
+       "kernels": "neon",
+       "kv_type": "f16",
+       "slots": 1,
+       "device": "cpu",
+       "capabilities": {
+        "tools": true,
+        "json_schema": true,
+        "vision": false,
+        "web_tools": []
+       }
+      },
+      "plan": {
+       "planned_peak": 2364034560,
+       "ctx_per_slot": 8192,
+       "kv_dtype": "f16",
+       "slots": 1,
+       "degradations": [],
+       "fits": true
+      },
+      "requests": [
+       {
+        "ttft_s": 0.6528802500106394,
+        "total_s": 1.3024356251116842,
+        "usage": {
+         "prompt_tokens": 176,
+         "completion_tokens": 64,
+         "total_tokens": 240,
+         "prompt_tokens_details": {
+          "cached_tokens": 0
+         }
+        },
+        "timings": {
+         "prompt_n": 176,
+         "prompt_ms": 633.8190420000001,
+         "predicted_n": 64,
+         "predicted_ms": 667.6277080000001
+        },
+        "decode_tok_s": 95.86180925852165,
+        "prefill_tok_s": 277.6817803463847,
+        "idle_before_pct": 90.5,
+        "prompt_words": 40,
+        "avg_cores": 13.08,
+        "footprint_after": 126813624,
+        "resident_after": 1241481216
+       },
+       {
+        "ttft_s": 2.6676587499678135,
+        "total_s": 3.546157124917954,
+        "usage": {
+         "prompt_tokens": 804,
+         "completion_tokens": 64,
+         "total_tokens": 868,
+         "prompt_tokens_details": {
+          "cached_tokens": 160
+         }
+        },
+        "timings": {
+         "prompt_n": 644,
+         "prompt_ms": 2652.153208,
+         "predicted_n": 64,
+         "predicted_ms": 892.612458
+        },
+        "decode_tok_s": 71.69964907659848,
+        "prefill_tok_s": 242.8215677953398,
+        "idle_before_pct": 89.24,
+        "prompt_words": 700,
+        "avg_cores": 11.76,
+        "footprint_after": 234702312,
+        "resident_after": 1349337088
+       }
+      ],
+      "quality": {
+       "correct": 10,
+       "of": 12,
+       "answers": [
+        {
+         "q": "What is the capital of France? Answer with one word.",
+         "answer": "Paris",
+         "ok": true
+        },
+        {
+         "q": "What is 17 + 26? Answer with the number only.",
+         "answer": "43",
+         "ok": true
+        },
+        {
+         "q": "What is the chemical symbol for gold? Answer with the symbol only.",
+         "answer": "Au",
+         "ok": true
+        },
+        {
+         "q": "How many days are in a leap year? Answer with the number only.",
+         "answer": "366",
+         "ok": true
+        },
+        {
+         "q": "Which planet is known as the Red Planet? Answer with one word.",
+         "answer": "Mars",
+         "ok": true
+        },
+        {
+         "q": "What is the opposite of 'hot'? Answer with one word.",
+         "answer": "cold",
+         "ok": true
+        },
+        {
+         "q": "What is 9 times 8? Answer with the number only.",
+         "answer": "",
+         "ok": false
+        },
+        {
+         "q": "Who wrote the play 'Romeo and Juliet'? Answer with the surname only.",
+         "answer": "Shakespeare",
+         "ok": true
+        },
+        {
+         "q": "What is the largest ocean on Earth? Answer with one word.",
+         "answer": "Pacific",
+         "ok": true
+        },
+        {
+         "q": "What is the square root of 144? Answer with the number only.",
+         "answer": "To find the square root of 144, we are looking for a number that, when",
+         "ok": false
+        },
+        {
+         "q": "Spell the word 'cat' backwards. Answer with the three letters only.",
+         "answer": "TAC",
+         "ok": true
+        },
+        {
+         "q": "What gas do plants absorb from the air for photosynthesis? Answer briefly.",
+         "answer": "Plants absorb **carbon dioxide** (CO\u2082) from the air during photosynthesis.",
+         "ok": true
+        }
+       ]
+      },
+      "at_end": {
+       "footprint": 163055032,
+       "footprint_peak": 234718696,
+       "resident": 1277722624,
+       "cpu_s": 482.1315021666666,
+       "disk_read": 1107410944,
+       "pageins": 67596,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 482.131
+       }
+      },
+      "stats": {
+       "requests": 14,
+       "cancelled": 0,
+       "prompt_tokens": 1046,
+       "cached_prompt_tokens": 205,
+       "completion_tokens": 2882,
+       "prefill_tok_s": 242.68054817962908,
+       "decode_tok_s": 94.54158484762796,
+       "steps": 2883,
+       "max_seqs_in_step": 1,
+       "kv_disk": {
+        "enabled": false,
+        "trimmable": false,
+        "saves": 0,
+        "restores": 0,
+        "restored_tokens": 0,
+        "save_ms": 0.0,
+        "restore_ms": 0.0,
+        "bytes": 0,
+        "files": 0
+       },
+       "memory_pressure": {
+        "relief": true,
+        "level": "unknown",
+        "sheds": 0,
+        "released_bytes": 0
+       },
+       "paging": {
+        "bytes": 0,
+        "tokens": 3928,
+        "bytes_per_token_last": 0,
+        "model_does_not_fit_memory": false
+       },
+       "threads": 16,
+       "kernels": "neon",
+       "device": "cpu",
+       "bytes_per_token": 2040981504,
+       "sleeping": false
+      }
+     },
+     {
+      "cold": false,
+      "idle_before_pct": 89.75,
+      "load_s": 0.126,
+      "cmd": "/Volumes/ARGUS5/PROJECTS/LLMario/.claude/worktrees/llmario-performance-optimization-3de13c/target/release/llmario-engine serve --model /Volumes/ARGUS5/AIPROJECTS/LLMario-models/qwen3-1.7b-gguf-q4km/Qwen3-1.7B-Q4_K_M.gguf --listen 127.0.0.1:57268 --ctx 8192 --parallel 1 --device cpu",
+      "after_load": {
+       "footprint": 78333296,
+       "footprint_peak": 79037808,
+       "resident": 1192574976,
+       "cpu_s": 0.5797709166666666,
+       "disk_read": 0,
+       "pageins": 0,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 0.579
+       }
+      },
+      "threads_os": 19,
+      "engine_model": {
+       "backend": "native",
+       "plan_hash": "81f3f85b0ce1cdcb939c404479f844af",
+       "arch": "qwen3",
+       "context": 8192,
+       "kernels": "neon",
+       "kv_type": "f16",
+       "slots": 1,
+       "device": "cpu",
+       "capabilities": {
+        "tools": true,
+        "json_schema": true,
+        "vision": false,
+        "web_tools": []
+       }
+      },
+      "plan": {
+       "planned_peak": 2364034560,
+       "ctx_per_slot": 8192,
+       "kv_dtype": "f16",
+       "slots": 1,
+       "degradations": [],
+       "fits": true
+      },
+      "requests": [
+       {
+        "ttft_s": 0.6739725840743631,
+        "total_s": 1.3458995420951396,
+        "usage": {
+         "prompt_tokens": 176,
+         "completion_tokens": 64,
+         "total_tokens": 240,
+         "prompt_tokens_details": {
+          "cached_tokens": 0
+         }
+        },
+        "timings": {
+         "prompt_n": 176,
+         "prompt_ms": 662.147958,
+         "predicted_n": 64,
+         "predicted_ms": 682.844208
+        },
+        "decode_tok_s": 93.72562474748267,
+        "prefill_tok_s": 265.801620126721,
+        "idle_before_pct": 90.27,
+        "prompt_words": 40,
+        "avg_cores": 12.92,
+        "footprint_after": 125470088,
+        "resident_after": 1240170496
+       },
+       {
+        "ttft_s": 2.6627249168232083,
+        "total_s": 3.513632084010169,
+        "usage": {
+         "prompt_tokens": 804,
+         "completion_tokens": 64,
+         "total_tokens": 868,
+         "prompt_tokens_details": {
+          "cached_tokens": 160
+         }
+        },
+        "timings": {
+         "prompt_n": 644,
+         "prompt_ms": 2641.0321249999997,
+         "predicted_n": 64,
+         "predicted_ms": 871.3644579999999
+        },
+        "decode_tok_s": 73.44802672683718,
+        "prefill_tok_s": 243.84406153332955,
+        "idle_before_pct": 90.25,
+        "prompt_words": 700,
+        "avg_cores": 11.84,
+        "footprint_after": 232424888,
+        "resident_after": 1347092480
+       }
+      ],
+      "quality": {
+       "correct": 10,
+       "of": 12,
+       "answers": [
+        {
+         "q": "What is the capital of France? Answer with one word.",
+         "answer": "Paris",
+         "ok": true
+        },
+        {
+         "q": "What is 17 + 26? Answer with the number only.",
+         "answer": "43",
+         "ok": true
+        },
+        {
+         "q": "What is the chemical symbol for gold? Answer with the symbol only.",
+         "answer": "Au",
+         "ok": true
+        },
+        {
+         "q": "How many days are in a leap year? Answer with the number only.",
+         "answer": "366",
+         "ok": true
+        },
+        {
+         "q": "Which planet is known as the Red Planet? Answer with one word.",
+         "answer": "Mars",
+         "ok": true
+        },
+        {
+         "q": "What is the opposite of 'hot'? Answer with one word.",
+         "answer": "cold",
+         "ok": true
+        },
+        {
+         "q": "What is 9 times 8? Answer with the number only.",
+         "answer": "",
+         "ok": false
+        },
+        {
+         "q": "Who wrote the play 'Romeo and Juliet'? Answer with the surname only.",
+         "answer": "Shakespeare",
+         "ok": true
+        },
+        {
+         "q": "What is the largest ocean on Earth? Answer with one word.",
+         "answer": "Pacific",
+         "ok": true
+        },
+        {
+         "q": "What is the square root of 144? Answer with the number only.",
+         "answer": "To find the square root of 144, we are looking for a number that, when",
+         "ok": false
+        },
+        {
+         "q": "Spell the word 'cat' backwards. Answer with the three letters only.",
+         "answer": "TAC",
+         "ok": true
+        },
+        {
+         "q": "What gas do plants absorb from the air for photosynthesis? Answer briefly.",
+         "answer": "Plants absorb **carbon dioxide** (CO\u2082) from the air during photosynthesis.",
+         "ok": true
+        }
+       ]
+      },
+      "at_end": {
+       "footprint": 161400200,
+       "footprint_peak": 232424888,
+       "resident": 1276100608,
+       "cpu_s": 488.65440599999994,
+       "disk_read": 0,
+       "pageins": 0,
+       "cpu_s_by_qos": {
+        "default": 0.001,
+        "legacy": 488.654
+       }
+      },
+      "stats": {
+       "requests": 14,
+       "cancelled": 0,
+       "prompt_tokens": 1046,
+       "cached_prompt_tokens": 205,
+       "completion_tokens": 2882,
+       "prefill_tok_s": 241.29654214673184,
+       "decode_tok_s": 94.27611189874445,
+       "steps": 2883,
+       "max_seqs_in_step": 1,
+       "kv_disk": {
+        "enabled": false,
+        "trimmable": false,
+        "saves": 0,
+        "restores": 0,
+        "restored_tokens": 0,
+        "save_ms": 0.0,
+        "restore_ms": 0.0,
+        "bytes": 0,
+        "files": 0
+       },
+       "memory_pressure": {
+        "relief": true,
+        "level": "unknown",
+        "sheds": 0,
+        "released_bytes": 0
+       },
+       "paging": {
+        "bytes": 0,
+        "tokens": 3928,
+        "bytes_per_token_last": 0,
+        "model_does_not_fit_memory": false
+       },
+       "threads": 16,
+       "kernels": "neon",
+       "device": "cpu",
+       "bytes_per_token": 2040981504,
+       "sleeping": false
+      }
+     }
+    ]
+   }
+  }
+ ]
+}
