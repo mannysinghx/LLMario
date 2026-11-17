@@ -9,7 +9,8 @@ are in [OPS_LOG.md](OPS_LOG.md).
 - Branch `claude/llmario-performance-optimization-3de13c` (worktree
   `.claude/worktrees/llmario-performance-optimization-3de13c`), based on `main` 7eeafe6.
 - Local commits only; **nothing pushed, no PR**. Nothing uncommitted.
-- `scripts/ci-local.sh` has **not** been run on the branch head yet (owner rule: before any push).
+- `scripts/ci-local.sh` passes on the branch head (the pass record is
+  `<git common dir>/ci-local/<sha>.pass`; run it again if the head has moved).
 
 ## Done and verified
 
@@ -22,6 +23,7 @@ are in [OPS_LOG.md](OPS_LOG.md).
 | Headroom taken once; supervisor estimate for the native engine (`crates/supervisor/src/memory.rs`, `crates/adapter_native`) | `cargo test -p llmario-supervisor`; `llmario-engine plan <9B gguf> --memory-limit 6442450944 --memory-headroom 0` | 34 pass; fits (was refused) |
 | Engine default threads = performance cores (`default_threads`) | three interleaved `raw-run` rounds | decode 93–100 vs 77–86 tok/s; prompts 246–249 vs 269–273 |
 | Security fixes (docs/THREAT_MODEL.md T17–T22) | unit tests in `crates/engine/server` (`guard_tests`), `crates/engine/formats`, `crates/api`, `crates/model_registry`; e2e `browser_requests_are_refused` | pass |
+| Local CI, six jobs (Linux and macOS tests, both engine e2e legs, desktop, licenses) | `scripts/ci-local.sh` | PASS on 259ba98 and on the head |
 | Whole workspace | `cargo fmt --all --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test` | clean; 479 passed, 0 failed |
 | Greedy parity with llama.cpp unchanged | `LLMARIO_GOLDEN_DEVICES=cpu LLMARIO_TEST_GGUF=<Qwen3-1.7B> cargo test --release -p llmario-engine --test llama_cpp_golden` | pass (one model; the kernels were not touched) |
 
@@ -39,11 +41,12 @@ Nothing half-done in the tree.
 | Chat templates from model files render without a time or size limit | `crates/engine/chat/src/env.rs` | Low | engineering |
 | Error responses include local paths and engine log tails for remote authenticated clients | `crates/api/src/chat.rs` | Low | engineering |
 | Existing `~/.llmario` keeps mode 0755 (only new homes are 0700) | `crates/core/src/paths.rs` `ensure` | Low | owner (tighten existing homes?) |
-| `cargo audit` not installed; `cargo deny check` not run in this session | — | unknown | run `scripts/ci-local.sh` (`licenses` job) |
+| `cargo deny check bans` fails (duplicate crate versions; not part of CI, which checks advisories, licenses and sources) | `deny.toml` | Info | engineering |
 
 ## Next steps, in order
 
-1. Run `scripts/ci-local.sh` on the branch head; fix what it finds.
+1. Done: `scripts/ci-local.sh` (first run failed on two things older than this branch, a lint
+   new in Rust 1.100 and three advisories against rmcp 3.5.1; both fixed in 259ba98).
 2. Owner review, then one push and a PR into `main` (no Railway redeploy: nothing under `website/`).
 3. Gateway: read `/engine/stats` `paging` and `memory_pressure` and show them in the desktop app
    and `/metrics`; call `/engine/control` `sleep` for idle engines.
