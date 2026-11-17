@@ -1,12 +1,12 @@
 [package]
-name = "llmario"
+name = "llmario-beta"
 description = "Adaptive local LLM runtime: hardware-aware engine selection, memory planning, OpenAI-compatible API"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [[bin]]
-name = "llmario"
+name = "llmario-beta"
 path = "src/main.rs"
 
 [dependencies]

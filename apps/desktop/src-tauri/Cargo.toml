@@ -6,7 +6,7 @@ edition.workspace = true
 license.workspace = true
 
 [[bin]]
-name = "llmario-desktop"
+name = "llmario-desktop-beta"
 path = "src/main.rs"
 
 [build-dependencies]
