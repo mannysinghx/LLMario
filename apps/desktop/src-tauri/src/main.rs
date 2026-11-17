@@ -29,6 +29,7 @@ fn main() {
             commands::add_model,
             commands::remove_model,
             commands::load_model,
+            commands::engine_memory,
             commands::unload_model,
             commands::chat,
             commands::cancel_chat,

@@ -150,6 +150,9 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .pill.loading { background: var(--warn-soft); color: var(--warn); }
 .pill.loading::before { animation: pulse 1s ease-in-out infinite; }
 .pill.error { background: var(--danger-soft); color: var(--danger); }
+.pill.warn { background: var(--warn-soft); color: var(--warn); }
+.pill.bad { background: var(--danger-soft); color: var(--danger); }
+.pill[hidden] { display: none; }
 @keyframes pulse { 50% { opacity: 0.2; } }
 .chip { font-size: 12px; color: var(--muted); border: 1px solid var(--border); padding: 2px 9px; border-radius: 999px; }
 

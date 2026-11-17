@@ -78,6 +78,8 @@ pub struct LoadInfo {
     budget_bytes: u64,
     profile: ResolvedProfile,
     notes: Vec<String>,
+    /// The notes worth acting on: a tight fit, little memory free right now.
+    memory_warnings: Vec<String>,
     /// Set when the other LLMario edition also has models loaded (shown to the user).
     warning: Option<String>,
 }
@@ -271,8 +273,31 @@ pub async fn load_model(state: State<'_, AppState>, name: String) -> CmdResult<L
         budget_bytes: plan.budget_bytes,
         profile: e.profile.clone(),
         notes,
+        memory_warnings: plan.warnings.clone(),
         warning: llmario_supervisor::sibling::sibling_usage(&rt.sup.paths).map(|u| u.warning()),
     })
+}
+
+/// What the built-in engine reports about memory for a loaded model: the pressure level the
+/// system gives it, what it freed, and whether the weights no longer fit. `None` for models run
+/// by another engine (llama.cpp and MLX report neither), models that are not loaded, and an
+/// engine that does not answer.
+#[tauri::command]
+pub async fn engine_memory(
+    state: State<'_, AppState>,
+    model: String,
+) -> CmdResult<Option<llmario_supervisor::engine_stats::EngineMemory>> {
+    let rt = state.runtime().await?;
+    let Some(e) = rt
+        .sup
+        .loaded()
+        .await
+        .into_iter()
+        .find(|e| e.model == model && e.backend == BackendKind::Native)
+    else {
+        return Ok(None);
+    };
+    Ok(llmario_supervisor::engine_stats::fetch(rt.sup.http(), e.port).await)
 }
 
 #[tauri::command]

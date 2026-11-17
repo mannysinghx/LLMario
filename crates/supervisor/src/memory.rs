@@ -214,6 +214,9 @@ pub struct MemoryPlan {
     /// bytes are not planned to stay in memory and are read from disk when a token needs them.
     pub streamed_expert_bytes: u64,
     pub notes: Vec<String>,
+    /// The notes that tell a person to act or to expect trouble (a tight fit, little memory free
+    /// right now), also in `notes`; the app shows these when a model loads.
+    pub warnings: Vec<String>,
 }
 
 impl MemoryPlan {
@@ -618,8 +621,9 @@ pub fn estimate(
     };
     let comfortable = comfortable_bytes(hw);
     let tight = fits && comfortable.is_some_and(|c| resident_total > c);
+    let mut warnings = Vec::new();
     if let (true, Some(c)) = (tight, comfortable) {
-        notes.push(format!(
+        warnings.push(format!(
             "tight: above the comfortable {} for a computer with {} of memory; close other apps before loading",
             fmt_bytes(c),
             fmt_bytes(hw.total_memory_bytes)
@@ -630,17 +634,18 @@ pub fn estimate(
     if fits && available_now < resident_weights {
         // Measured (2026-11-16, 64 GB Mac with about 5 GiB reclaimable): a 6.5 GiB model read
         // 13 GiB from storage to answer one short question.
-        notes.push(format!(
+        warnings.push(format!(
             "only {} is available right now, less than the weights ({}): the model would be read from storage again for every token and replies would be very slow; close other apps first, or use a smaller model",
             fmt_bytes(hw.available_memory_bytes),
             fmt_bytes(resident_weights)
         ));
     } else if fits && available_now < resident_total {
-        notes.push(format!(
+        warnings.push(format!(
             "only {} is currently available; the OS may compress or swap other apps while loading",
             fmt_bytes(hw.available_memory_bytes)
         ));
     }
+    notes.extend(warnings.iter().cloned());
 
     MemoryPlan {
         weights_bytes: weights,
@@ -659,6 +664,7 @@ pub fn estimate(
         tight,
         streamed_expert_bytes,
         notes,
+        warnings,
     }
 }
 
@@ -1159,9 +1165,12 @@ pub(crate) mod tests {
         h.available_memory_bytes = 7 * GIB;
         let plan = estimate(&m, &p, BackendKind::LlamaCpp, &h, &cfg, 0, 0);
         assert!(plan.notes.iter().any(|n| n.contains("compress or swap")));
+        assert_eq!(plan.warnings.len(), 1, "the warning is also in the notes");
+        assert!(plan.notes.contains(&plan.warnings[0]));
         h.available_memory_bytes = 32 * GIB;
         let plan = estimate(&m, &p, BackendKind::LlamaCpp, &h, &cfg, 0, 0);
         assert!(!plan.notes.iter().any(|n| n.contains("available")));
+        assert!(plan.warnings.is_empty());
     }
 
     /// Phase 7: with `offload = "auto"`, a model over the GPU limit but within RAM keeps some

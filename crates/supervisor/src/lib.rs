@@ -4,6 +4,7 @@
 pub mod adapter;
 pub mod autotune;
 pub mod engine;
+pub mod engine_stats;
 pub mod memory;
 pub mod planner;
 pub mod sibling;

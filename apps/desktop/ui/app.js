@@ -1,5 +1,6 @@
 // LLMario desktop UI. Talks to the Rust side only through Tauri IPC (`invoke` + channels).
 import { renderMarkdown } from "./markdown.js";
+import { describeEngineMemory } from "./memory-state.js";
 
 const tauri = window.__TAURI__;
 const invoke = tauri?.core?.invoke;
@@ -80,6 +81,28 @@ function toast(title, body = "", isError = false, ms = 6000) {
   if (body) t.append(el("div", null, body));
   $("#toasts").append(t);
   setTimeout(() => t.remove(), ms);
+}
+
+// The built-in engine reports memory pressure and whether the model still fits; other engines
+// report nothing and the pill stays hidden.
+async function refreshMemoryState() {
+  const pill = $("#memory-state");
+  let d = null;
+  const id = state.loadedModel;
+  if (id) {
+    try {
+      d = describeEngineMemory(await invoke("engine_memory", { model: id }));
+    } catch {
+      d = null;
+    }
+  }
+  if (id !== state.loadedModel) return; // unloaded or switched while asking
+  pill.hidden = !d;
+  if (d) {
+    pill.className = `pill ${d.kind}`;
+    pill.textContent = d.text;
+    pill.title = d.title;
+  }
 }
 
 function setStatus(kind, text) {
@@ -339,6 +362,8 @@ function ensureLoaded(id) {
         $("#unload").hidden = false;
       }
       if (info.warning) toast("Memory is shared with another app", info.warning, false, 12000);
+      if (info.memoryWarnings?.length) toast("Memory is tight", info.memoryWarnings.join("\n"), false, 15000);
+      refreshMemoryState();
       return info;
     })
     .catch((e) => {
@@ -993,6 +1018,7 @@ async function boot() {
     setStatus("error", "Startup failed");
     toast("LLMario could not start", errMsg(e), true, 15000);
   }
+  setInterval(refreshMemoryState, 5000);
   $("#input").focus();
 }
 

@@ -4,22 +4,21 @@ Where the work stands, so any session or person can pick it up. Engine milestone
 measurements are in [engine/STATUS.md](engine/STATUS.md); side effects outside the working tree
 are in [OPS_LOG.md](OPS_LOG.md).
 
-## Where it stopped (2026-11-17, 06:20 PST)
+## Where it stopped (2026-11-17, 07:00 PST)
 
-- **Released to `main`** at the owner's word ("merge to main and push to git", 2026-11-17): `main`
-  is fast-forwarded from 7eeafe6 to the head of `claude/llmario-performance-optimization-3de13c`
-  (nine commits, this one last), which closes
-  [PR #20](https://github.com/mannysinghx/LLMario/pull/20) as merged. The push follows a
-  `scripts/ci-local.sh` pass on this commit; `git ls-remote origin main` shows whether it
-  happened, and the pass record is `<git common dir>/ci-local/<sha>.pass`.
-- Nothing redeployed: no path under `website/` changed, and the repository has no deploy,
-  release or Pages workflow. The push starts the three GitHub CI workflows on `main`; their
-  status is not the signal (owner rule, 2026-10-30).
-- The branch includes the `deny.toml` exception for RUSTSEC-2026-0543, "chrono is unmaintained"
-  (owner: "Yes, add it", 2026-11-17). Without it the `licenses` job of local CI fails on any
-  commit, because the advisory list changed on 2026-11-17 between 06:39 and 13:45 UTC.
-- Nothing uncommitted. Worktree `.claude/worktrees/llmario-performance-optimization-3de13c` and
-  its branch are kept; removing them is the owner's call.
+- `main` is at the 2026-11-17 release of the engine memory work (PR #20, merged) plus an ops-log
+  commit. Branch `ui-engine-memory` (worktree `.claude/worktrees/llmario-performance-optimization-3de13c`,
+  recreated for this work; the earlier branch of that name was deleted) holds the desktop-app
+  follow-up, **committed locally, not pushed**: awaiting the owner's push approval. The pass
+  record is `<git common dir>/ci-local/<sha>.pass`.
+- The follow-up: the desktop app shows the built-in engine's memory state (new Tauri command
+  `engine_memory`, `crates/supervisor/src/engine_stats.rs`, `apps/desktop/ui/memory-state.js`) and
+  the load-time memory warnings (`MemoryPlan.warnings`, `LoadInfo.memory_warnings`). Nothing under
+  `website/` changed, so nothing redeploys.
+- Not seen working in the running app: the UI code is unit-tested (node) and the Rust side is
+  unit-tested; the stats field names were checked against a live engine. The pill appears only
+  after the engine has polled the system level with a conversation cached.
+- Worktree and branch are the owner's to remove after merge.
 
 ## Done and verified
 
@@ -58,7 +57,7 @@ Nothing half-done in the tree.
 1. Done: `scripts/ci-local.sh` (first run failed on two things older than this branch, a lint
    new in Rust 1.100 and three advisories against rmcp 3.5.1; both fixed in 259ba98).
 2. Owner review, then one push and a PR into `main` (no Railway redeploy: nothing under `website/`).
-3. Gateway: read `/engine/stats` `paging` and `memory_pressure` and show them in the desktop app
+3. ~~Gateway: read `/engine/stats` `paging` and `memory_pressure` and show them in the desktop app~~ done on `ui-engine-memory` (the CLI `ps` and `/metrics` still do not show them)
    and `/metrics`; call `/engine/control` `sleep` for idle engines.
 4. Separate thread counts for prompts (all cores) and decode (performance cores): measured gap
    7–9 % on prompts.
