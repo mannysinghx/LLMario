@@ -20,7 +20,12 @@ are in [OPS_LOG.md](OPS_LOG.md).
   bridge, light and dark, 900 and 1180 px; the Rust command passes clippy). `llmario top` was run
   live against `llmario serve` with Qwen3-1.7B on llama.cpp. Not run live against LLMario's own
   engine, on Windows, or on an NVIDIA GPU.
-- The worktree and branch `claude/llmario-model-tracker-dcd7f7` are the owner's to remove.
+- The worktree and branch `claude/llmario-model-tracker-dcd7f7` were removed (ops log 20:30).
+- Local `main` is 2 commits ahead of origin, **not pushed**: efea7aa (ops-log correction) and the
+  context-fill fix (the panel and `llmario top` say "over plan" instead of a fill above 100%, seen
+  on qwen3.8-27b MLX in the built app). Local CI passed on the head. The desktop app built from
+  `main` at 20:39 (`target/release/bundle/macos/LLMario.app`, not installed to `/Applications`)
+  predates that fix; rebuild after LLMario is quit.
 
 ## Done and verified
 
@@ -54,6 +59,7 @@ Nothing half-done in the tree.
 
 | Item | Where | Severity | Who decides |
 |---|---|---|---|
+| The gateway sizes requests by characters / 4: for a code-heavy chat it estimated 2,581 prompt tokens where the engine counted 4,213, so it capped the reply at 1,515 tokens (4,096 − 2,581) and MLX ran past the planned 4K window. Replies can stop early, and memory use can exceed the plan | `crates/api/src/validate.rs:307` `check_limits` (estimate at line 300) | Medium | owner (fix: count with the model's tokenizer, or leave headroom) |
 | RUSTSEC-2026-0543: chrono 0.4.45 reported unmaintained (a notice, not a vulnerability; no upgrade available). Excepted in `deny.toml` on 2026-11-17 at the owner's word. Still to decide: whether to move the six workspace crates that use chrono to jiff or time. That alone does not let the exception go, because rmcp 3.10.0 and schemars 1.2.2 depend on chrono too | `deny.toml` `[advisories]`; `Cargo.lock:55` | Low | owner |
 | Web tools: the Rule-of-Two gate is not wired into the agent loop, so injected web text can make a model fetch a URL carrying conversation data | `crates/engine/server/src/agent.rs` `run_inner`; gate in `crates/engine/tools/src/policy.rs` | High, only with `web_access = true` (off by default) | owner: fix before promoting web access |
 | No per-launch secret between gateway and engine; port chosen before the engine binds it | `crates/supervisor/src/engine.rs` `free_port` | Low (another local user) | owner |

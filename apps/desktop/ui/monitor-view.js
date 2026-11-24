@@ -22,8 +22,13 @@ export const fmt = {
     if (bps >= MB) return `${(bps / MB).toFixed(1)} MB/s`;
     return `${Math.round(bps / 1024)} KB/s`;
   },
-  // Context sizes: 131072 → "128K".
-  ktok: (n) => (n >= 1024 ? `${Math.round(n / 1024)}K` : String(n ?? 0)),
+  // Context sizes: 131072 → "128K", 5728 → "5.6K", 4096 → "4K".
+  ktok: (n) => {
+    if (!isNum(n)) return "0";
+    if (n >= 10 * 1024) return `${Math.round(n / 1024)}K`;
+    if (n >= 1024) return `${(n / 1024).toFixed(1).replace(/\.0$/, "")}K`;
+    return String(n);
+  },
   int: (n) => (isNum(n) ? Math.round(n).toLocaleString("en-US") : na),
   pct: (v) => (isNum(v) ? `${Math.round(v)} %` : na),
   tps: (v) => (isNum(v) ? `${v.toFixed(1)} tok/s` : na),
@@ -185,11 +190,22 @@ export function monitorView(s, hist) {
   if (eng) {
     const used = eng.context_used ?? 0;
     const total = eng.context_per_slot || 0;
+    // Engines that do not enforce the planned window (MLX) can run past it, because the gateway
+    // checks prompts by an estimate. Say so instead of showing more than 100%.
+    const over = total > 0 && used > total ? used - total : 0;
     bars.push({
       key: "context",
       label: "Context fill",
-      value: `${fmt.ktok(used)} / ${fmt.ktok(total)} · ${total ? Math.round((used * 100) / total) : 0}%`,
+      value: over
+        ? `${fmt.ktok(used)} / ${fmt.ktok(total)} · ${fmt.ktok(over)} over plan`
+        : `${fmt.ktok(used)} / ${fmt.ktok(total)} · ${total ? Math.round((used * 100) / total) : 0}%`,
       ratio: ratio(used, total) ?? 0,
+      tone: over ? "warn" : null,
+      title: over
+        ? `The last request used ${fmt.int(used)} tokens, but the runtime profile plans ${fmt.int(total)} per request. ` +
+          `This engine let it run past that window, which takes more memory than planned. ` +
+          `A larger context in Settings plans for longer chats.`
+        : "",
     });
     bars.push({
       key: "engine-mem",

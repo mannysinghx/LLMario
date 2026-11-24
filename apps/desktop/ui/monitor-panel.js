@@ -67,6 +67,7 @@ function render(body, pill, v) {
   const bars = el("div", "mon-bars");
   for (const b of v.bars) {
     const row = el("div", "mon-bar");
+    if (b.title) row.title = b.title;
     const head = el("div", "mon-bar-head");
     head.append(el("span", null, b.label), el("span", "mon-bar-value", b.value));
     row.append(head, meter(b.ratio, b.tone));

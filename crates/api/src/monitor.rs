@@ -102,7 +102,7 @@ pub struct EngineView {
     pub file_bytes: Option<u64>,
     pub layers: Option<u32>,
     pub context_max: Option<u32>,
-    /// Context tokens each concurrent request gets, and how many run at once.
+    /// Context tokens planned for each concurrent request, and how many run at once.
     pub context_per_slot: u32,
     pub parallel: u32,
     pub batch: u32,
@@ -110,6 +110,8 @@ pub struct EngineView {
     pub profile: String,
     pub active_requests: usize,
     /// Tokens of the window in use: the request in flight, else the last one that finished.
+    /// It can exceed `context_per_slot`: the gateway checks prompts by an estimate (characters
+    /// / 4), and MLX does not enforce the planned window.
     pub context_used: Option<u64>,
     pub load_seconds: f64,
     pub idle_seconds: f64,

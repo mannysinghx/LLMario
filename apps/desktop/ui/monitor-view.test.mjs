@@ -124,8 +124,26 @@ test("non-streaming requests show a running state, listed only while active", ()
   assert.ok(!idle.states.some((x) => x.key === "running"));
 });
 
+test("context past the planned window says how far over, not a percentage above 100", () => {
+  const s = snapshot();
+  s.engines[0].context_per_slot = 4096;
+  s.engines[0].context_used = 5728;
+  const ctx = monitorView(s, new History()).bars.find((b) => b.key === "context");
+  assert.equal(ctx.value, "5.6K / 4K · 1.6K over plan");
+  assert.equal(ctx.tone, "warn");
+  assert.equal(ctx.ratio, 1);
+  assert.match(ctx.title, /5,728 tokens.*4,096 per request/);
+  s.engines[0].context_used = 2048;
+  const ok = monitorView(s, new History()).bars.find((b) => b.key === "context");
+  assert.equal(ok.value, "2K / 4K · 50%");
+  assert.equal(ok.tone, null);
+  assert.equal(ok.title, "");
+});
+
 test("formatting", () => {
   assert.equal(fmt.ktok(131072), "128K");
+  assert.equal(fmt.ktok(5728), "5.6K");
+  assert.equal(fmt.ktok(4096), "4K");
   assert.equal(fmt.int(28693), "28,693");
   assert.equal(fmt.ms(169900), "2m50s");
   assert.equal(fmt.ms(119700), "2m00s");

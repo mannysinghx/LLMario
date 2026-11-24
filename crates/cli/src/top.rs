@@ -376,13 +376,22 @@ fn rate(bps: u64) -> String {
     }
 }
 
-/// Context sizes: 131072 → "128K".
+/// Context sizes: 131072 → "128K", 5728 → "5.6K", 4096 → "4K".
 fn ktok(n: u64) -> String {
-    if n >= 1024 {
-        format!("{}K", (n as f64 / 1024.0).round() as u64)
+    let k = n as f64 / 1024.0;
+    if n >= 10 * 1024 {
+        format!("{}K", k.round() as u64)
+    } else if n >= 1024 {
+        format!("{k:.1}K").replace(".0K", "K")
     } else {
         n.to_string()
     }
+}
+
+/// Tokens used past the planned per-request window, when any. Engines that do not enforce the
+/// window (MLX) can run past it, because the gateway checks prompts by an estimate.
+fn over_plan(used: u64, planned: u64) -> Option<u64> {
+    (planned > 0 && used > planned).then(|| used - planned)
 }
 
 /// 28693 → "28,693".
@@ -925,19 +934,33 @@ fn draw_state_bar(f: &mut Frame, area: Rect, s: &Snapshot) {
     let ctx = first_engine(s).map(|e| {
         let used = e.context_used.unwrap_or(0);
         let total = e.context_per_slot as u64;
-        format!(
-            "{} / {} tokens · {:.0}%",
-            thousands(used),
-            thousands(total),
-            used as f64 * 100.0 / total.max(1) as f64
-        )
+        match over_plan(used, total) {
+            Some(over) => (
+                format!(
+                    "{} / {} tokens · {} over plan",
+                    thousands(used),
+                    thousands(total),
+                    thousands(over)
+                ),
+                Style::new().fg(Color::Yellow),
+            ),
+            None => (
+                format!(
+                    "{} / {} tokens · {:.0}%",
+                    thousands(used),
+                    thousands(total),
+                    used as f64 * 100.0 / total.max(1) as f64
+                ),
+                Style::new().fg(DIM),
+            ),
+        }
     });
-    let [l, r] = Layout::horizontal([Constraint::Min(0), Constraint::Length(32)])
+    let [l, r] = Layout::horizontal([Constraint::Min(0), Constraint::Length(44)])
         .areas(Rect { height: 1, ..area });
     f.render_widget(Paragraph::new(Line::from(spans)), l);
-    if let Some(c) = ctx {
+    if let Some((c, style)) = ctx {
         f.render_widget(
-            Paragraph::new(Line::from(c).right_aligned()).style(Style::new().fg(DIM)),
+            Paragraph::new(Line::from(c).right_aligned()).style(style),
             r,
         );
     }
@@ -966,17 +989,33 @@ fn draw_bars(f: &mut Frame, area: Rect, s: &Snapshot) {
     let e = first_engine(s);
     if let Some(e) = e {
         let used = e.context_used.unwrap_or(0);
+        let planned = e.context_per_slot as u64;
+        let (label, color) = match over_plan(used, planned) {
+            Some(over) => (
+                format!(
+                    "Context fill   {} / {}  {} over plan",
+                    ktok(used),
+                    ktok(planned),
+                    ktok(over)
+                ),
+                Color::Yellow,
+            ),
+            None => (
+                format!(
+                    "Context fill   {} / {}  {:.0}%",
+                    ktok(used),
+                    ktok(planned),
+                    used as f64 * 100.0 / planned.max(1) as f64
+                ),
+                ACCENT,
+            ),
+        };
         bar(
             f,
             rows[0],
-            format!(
-                "Context fill   {} / {}  {:.0}%",
-                ktok(used),
-                ktok(e.context_per_slot as u64),
-                used as f64 * 100.0 / e.context_per_slot.max(1) as f64
-            ),
-            Some(used as f64 / e.context_per_slot.max(1) as f64),
-            ACCENT,
+            label,
+            Some(used as f64 / planned.max(1) as f64),
+            color,
         );
         bar(
             f,
@@ -1744,11 +1783,34 @@ mod tests {
     }
 
     #[test]
+    fn context_past_the_planned_window_says_over_plan_not_a_percentage() {
+        let mut app = App::new("u".into());
+        let mut s = sample();
+        s.engines[0].context_per_slot = 4096;
+        s.engines[0].context_used = Some(5728);
+        app.apply(Ok(s));
+        let o = render(&app, 120, 34);
+        assert!(o.contains("5,728 / 4,096 tokens · 1,632 over plan"), "{o}");
+        assert!(
+            o.contains("Context fill   5.6K / 4K  1.6K over plan"),
+            "{o}"
+        );
+        assert!(!o.contains("140%"), "{o}");
+    }
+
+    #[test]
     fn formatting() {
         assert_eq!(thousands(28693), "28,693");
         assert_eq!(thousands(999), "999");
         assert_eq!(thousands(1_000_000), "1,000,000");
         assert_eq!(ktok(131072), "128K");
+        assert_eq!(ktok(5728), "5.6K");
+        assert_eq!(ktok(4096), "4K");
+        assert_eq!(ktok(1632), "1.6K");
+        assert_eq!(ktok(800), "800");
+        assert_eq!(over_plan(5728, 4096), Some(1632));
+        assert_eq!(over_plan(4096, 4096), None);
+        assert_eq!(over_plan(10, 0), None);
         assert_eq!(rate(62_600_000), "59.7 MB/s");
         assert_eq!(duration(169_900.0), "2m50s");
         assert_eq!(duration(119_700.0), "2m00s");
