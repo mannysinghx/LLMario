@@ -6,6 +6,8 @@
 import { History, monitorView, sparkPath } from "./monitor-view.js";
 
 const POLL_MS = 1000;
+// The shortcut as this platform writes it (app.js sets data-platform).
+const SHORTCUT = document.documentElement.dataset.platform === "mac" ? "⌘⇧M" : "Ctrl+Shift+M";
 const SVG = "http://www.w3.org/2000/svg";
 
 const el = (tag, cls, text) => {
@@ -160,7 +162,7 @@ export function createMonitor({ invoke, store }) {
     panel.hidden = !on;
     app.classList.toggle("monitor-on", on);
     button.setAttribute("aria-pressed", String(on));
-    button.title = on ? "Turn the monitor off (⌘⇧M)" : "Show live model metrics (⌘⇧M)";
+    button.title = on ? `Turn the monitor off (${SHORTCUT})` : `Show live model metrics (${SHORTCUT})`;
     clearInterval(timer);
     timer = null;
     if (on) {

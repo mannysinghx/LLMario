@@ -92,19 +92,22 @@ prompt or reply text, local file paths or engine ports.
 
 | Field | What it is |
 |---|---|
-| `state` | `idle`, `reading` (a prompt is being processed), `generating`, `queued` (waiting for a slot or a model to load), or `error` (the last request failed in the past 15 s) |
-| `speed_tok_s`, `live[]` | Requests in flight: phase, elapsed time, time to first token, estimated prompt tokens (characters / 4), streamed pieces so far, live tokens per second |
+| `state` | `idle`, `reading` (a streamed request's prompt is being processed), `generating`, `running` (only non-streaming requests in flight: the gateway sees no tokens until they finish, so it cannot tell their phase), `queued` (waiting for a slot or a model to load), or `error` (the last request failed in the past 15 s) |
+| `speed_tok_s`, `live[]` | Requests in flight: phase (`reading` / `generating` when streamed, `running` when not), `streaming`, elapsed time, time to first token, estimated prompt tokens (characters / 4), streamed pieces so far, live tokens per second (tokens after the first over the time after the first) |
 | `engines[]` | Per loaded model: backend, pid, family, format, architecture, quantization, file size, layers, context per slot and slots, batch, profile, active requests, context in use, load time, idle time, planned and measured memory, CPU %, storage read/write rates, and for LLMario's own engine its `/engine/stats` body (`engine_stats`: device, threads, kernels, prefill/decode speed, cache reuse, KV disk tier, memory pressure, paging) |
-| `recent[]` | The last 64 finished requests, newest first: time, model, outcome, prompt / cached / completion tokens, TTFT, duration, decode tok/s (from the engine's `timings` when it sends them) |
+| `recent[]` | The last 64 finished requests, newest first: time, model (up to 256 characters), outcome, prompt / cached / completion tokens, TTFT, duration, decode tok/s (from the engine's `timings` when it sends them, else tokens after the first over the time after the first, as `llmario run` and `bench` measure it) |
 | `totals` | Since the gateway started: requests by outcome and token counts |
 | `machine` | CPU, OS, core split, unified memory, published memory bandwidth, GPU, runtime profile |
 | `system` | CPU %, cores, load average, memory and swap, and per GPU: utilisation, memory in use (and total for discrete GPUs), temperature, power and limit, PCIe link |
 | `gateway` | The gateway's own process (in the desktop app, the app) |
 
 Readings a machine does not give are `null`, never zero: rates (CPU %, disk bytes per second) are
-measured between two snapshots, so the first one after start has none; Apple GPUs report
+measured between two snapshots, so the first one after start, or after a pause of more than 5 s,
+has none; process CPU comes from CPU-time deltas (200 means two cores busy); Apple GPUs report
 utilisation and memory through `ioreg`, while temperature and power need `powermetrics` with root
-and stay `null`; NVIDIA readings come from `nvidia-smi`. The machine and the engines are read only
+and stay `null`; NVIDIA readings come from `nvidia-smi`. A GPU tool that runs past 2 s is killed and GPU readings
+pause for a minute; a snapshot taken while another one is still reading the machine reuses the last
+reading. The machine and the engines are read only
 when a snapshot is requested, so the monitor costs nothing while nobody polls it; what the gateway
 always keeps is a fixed ring of the last 64 requests (numbers only) and one atomic counter per
 streamed token of each request in flight.

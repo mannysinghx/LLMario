@@ -68,7 +68,9 @@ async fn handle(st: &AppState, v: Value, started: Instant) -> Result<Response, R
         st.sup.acquire(&req.model).await?
     };
     let engine = lease.engine.clone();
-    let live = st.metrics.begin(&engine.model.id, req.approx_prompt_tokens);
+    let live = st
+        .metrics
+        .begin(&engine.model.id, req.approx_prompt_tokens, req.stream);
     validate::require_native(&req, engine.backend)?;
     validate::check_limits(&mut req, &engine.profile)?;
 

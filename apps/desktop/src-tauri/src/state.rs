@@ -72,6 +72,16 @@ impl AppState {
         Ok(rt)
     }
 
+    /// The running runtime, without building one: for read-only polls (the Monitor panel), which
+    /// must never start or restart the runtime themselves.
+    pub async fn current(&self) -> Result<Arc<Runtime>, CmdError> {
+        self.rt
+            .lock()
+            .await
+            .clone()
+            .ok_or_else(|| CmdError::new("not_running", "LLMario's runtime is not running"))
+    }
+
     /// Apply new settings: stop engines, rebuild the supervisor with the new profile/context.
     pub async fn restart(&self, settings: Settings) -> Result<Arc<Runtime>, CmdError> {
         *self.settings.lock().unwrap() = settings;

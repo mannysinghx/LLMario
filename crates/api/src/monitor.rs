@@ -24,6 +24,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 /// Finished requests remembered for the "Recent requests" table.
 pub const RECENT_MAX: usize = 64;
+/// Longest model name kept in the ring (registered ids are charset-checked but not length-capped).
+pub const MODEL_NAME_MAX: usize = 256;
 /// A failed request keeps the state at `error` this long when nothing else is happening.
 const ERROR_STATE_FOR: Duration = Duration::from_secs(15);
 /// How long the monitor waits for an engine's own statistics.
@@ -60,8 +62,13 @@ pub struct RecentRequest {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct LiveView {
     pub model: String,
-    /// `reading` (the prompt is being processed) or `generating`.
+    /// Streaming requests: `reading` (the prompt is being processed) until the first token,
+    /// then `generating`. Non-streaming requests are `running` throughout: the gateway sees no
+    /// tokens until the reply is complete, so it cannot tell the two apart.
     pub phase: String,
+    /// `false` when read from a gateway that predates the field.
+    #[serde(default)]
+    pub streaming: bool,
     pub elapsed_s: f64,
     pub ttft_ms: Option<f64>,
     /// Estimated from the prompt's length (characters / 4) until the engine reports usage.
@@ -138,7 +145,8 @@ pub struct Snapshot {
     pub version: String,
     pub at_unix_ms: u64,
     pub uptime_s: f64,
-    /// `idle`, `reading`, `generating`, `queued` (waiting for a slot or a model to load), or
+    /// `idle`, `reading`, `generating`, `running` (only non-streaming requests in flight, whose
+    /// phase the gateway cannot see), `queued` (waiting for a slot or a model to load), or
     /// `error` (the last request failed in the past 15 seconds).
     pub state: String,
     /// Requests waiting for a slot or for their model to load.
@@ -161,6 +169,7 @@ struct LiveRequest {
     model: String,
     started: Instant,
     approx_prompt: u64,
+    streaming: bool,
     /// Microseconds from `started` to the first token, plus one (0: none yet).
     first_token_us: AtomicU64,
     chunks: AtomicU64,
@@ -176,6 +185,8 @@ pub struct Monitor {
     totals: Mutex<Totals>,
     /// Shared with the blocking sampling task, which needs an owned handle.
     sampler: Arc<Mutex<Option<Sampling>>>,
+    /// The latest machine reading, served while another sample is still being taken.
+    last_system: Arc<Mutex<Option<SystemLive>>>,
 }
 
 /// The machine reader and its latest reading (when, for which processes, what).
@@ -262,7 +273,8 @@ impl Monitor {
         let decode = r.engine_decode_tok_s.or_else(|| {
             let ttft = r.ttft_s?;
             let gen = r.duration_s - ttft;
-            (r.completion_tokens > 1 && gen > 0.0).then(|| r.completion_tokens as f64 / gen)
+            // Tokens after the first, over the time after the first (as `run` and `bench` do).
+            (r.completion_tokens > 1 && gen > 0.0).then(|| (r.completion_tokens - 1) as f64 / gen)
         });
         {
             let mut t = self.totals.lock().unwrap();
@@ -306,11 +318,17 @@ impl Monitor {
                 let ttft = (first > 0).then(|| (first - 1) as f64 / 1e6);
                 let tok_s = ttft.and_then(|t| {
                     let gen = elapsed - t;
-                    (gen > 0.05 && chunks > 0).then(|| chunks as f64 / gen)
+                    (gen > 0.05 && chunks > 1).then(|| (chunks - 1) as f64 / gen)
                 });
+                let phase = match (r.streaming, first > 0) {
+                    (false, _) => "running",
+                    (true, true) => "generating",
+                    (true, false) => "reading",
+                };
                 LiveView {
                     model: r.model.clone(),
-                    phase: if first > 0 { "generating" } else { "reading" }.into(),
+                    phase: phase.into(),
+                    streaming: r.streaming,
                     elapsed_s: elapsed,
                     ttft_ms: ttft.map(|t| t * 1000.0),
                     prompt_tokens_estimate: r.approx_prompt,
@@ -324,12 +342,13 @@ impl Monitor {
 
 impl crate::Metrics {
     /// Registers a request in flight; it leaves the list when the guard drops.
-    pub fn begin(self: &Arc<Self>, model: &str, approx_prompt: u64) -> LiveGuard {
+    pub fn begin(self: &Arc<Self>, model: &str, approx_prompt: u64, streaming: bool) -> LiveGuard {
         let req = Arc::new(LiveRequest {
             id: self.monitor.next_id.fetch_add(1, Ordering::Relaxed),
             model: model.to_string(),
             started: Instant::now(),
             approx_prompt,
+            streaming,
             first_token_us: AtomicU64::new(0),
             chunks: AtomicU64::new(0),
         });
@@ -345,8 +364,10 @@ impl crate::Metrics {
 pub fn overall_state(live: &[LiveView], waiting: usize, recent: &[RecentRequest]) -> &'static str {
     if live.iter().any(|l| l.phase == "generating") {
         "generating"
-    } else if !live.is_empty() {
+    } else if live.iter().any(|l| l.phase == "reading") {
         "reading"
+    } else if !live.is_empty() {
+        "running"
     } else if waiting > 0 {
         "queued"
     } else if recent.first().is_some_and(|r| {
@@ -387,13 +408,21 @@ pub async fn snapshot(st: &AppState) -> Snapshot {
     let me = std::process::id();
     pids.push(me);
     let sampler = mon.sampler.clone();
+    let last_system = mon.last_system.clone();
     let sample = tokio::task::spawn_blocking(move || {
-        let mut g = sampler.lock().unwrap();
-        g.get_or_insert_with(|| Sampling {
-            sampler: LiveSampler::new(),
-            last: None,
-        })
-        .sample(pids)
+        // A sample already running (a slow GPU tool) is not waited for: callers get the last
+        // reading instead of queueing blocking threads behind it.
+        let Ok(mut g) = sampler.try_lock() else {
+            return last_system.lock().unwrap().clone().unwrap_or_default();
+        };
+        let sys = g
+            .get_or_insert_with(|| Sampling {
+                sampler: LiveSampler::new(),
+                last: None,
+            })
+            .sample(pids);
+        *last_system.lock().unwrap() = Some(sys.clone());
+        sys
     });
 
     let stats = futures::future::join_all(engines.iter().map(|e| async move {
@@ -546,7 +575,7 @@ mod tests {
         assert_eq!(q.len(), RECENT_MAX);
         assert_eq!(q[0].model, "c");
         assert_eq!(q[0].decode_tok_s, None, "no first token, no decode speed");
-        assert!((q[1].decode_tok_s.unwrap() - 51.0 / 1.7).abs() < 1e-9);
+        assert!((q[1].decode_tok_s.unwrap() - 50.0 / 1.7).abs() < 1e-9);
         assert_eq!(q[1].ttft_ms, Some(300.0));
         let t = m.monitor.totals.lock().unwrap();
         assert_eq!(
@@ -559,7 +588,7 @@ mod tests {
     #[test]
     fn live_requests_move_from_reading_to_generating_and_leave_on_drop() {
         let m = Arc::new(Metrics::default());
-        let g = m.begin("a", 1200);
+        let g = m.begin("a", 1200, true);
         let v = m.monitor.live_views();
         assert_eq!(
             (v.len(), v[0].phase.as_str(), v[0].generated),
@@ -577,6 +606,41 @@ mod tests {
         assert_eq!(overall_state(&v, 3, &[]), "generating");
         drop(g);
         assert!(m.monitor.live_views().is_empty());
+    }
+
+    #[test]
+    fn non_streaming_requests_are_running_not_reading() {
+        let m = Arc::new(Metrics::default());
+        let g = m.begin("a", 50, false);
+        let v = m.monitor.live_views();
+        assert_eq!((v[0].phase.as_str(), v[0].streaming), ("running", false));
+        assert_eq!(overall_state(&v, 0, &[]), "running");
+        let s = m.begin("a", 50, true);
+        assert_eq!(overall_state(&m.monitor.live_views(), 0, &[]), "reading");
+        drop((g, s));
+    }
+
+    #[test]
+    fn the_ring_keeps_long_model_names_past_the_prometheus_caps() {
+        let m = Metrics::default();
+        let long = "m".repeat(150);
+        m.record(rec(&long, "ok", None));
+        // Past the Prometheus series cap, names are counted as "other" there but not here.
+        for i in 0..300 {
+            m.record(rec(&format!("x{i}"), "invalid_request", None));
+        }
+        m.record(rec("late-model", "ok", None));
+        let q = m.monitor.recent.lock().unwrap();
+        assert_eq!(q[0].model, "late-model");
+        drop(q);
+        let m2 = Metrics::default();
+        m2.record(rec(&long, "ok", None));
+        assert_eq!(m2.monitor.recent.lock().unwrap()[0].model, long);
+        let huge = "z\n".repeat(400);
+        m2.record(rec(&huge, "invalid_request", None));
+        let name = m2.monitor.recent.lock().unwrap()[0].model.clone();
+        assert_eq!(name.chars().count(), MODEL_NAME_MAX);
+        assert!(!name.contains('\n'));
     }
 
     #[test]

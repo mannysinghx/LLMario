@@ -189,7 +189,7 @@ llmario config                          # effective settings and file locations
 | `run <model> [prompt] [--system] [--max-tokens] [--temperature]` | Terminal chat through the same path as the API; prints TTFT and tok/s |
 | `serve [--host] [--port] [--api-key] [--allow-remote] [--preload <model>]` | Start the API |
 | `bench -m <model> [--url <base>] [--concurrency] [--runs] [--cache cold\|warm]` | Reproducible benchmark → JSON + Markdown report |
-| `top [--url <base>] [--api-key] [--interval-ms] [--json]` (alias `monitor`) | Live terminal dashboard of a running server: model state, tok/s, GPU, VRAM/unified memory, CPU, engine disk reads, context fill, engine counters, recent requests. Start it any time to switch monitoring on; `q` switches it off (the models keep running). Views: `1` Overview, `2` Requests, `3` Engine, `4` Hardware; `Space` freezes. `--json` prints one snapshot |
+| `top [--url <base>] [--api-key] [--interval-ms] [--json]` (alias `monitor`) | Live terminal dashboard of a running server: model state, tok/s, GPU, VRAM/unified memory, CPU, engine disk reads, context fill, engine counters, recent requests. Start it any time to switch monitoring on; `q` switches it off (the models keep running). Views: `1` Overview, `2` Requests, `3` Engine, `4` Hardware; `Space` freezes; `PgUp`/`PgDn` page through more than three engines. `--json` prints one snapshot. Key: `--api-key` or `LLMARIO_TOP_API_KEY`; without `--url` the local server's own key is used, and it is never sent to a `--url` host |
 
 Common flags on `run`, `serve` and `bench`: `--profile latency|balanced|throughput`,
 `--context <tokens>`, `--memory-limit-gb <GiB>`, `--backend llamacpp|mlx`. Add `-v` for logs

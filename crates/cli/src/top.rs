@@ -16,6 +16,7 @@ use ratatui::widgets::{Block, Cell, Paragraph, Row, Sparkline, Table, Wrap};
 use ratatui::Frame;
 use serde_json::Value;
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -24,8 +25,10 @@ pub struct TopArgs {
     /// Base URL of a running LLMario server (default: the configured `[server]` address).
     #[arg(long)]
     pub url: Option<String>,
-    /// API key, when the server requires one (prefer the LLMARIO_API_KEY env var).
-    #[arg(long, env = "LLMARIO_API_KEY", hide_env_values = true)]
+    /// API key, when the server requires one (prefer the LLMARIO_TOP_API_KEY env var). Without
+    /// --url, the configured server's own key (`[server] api_key` or LLMARIO_API_KEY) is used; it
+    /// is never sent to a host named with --url.
+    #[arg(long, env = "LLMARIO_TOP_API_KEY", hide_env_values = true)]
     pub api_key: Option<String>,
     /// Refresh interval in milliseconds (at least 250).
     #[arg(long, default_value_t = 1000)]
@@ -53,11 +56,7 @@ pub async fn run(a: TopArgs) -> anyhow::Result<()> {
         format!("http://{host}:{}", cfg.server.port)
     });
     let url = url.trim_end_matches('/').to_string();
-    let key = a
-        .api_key
-        .clone()
-        .or(cfg.server.api_key.clone())
-        .filter(|k| !k.is_empty());
+    let key = top_key(&a, cfg.server.api_key.as_deref());
     let http = reqwest::Client::builder()
         .no_proxy()
         .timeout(Duration::from_secs(5))
@@ -91,10 +90,57 @@ pub async fn run(a: TopArgs) -> anyhow::Result<()> {
             }
         })
     };
-    let ui = tokio::task::spawn_blocking(move || ui_loop(shared, refresh));
+    // SIGTERM / SIGHUP (and Ctrl-C outside raw mode) end the loop through its normal exit, so
+    // the terminal is always restored.
+    let quit = Arc::new(AtomicBool::new(false));
+    let signals = {
+        let quit = quit.clone();
+        tokio::spawn(async move {
+            stop_signal().await;
+            quit.store(true, Ordering::Relaxed);
+        })
+    };
+    let ui = tokio::task::spawn_blocking(move || ui_loop(shared, refresh, quit));
     let res = ui.await.context("dashboard thread")?;
     poller.abort();
+    signals.abort();
     res
+}
+
+async fn stop_signal() {
+    let ctrl_c = async {
+        let _ = tokio::signal::ctrl_c().await;
+    };
+    #[cfg(unix)]
+    let other = async {
+        use tokio::signal::unix::{signal, SignalKind};
+        match (
+            signal(SignalKind::terminate()),
+            signal(SignalKind::hangup()),
+        ) {
+            (Ok(mut t), Ok(mut h)) => {
+                tokio::select! { _ = t.recv() => {}, _ = h.recv() => {} }
+            }
+            _ => std::future::pending::<()>().await,
+        }
+    };
+    #[cfg(not(unix))]
+    let other = std::future::pending::<()>();
+    tokio::select! { _ = ctrl_c => {}, _ = other => {} }
+}
+
+/// The key to send: the one given for this command, else the local server's own key, but only
+/// when the address also comes from the local configuration.
+fn top_key(a: &TopArgs, configured: Option<&str>) -> Option<String> {
+    a.api_key
+        .clone()
+        .or_else(|| {
+            a.url
+                .is_none()
+                .then(|| configured.map(str::to_string))
+                .flatten()
+        })
+        .filter(|k| !k.is_empty())
 }
 
 struct Fetcher {
@@ -123,7 +169,7 @@ impl Fetcher {
             );
         }
         if status == reqwest::StatusCode::UNAUTHORIZED {
-            anyhow::bail!("the server needs an API key: set LLMARIO_API_KEY or pass --api-key");
+            anyhow::bail!("the server needs an API key: set LLMARIO_TOP_API_KEY or pass --api-key");
         }
         if !status.is_success() {
             anyhow::bail!("{} answered HTTP {status}", self.endpoint);
@@ -187,6 +233,8 @@ pub struct App {
     pub view: View,
     pub frozen: bool,
     pub help: bool,
+    /// Which group of three engines the Engine view shows.
+    pub engine_page: usize,
     pub snap: Option<Snapshot>,
     pub error: Option<String>,
     pub last_ok: Option<Instant>,
@@ -207,6 +255,7 @@ impl App {
             view: View::Overview,
             frozen: false,
             help: false,
+            engine_page: 0,
             snap: None,
             error: None,
             last_ok: None,
@@ -247,6 +296,8 @@ impl App {
     /// Handles one key; returns false to quit.
     pub fn key(&mut self, code: KeyCode, mods: KeyModifiers) -> KeyAction {
         match code {
+            // Esc closes the help first; a second Esc quits.
+            KeyCode::Esc if self.help => self.help = false,
             KeyCode::Char('q') | KeyCode::Esc => return KeyAction::Quit,
             KeyCode::Char('c') if mods.contains(KeyModifiers::CONTROL) => return KeyAction::Quit,
             KeyCode::Char(c @ '1'..='4') => self.view = View::ALL[(c as u8 - b'1') as usize],
@@ -261,6 +312,10 @@ impl App {
             KeyCode::Char(' ') => self.frozen = !self.frozen,
             KeyCode::Char('?') | KeyCode::Char('h') => self.help = !self.help,
             KeyCode::Char('r') => return KeyAction::Refresh,
+            KeyCode::PageDown | KeyCode::Char(']') => self.engine_page += 1,
+            KeyCode::PageUp | KeyCode::Char('[') => {
+                self.engine_page = self.engine_page.saturating_sub(1)
+            }
             _ => {}
         }
         KeyAction::None
@@ -274,10 +329,17 @@ pub enum KeyAction {
     Refresh,
 }
 
-fn ui_loop(shared: Arc<Mutex<App>>, refresh: Arc<tokio::sync::Notify>) -> anyhow::Result<()> {
+fn ui_loop(
+    shared: Arc<Mutex<App>>,
+    refresh: Arc<tokio::sync::Notify>,
+    quit: Arc<AtomicBool>,
+) -> anyhow::Result<()> {
     let mut terminal = ratatui::try_init().context("cannot open the terminal (is this a TTY?)")?;
     let result = (|| -> anyhow::Result<()> {
         loop {
+            if quit.load(Ordering::Relaxed) {
+                return Ok(());
+            }
             terminal.draw(|f| draw(f, &shared.lock().unwrap()))?;
             if event::poll(Duration::from_millis(200))? {
                 if let Event::Key(k) = event::read()? {
@@ -341,12 +403,10 @@ fn opt<T>(v: Option<T>, f: impl Fn(T) -> String) -> String {
 }
 
 fn duration(ms: f64) -> String {
-    if ms >= 60_000.0 {
-        format!(
-            "{:.0}m{:02.0}s",
-            (ms / 60_000.0).floor(),
-            (ms % 60_000.0) / 1000.0
-        )
+    // Round to whole seconds before splitting, so 119.7 s is "2m00s", not "1m60s".
+    let secs = (ms / 1000.0).round() as u64;
+    if secs >= 60 {
+        format!("{}m{:02}s", secs / 60, secs % 60)
     } else if ms >= 1000.0 {
         format!("{:.1} s", ms / 1000.0)
     } else {
@@ -427,7 +487,7 @@ pub fn draw(f: &mut Frame, app: &App) {
         }
         (Some(s), View::Overview) => draw_overview(f, body, app, s),
         (Some(s), View::Requests) => draw_requests(f, body, s),
-        (Some(s), View::Engine) => draw_engines(f, body, s),
+        (Some(s), View::Engine) => draw_engines(f, body, s, app.engine_page),
         (Some(s), View::Hardware) => draw_hardware(f, body, s),
     }
     draw_footer(f, foot, app);
@@ -493,7 +553,7 @@ fn title_case(s: &str) -> String {
 
 fn state_color(state: &str) -> Color {
     match state {
-        "generating" | "reading" => ACCENT,
+        "generating" | "reading" | "running" => ACCENT,
         "queued" => Color::Yellow,
         "error" => Color::Red,
         _ => DIM,
@@ -549,7 +609,7 @@ fn draw_help(f: &mut Frame, body: Rect) {
         Line::from(""),
         Line::from("1 Overview   live speed, GPU, CPU, memory, disk, recent requests"),
         Line::from("2 Requests   requests in flight and the last 64, with timings"),
-        Line::from("3 Engine     every loaded model: plan, process, engine counters"),
+        Line::from("3 Engine     each loaded model: plan, process, counters (PgUp/PgDn)"),
         Line::from("4 Hardware   machine, memory, swap, GPUs, processes"),
         Line::from(""),
         Line::from("Space freezes the display; r fetches now; q quits."),
@@ -830,7 +890,19 @@ fn draw_state_bar(f: &mut Frame, area: Rect, s: &Snapshot) {
         "Model state ",
         Style::new().fg(ACCENT).add_modifier(Modifier::BOLD),
     )];
-    for st in ["idle", "reading", "generating", "queued", "error"] {
+    // `running` (non-streaming requests, phase unknown) is listed only while it is the state.
+    let running = s.state == "running";
+    for st in [
+        "idle",
+        "reading",
+        "generating",
+        "running",
+        "queued",
+        "error",
+    ] {
+        if st == "running" && !running {
+            continue;
+        }
         let word = title_case(st);
         if s.state == st {
             spans.push(Span::styled(
@@ -1249,7 +1321,10 @@ fn engine_lines(e: &EngineView, total_mem: u64) -> Vec<Line<'static>> {
     l
 }
 
-fn draw_engines(f: &mut Frame, area: Rect, s: &Snapshot) {
+/// Engines shown side by side in the Engine view; more are paged with PgUp/PgDn.
+const ENGINES_PER_PAGE: usize = 3;
+
+fn draw_engines(f: &mut Frame, area: Rect, s: &Snapshot, page: usize) {
     if s.engines.is_empty() {
         f.render_widget(
             Paragraph::new("No model loaded. The engine view fills in when a model is loaded.")
@@ -1258,15 +1333,29 @@ fn draw_engines(f: &mut Frame, area: Rect, s: &Snapshot) {
         );
         return;
     }
-    let n = s.engines.len().min(3) as u32;
+    let pages = s.engines.len().div_ceil(ENGINES_PER_PAGE);
+    let page = page.min(pages - 1);
+    let first = page * ENGINES_PER_PAGE;
+    let shown = &s.engines[first..(first + ENGINES_PER_PAGE).min(s.engines.len())];
+    let n = shown.len() as u32;
     let cols = Layout::horizontal((0..n).map(|_| Constraint::Ratio(1, n))).split(area);
-    for (e, c) in s.engines.iter().zip(cols.iter()) {
+    for (i, (e, c)) in shown.iter().zip(cols.iter()).enumerate() {
+        let title = if s.engines.len() > 1 {
+            let more = if pages > 1 {
+                " · PgUp/PgDn for more"
+            } else {
+                ""
+            };
+            format!(" Engine {} of {}{more} ", first + i + 1, s.engines.len())
+        } else {
+            " Engine ".to_string()
+        };
         f.render_widget(
             Paragraph::new(engine_lines(e, s.system.memory_total_bytes))
                 .wrap(Wrap { trim: false })
                 .block(
                     Block::bordered()
-                        .title(" Engine ")
+                        .title(title)
                         .border_style(Style::new().fg(DIM)),
                 ),
             *c,
@@ -1585,6 +1674,76 @@ mod tests {
     }
 
     #[test]
+    fn engines_past_three_are_paged_and_esc_closes_help_first() {
+        let mut app = App::new("u".into());
+        let mut s = sample();
+        for i in 2..=5 {
+            let mut e = s.engines[0].clone();
+            e.model = format!("model-{i}");
+            s.engines.push(e);
+        }
+        app.apply(Ok(s));
+        app.key(KeyCode::Char('3'), KeyModifiers::NONE);
+        let p1 = render(&app, 150, 50);
+        assert!(
+            p1.contains("Engine 1 of 5") && !p1.contains("model-4"),
+            "{p1}"
+        );
+        app.key(KeyCode::PageDown, KeyModifiers::NONE);
+        let p2 = render(&app, 150, 50);
+        assert!(
+            p2.contains("Engine 4 of 5") && p2.contains("model-5"),
+            "{p2}"
+        );
+        app.key(KeyCode::PageDown, KeyModifiers::NONE);
+        assert!(
+            render(&app, 150, 50).contains("model-5"),
+            "past the end stays on the last page"
+        );
+        app.key(KeyCode::Char('?'), KeyModifiers::NONE);
+        assert_eq!(app.key(KeyCode::Esc, KeyModifiers::NONE), KeyAction::None);
+        assert!(!app.help);
+        assert_eq!(app.key(KeyCode::Esc, KeyModifiers::NONE), KeyAction::Quit);
+    }
+
+    #[test]
+    fn running_state_and_api_key_scope() {
+        let mut app = App::new("u".into());
+        let mut s = sample();
+        s.state = "running".into();
+        app.apply(Ok(s));
+        assert!(render(&app, 120, 34).contains("[Running]"));
+        let mut s = sample();
+        s.state = "idle".into();
+        app.apply(Ok(s));
+        assert!(!render(&app, 120, 34).contains("Running"));
+
+        let args = |url: Option<&str>, key: Option<&str>| TopArgs {
+            url: url.map(String::from),
+            api_key: key.map(String::from),
+            interval_ms: 1000,
+            json: false,
+        };
+        assert_eq!(
+            top_key(&args(None, None), Some("local")).as_deref(),
+            Some("local")
+        );
+        assert_eq!(
+            top_key(&args(Some("http://10.0.0.7:11500"), None), Some("local")),
+            None
+        );
+        assert_eq!(
+            top_key(
+                &args(Some("http://10.0.0.7:11500"), Some("theirs")),
+                Some("local")
+            )
+            .as_deref(),
+            Some("theirs")
+        );
+        assert_eq!(top_key(&args(None, Some("")), None), None);
+    }
+
+    #[test]
     fn formatting() {
         assert_eq!(thousands(28693), "28,693");
         assert_eq!(thousands(999), "999");
@@ -1592,6 +1751,8 @@ mod tests {
         assert_eq!(ktok(131072), "128K");
         assert_eq!(rate(62_600_000), "59.7 MB/s");
         assert_eq!(duration(169_900.0), "2m50s");
+        assert_eq!(duration(119_700.0), "2m00s");
+        assert_eq!(duration(59_700.0), "1m00s");
         assert_eq!(duration(4800.0), "4.8 s");
     }
 }

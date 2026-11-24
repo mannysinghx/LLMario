@@ -115,10 +115,21 @@ test("history keeps the newest points and sparkline paths stay inside the box", 
   assert.equal(h.series.cpu.length, 0);
 });
 
+test("non-streaming requests show a running state, listed only while active", () => {
+  const live = [{ model: "m", phase: "running", streaming: false, elapsed_s: 3, ttft_ms: null, prompt_tokens_estimate: 50, generated: 0, tok_s: null }];
+  const v = monitorView(snapshot({ state: "running", live, speed_tok_s: 0 }), new History());
+  assert.deepEqual(v.states.filter((x) => x.active).map((x) => x.key), ["running"]);
+  assert.match(tile(v, "speed").sub, /not streamed/);
+  const idle = monitorView(snapshot({ state: "idle", live: [] }), new History());
+  assert.ok(!idle.states.some((x) => x.key === "running"));
+});
+
 test("formatting", () => {
   assert.equal(fmt.ktok(131072), "128K");
   assert.equal(fmt.int(28693), "28,693");
   assert.equal(fmt.ms(169900), "2m50s");
+  assert.equal(fmt.ms(119700), "2m00s");
+  assert.equal(fmt.ms(59700), "1m00s");
   assert.equal(fmt.ms(4800), "4.8 s");
   assert.equal(fmt.rate(500), "0 KB/s");
   assert.equal(fmt.gb(undefined), "n/a");

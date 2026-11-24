@@ -7,7 +7,8 @@
 const GB = 2 ** 30;
 const MB = 2 ** 20;
 export const HISTORY = 120;
-export const STATES = ["idle", "reading", "generating", "queued", "error"];
+// `running` (non-streaming requests in flight, phase unknown) is listed only while it is the state.
+export const STATES = ["idle", "reading", "generating", "running", "queued", "error"];
 
 const na = "n/a";
 const titleCase = (s) => (s ? s[0].toUpperCase() + s.slice(1) : "");
@@ -28,7 +29,9 @@ export const fmt = {
   tps: (v) => (isNum(v) ? `${v.toFixed(1)} tok/s` : na),
   ms: (ms) => {
     if (!isNum(ms)) return na;
-    if (ms >= 60000) return `${Math.floor(ms / 60000)}m${String(Math.round((ms % 60000) / 1000)).padStart(2, "0")}s`;
+    // Whole seconds first, so 119.7 s is "2m00s", not "1m60s".
+    const secs = Math.round(ms / 1000);
+    if (secs >= 60) return `${Math.floor(secs / 60)}m${String(secs % 60).padStart(2, "0")}s`;
     if (ms >= 1000) return `${(ms / 1000).toFixed(1)} s`;
     return `${Math.round(ms)} ms`;
   },
@@ -106,7 +109,13 @@ export function monitorView(s, hist) {
       key: "speed",
       title: "Speed",
       value: fmt.tps(s.speed_tok_s ?? 0),
-      sub: generating ? "now" : last && isNum(last.decode_tok_s) ? `last ${last.decode_tok_s.toFixed(1)} tok/s` : "idle",
+      sub: generating
+        ? "now"
+        : s.state === "running"
+          ? "not streamed: speed shown when it ends"
+          : last && isNum(last.decode_tok_s)
+            ? `last ${last.decode_tok_s.toFixed(1)} tok/s`
+            : "idle",
       spark: series.speed,
     },
     {
@@ -248,7 +257,7 @@ export function monitorView(s, hist) {
   return {
     state: s.state,
     stateLabel: titleCase(s.state),
-    states: STATES.map((k) => ({ key: k, label: titleCase(k), active: k === s.state })),
+    states: STATES.filter((k) => k !== "running" || s.state === "running").map((k) => ({ key: k, label: titleCase(k), active: k === s.state })),
     waiting: s.waiting || 0,
     tiles,
     bars,

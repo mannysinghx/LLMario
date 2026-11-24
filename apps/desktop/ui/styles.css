@@ -320,22 +320,24 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .empty-lib { text-align: center; color: var(--muted); padding: 30px 0; }
 
 /* Monitor panel: live runtime metrics, a third column while switched on. */
-.app.monitor-on { grid-template-columns: 264px 1fr 360px; }
+.app.monitor-on { grid-template-columns: 264px minmax(420px, 1fr) minmax(300px, 360px); }
 .monitor-toggle { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); }
 .monitor-toggle svg { width: 16px; height: 16px; }
 .monitor-toggle[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); }
 .monitor { border-left: 1px solid var(--border); background: var(--sidebar); display: flex; flex-direction: column; min-height: 0; min-width: 0; }
 .monitor[hidden] { display: none; }
+.topbar .model-picker { min-width: 0; flex: 0 1 auto; }
+.topbar .model-picker select { max-width: 100%; }
 .monitor-head { display: flex; align-items: center; gap: 10px; padding: 10px 12px 10px 16px; border-bottom: 1px solid var(--border); min-height: 54px; }
 .monitor-body { overflow-y: auto; overflow-x: hidden; padding: 12px 14px 18px; display: flex; flex-direction: column; gap: 14px; font-variant-numeric: tabular-nums; }
-.pill.mon-generating, .pill.mon-reading { background: var(--ok-soft); color: var(--ok); }
-.pill.mon-generating::before, .pill.mon-reading::before { animation: pulse 1s ease-in-out infinite; }
+.pill.mon-generating, .pill.mon-reading, .pill.mon-running { background: var(--ok-soft); color: var(--ok); }
+.pill.mon-generating::before, .pill.mon-reading::before, .pill.mon-running::before { animation: pulse 1s ease-in-out infinite; }
 .pill.mon-queued { background: var(--warn-soft); color: var(--warn); }
 .pill.mon-error { background: var(--danger-soft); color: var(--danger); }
 .mon-states { display: flex; flex-wrap: wrap; gap: 4px; font-size: 11.5px; }
 .mon-states span { padding: 2px 8px; border-radius: 999px; color: var(--faint); border: 1px solid transparent; }
 .mon-states span.active { color: var(--text); border-color: var(--border-strong); background: var(--elev); font-weight: 600; }
-.mon-states span.active.mon-generating, .mon-states span.active.mon-reading { color: var(--ok); border-color: var(--ok); }
+.mon-states span.active.mon-generating, .mon-states span.active.mon-reading, .mon-states span.active.mon-running { color: var(--ok); border-color: var(--ok); }
 .mon-states span.active.mon-queued { color: var(--warn); border-color: var(--warn); }
 .mon-states span.active.mon-error { color: var(--danger); border-color: var(--danger); }
 .mon-states .mon-waiting { color: var(--warn); }
@@ -367,6 +369,12 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .mon-table td.mon-bad { color: var(--danger); }
 .mon-empty { color: var(--muted); font-size: 12.5px; margin: 0; }
 .mon-foot { color: var(--faint); font-size: 11px; margin: 0; }
+/* Narrow windows (the app's minimum is 760 px): the panel floats over the chat instead of
+   squeezing it into an unusable column. */
 @media (max-width: 1100px) {
-  .app.monitor-on { grid-template-columns: 220px 1fr 320px; }
+  .app.monitor-on { grid-template-columns: 264px 1fr; }
+  .monitor {
+    position: fixed; top: 0; right: 0; bottom: 0; width: min(340px, 100vw);
+    z-index: 15; box-shadow: var(--shadow);
+  }
 }

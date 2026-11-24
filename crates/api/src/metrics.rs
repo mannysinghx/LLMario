@@ -70,9 +70,15 @@ const LABEL_MAX_SERIES: usize = 256;
 /// line breaks included, becomes `_`), so it can neither forge exposition or log lines nor grow
 /// without limit.
 pub fn label(model: &str) -> String {
+    label_up_to(model, LABEL_MAX_LEN)
+}
+
+/// [`label`] with another length limit. The runtime monitor keeps names up to 256 characters,
+/// so a long registered model id still matches the engine it ran on.
+pub fn label_up_to(model: &str, max_len: usize) -> String {
     let s: String = model
         .chars()
-        .take(LABEL_MAX_LEN)
+        .take(max_len)
         .map(|c| {
             if c.is_ascii_alphanumeric() || "._:/@+-".contains(c) {
                 c
@@ -90,6 +96,12 @@ pub fn label(model: &str) -> String {
 
 impl Metrics {
     pub fn record(&self, r: RequestRecord<'_>) {
+        // The monitor's ring is bounded on its own (64 entries), so it keeps the real name
+        // rather than the Prometheus series cap's "other" or the 96-character cut.
+        self.monitor.finished(&RequestRecord {
+            model: &label_up_to(r.model, crate::monitor::MODEL_NAME_MAX),
+            ..r
+        });
         let mut g = self.inner.lock().unwrap();
         // Names that are not served models still arrive (failed requests). Past the series
         // limit they are counted together, so a client cannot grow the maps without bound.
@@ -98,7 +110,6 @@ impl Metrics {
             model = "other".into();
         }
         let r = RequestRecord { model: &model, ..r };
-        self.monitor.finished(&r);
         *g.requests
             .entry((r.model.to_string(), r.outcome.to_string()))
             .or_default() += 1;

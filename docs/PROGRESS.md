@@ -8,7 +8,8 @@ are in [OPS_LOG.md](OPS_LOG.md).
 
 - Branch `claude/llmario-model-tracker-dcd7f7` (worktree `.claude/worktrees/llmario-model-tracker-dcd7f7`,
   build output linked to `/Volumes/LLMarioBuild/llmario-model-tracker-dcd7f7/target`) holds the
-  **runtime monitor**, committed locally, **not pushed**: awaiting the owner's push approval.
+  **runtime monitor** (two commits: the feature, then the fixes from a multi-agent review),
+  committed locally, **not pushed**: awaiting the owner's push approval.
   Nothing under `website/` changed, so nothing redeploys on Railway.
 - The monitor: `GET /llmario/monitor` on the gateway (`crates/api/src/monitor.rs`), a live machine
   sampler (`crates/hardware/src/live.rs`: CPU, memory, swap, per-process CPU/memory/disk, GPU via
@@ -36,13 +37,15 @@ are in [OPS_LOG.md](OPS_LOG.md).
 | Local CI, six jobs (Linux and macOS tests, both engine e2e legs, desktop, licenses) | `scripts/ci-local.sh` | PASS on 259ba98 and on the head |
 | Whole workspace | `cargo fmt --all --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test` | clean; 479 passed, 0 failed |
 | Greedy parity with llama.cpp unchanged | `LLMARIO_GOLDEN_DEVICES=cpu LLMARIO_TEST_GGUF=<Qwen3-1.7B> cargo test --release -p llmario-engine --test llama_cpp_golden` | pass (one model; the kernels were not touched) |
-| Runtime monitor endpoint, live request phases, recent ring, fast-poll reuse (`crates/api/src/monitor.rs`) | `cargo test -p llmario-api` | 18 pass |
+| Runtime monitor endpoint, live request phases (incl. `running` for non-streaming), recent ring, fast-poll reuse, busy-sampler fallback (`crates/api/src/monitor.rs`) | `cargo test -p llmario-api` | 20 pass |
 | Monitor end to end with a real engine process (mock) | `cargo test -p llmario --test e2e runtime_monitor` | pass |
-| Live sampler (`crates/hardware/src/live.rs`) | `cargo test -p llmario-hardware` | 8 pass |
-| `llmario top` views, keys, small terminals | `cargo test -p llmario --bin llmario top` | 4 pass |
-| Desktop Monitor view logic | `node --test apps/desktop/ui/monitor-view.test.mjs` | 5 pass |
+| Live sampler: CPU from CPU-time deltas, stale-pause reset, lingering pids, GPU tool deadline (`crates/hardware/src/live.rs`) | `cargo test -p llmario-hardware` (sleep-to-zero test ran 3× in a row) | 12 pass |
+| `llmario top` views, keys, paging, signals, key scope | `cargo test -p llmario --bin llmario top` | 6 pass |
+| Desktop Monitor view logic | `node --test apps/desktop/ui/monitor-view.test.mjs` | 6 pass |
+| Multi-agent review of the feature (6 reviewers, 2 skeptics per finding, 44 agents) | Workflow `review-runtime-monitor` | 19 findings: 15 upheld, 3 split, 1 refuted; all 18 fixed in the second commit (none high) |
+| Desktop panel at 900 px (floats over the chat) and 1180 px (third column) | browser preview, simulated bridge | no overflow; tooltip shows the platform's shortcut |
 | `llmario top` live, Qwen3-1.7B on llama.cpp | `llmario serve --port 11597 --preload qwen3-1.7b-gguf-q4km`, then `llmario top --url http://127.0.0.1:11597` | reading → generating seen, 227 tok/s live, cache reuse and decode tok/s from llama.cpp |
-| Whole workspace after the monitor | `cargo fmt --all --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test`, `cargo clippy -p llmario-desktop -- -D warnings` | clean; 494 passed, 0 failed |
+| Whole workspace after the review fixes | `cargo fmt --all --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test`, `cargo clippy -p llmario-desktop -- -D warnings` | clean; 503 passed, 0 failed |
 
 ## In flight / interrupted
 
@@ -63,8 +66,10 @@ Nothing half-done in the tree.
 
 ## Next steps, in order
 
-0. Runtime monitor: owner review, local CI on the head (`scripts/ci-local.sh`), then one push and a
-   PR into `main`. Open questions for the owner: show Apple GPU temperature/power (needs root via
+0. Runtime monitor: owner review, then one push and a PR into `main`. Local CI on the head passes
+   every job except `licenses`, which fails identically on `main` (RUSTSEC-2026-0592 `url` 2.5.8,
+   RUSTSEC-2026-0594 `cookie` 0.18.2; patched: `url` 2.5.9, `cookie` 0.18.3, a lockfile-only bump the
+   owner has not yet approved). Open questions for the owner: show Apple GPU temperature/power (needs root via
    `powermetrics`, so not done); a config switch to turn `/llmario/monitor` off entirely.
 
 1. Done: `scripts/ci-local.sh` (first run failed on two things older than this branch, a lint

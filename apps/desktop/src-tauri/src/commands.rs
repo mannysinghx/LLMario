@@ -303,10 +303,11 @@ pub async fn engine_memory(
 /// One runtime-monitor snapshot (`GET /llmario/monitor` on the app's private gateway; see
 /// `llmario_api::monitor`): live speed, request phases, engine and machine readings, recent
 /// requests. The window calls this only while its Monitor panel is open, so the machine is not
-/// read while the panel is off.
+/// read while the panel is off. It never builds the runtime: a poll while startup failed or
+/// settings are being applied reports `not_running` instead.
 #[tauri::command]
 pub async fn runtime_monitor(state: State<'_, AppState>) -> CmdResult<Value> {
-    let rt = state.runtime().await?;
+    let rt = state.current().await?;
     let unavailable = |e: reqwest::Error| CmdError::new("monitor_unavailable", e.to_string());
     rt.http
         .get(format!("{}/llmario/monitor", rt.base))
