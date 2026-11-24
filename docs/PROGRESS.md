@@ -4,28 +4,16 @@ Where the work stands, so any session or person can pick it up. Engine milestone
 measurements are in [engine/STATUS.md](engine/STATUS.md); side effects outside the working tree
 are in [OPS_LOG.md](OPS_LOG.md).
 
-## Where it stopped (2026-11-23, 20:25 PST)
+## Where it stopped (2026-11-23, 21:27 PST)
 
-- `main` holds the **runtime monitor**, released at the owner's word: fast-forward to the head of
-  branch `claude/llmario-model-tracker-dcd7f7` (4292cc9 feature, de10980 fixes from a multi-agent
-  review, e273e9b `url` 2.5.9 / `cookie` 0.18.3 for RUSTSEC-2026-0592 / -0594, then the ops-log
-  commit), which closes PR #21 as merged. Local CI passed all six jobs on the pushed head. Nothing
-  under `website/` changed, so nothing redeployed. Auto-fix is off for PR #21.
-- The monitor: `GET /llmario/monitor` on the gateway (`crates/api/src/monitor.rs`), a live machine
-  sampler (`crates/hardware/src/live.rs`: CPU, memory, swap, per-process CPU/memory/disk, GPU via
-  `ioreg` or `nvidia-smi`), `llmario top` (`crates/cli/src/top.rs`, ratatui), and the desktop
-  Monitor panel (`apps/desktop/ui/monitor-view.js`, `monitor-panel.js`, Tauri command
-  `runtime_monitor`). Switched on by opening it, off by closing it; nothing is sampled while off.
-- Not seen working in the built desktop app (checked in the browser preview with the simulated
-  bridge, light and dark, 900 and 1180 px; the Rust command passes clippy). `llmario top` was run
-  live against `llmario serve` with Qwen3-1.7B on llama.cpp. Not run live against LLMario's own
-  engine, on Windows, or on an NVIDIA GPU.
-- The worktree and branch `claude/llmario-model-tracker-dcd7f7` were removed (ops log 20:30).
-- Local `main` is 2 commits ahead of origin, **not pushed**: efea7aa (ops-log correction) and the
-  context-fill fix (the panel and `llmario top` say "over plan" instead of a fill above 100%, seen
-  on qwen3.8-27b MLX in the built app). Local CI passed on the head. The desktop app built from
-  `main` at 20:39 (`target/release/bundle/macos/LLMario.app`, not installed to `/Applications`)
-  predates that fix; rebuild after LLMario is quit.
+- **LLMario 0.2.3 is published** (GitHub release v0.2.3, Latest: macOS dmg signed and notarized,
+  Windows setup exe and CLI zip, checksums) and `main` holds the version bump and the README/site
+  links to it; the site redeploys from that push. Release files are copied to
+  `/Volumes/ARGUS5/AIPROJECTS/LLMario-releases/0.2.3` (with `notes-0.2.3.md`).
+- 0.2.3 adds the runtime monitor: desktop Monitor panel (⌘⇧M), `llmario top`, `GET /llmario/monitor`,
+  and the `url`/`cookie` advisory updates.
+- Branch `release-0.2.3` (origin at 2bfb759, the tagged commit) is merged into `main`; the owner may
+  delete it. The Beta edition (0.3.0-beta.4) does not have the monitor yet.
 
 ## Done and verified
 
