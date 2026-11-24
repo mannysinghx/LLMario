@@ -30,6 +30,7 @@ fn main() {
             commands::remove_model,
             commands::load_model,
             commands::engine_memory,
+            commands::runtime_monitor,
             commands::unload_model,
             commands::chat,
             commands::cancel_chat,

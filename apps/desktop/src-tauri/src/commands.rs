@@ -300,6 +300,27 @@ pub async fn engine_memory(
     Ok(llmario_supervisor::engine_stats::fetch(rt.sup.http(), e.port).await)
 }
 
+/// One runtime-monitor snapshot (`GET /llmario/monitor` on the app's private gateway; see
+/// `llmario_api::monitor`): live speed, request phases, engine and machine readings, recent
+/// requests. The window calls this only while its Monitor panel is open, so the machine is not
+/// read while the panel is off.
+#[tauri::command]
+pub async fn runtime_monitor(state: State<'_, AppState>) -> CmdResult<Value> {
+    let rt = state.runtime().await?;
+    let unavailable = |e: reqwest::Error| CmdError::new("monitor_unavailable", e.to_string());
+    rt.http
+        .get(format!("{}/llmario/monitor", rt.base))
+        .timeout(std::time::Duration::from_secs(5))
+        .send()
+        .await
+        .map_err(unavailable)?
+        .error_for_status()
+        .map_err(unavailable)?
+        .json()
+        .await
+        .map_err(unavailable)
+}
+
 #[tauri::command]
 pub async fn unload_model(state: State<'_, AppState>, id: String) -> CmdResult<bool> {
     let rt = state.runtime().await?;

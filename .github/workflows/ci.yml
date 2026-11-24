@@ -47,7 +47,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: node --test apps/desktop/ui/markdown.test.mjs apps/desktop/ui/memory-state.test.mjs
+      - run: node --test apps/desktop/ui/markdown.test.mjs apps/desktop/ui/memory-state.test.mjs apps/desktop/ui/monitor-view.test.mjs
       - run: cargo clippy -p llmario-desktop -- -D warnings
       # The Windows release build and installer are built and tested in windows.yml.
       - if: runner.os == 'macOS'

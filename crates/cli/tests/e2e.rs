@@ -277,6 +277,77 @@ async fn client_disconnect_cancels_generation_and_frees_slot() {
 }
 
 #[tokio::test]
+async fn runtime_monitor_tracks_live_and_finished_requests() {
+    let env = Env::new(&["mock-a"], |_| {}).await;
+    let snap = |env: &Env| {
+        let (http, url) = (env.http.clone(), format!("{}/llmario/monitor", env.base));
+        async move {
+            let v: Value = http.get(url).send().await.unwrap().json().await.unwrap();
+            // The typed client (`llmario top`, the desktop app) reads the same body.
+            let typed: llmario_api::monitor::Snapshot =
+                serde_json::from_value(v.clone()).expect("snapshot matches its type");
+            (v, typed)
+        }
+    };
+    let (_, s) = snap(&env).await;
+    assert_eq!(s.state, "idle");
+    assert!(s.engines.is_empty() && s.live.is_empty() && s.recent.is_empty());
+    assert!(s.system.memory_total_bytes > 0);
+    assert!(s.gateway.is_some(), "the gateway's own process is followed");
+
+    let resp = env.chat(json!({"model": "mock-a", "stream": true, "messages": user("__slow__ story"), "max_tokens": 200})).await;
+    let mut body = resp.bytes_stream();
+    for _ in 0..3 {
+        body.next().await.unwrap().unwrap();
+    }
+    let (raw, s) = snap(&env).await;
+    assert_eq!(s.state, "generating", "{raw}");
+    assert_eq!(s.live.len(), 1);
+    assert_eq!(s.live[0].model, "mock-a");
+    assert!(s.live[0].generated >= 1 && s.live[0].ttft_ms.is_some());
+    assert_eq!(s.engines.len(), 1);
+    let e = &s.engines[0];
+    assert_eq!((e.model.as_str(), e.backend.as_str()), ("mock-a", "mock"));
+    assert_eq!(e.active_requests, 1);
+    assert!(e.pid > 0 && e.memory_bytes.is_some_and(|b| b > 0));
+    assert_eq!(
+        e.engine_stats, None,
+        "only the built-in engine serves /engine/stats"
+    );
+    let text = raw.to_string();
+    assert!(!text.contains("story"), "no prompt text in the snapshot");
+    drop(body);
+
+    let mut cancelled = false;
+    for _ in 0..50 {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let (_, s) = snap(&env).await;
+        if s.live.is_empty() && s.recent.first().is_some_and(|r| r.outcome == "cancelled") {
+            cancelled = true;
+            break;
+        }
+    }
+    assert!(
+        cancelled,
+        "the dropped stream left the live list and was recorded"
+    );
+
+    let r = env
+        .chat(json!({"model": "mock-a", "messages": user("hi"), "max_tokens": 5}))
+        .await;
+    assert_eq!(r.status(), 200);
+    let (_, s) = snap(&env).await;
+    assert_eq!(s.state, "idle");
+    let last = &s.recent[0];
+    assert_eq!((last.outcome.as_str(), last.completion_tokens), ("ok", 5));
+    assert_eq!(
+        (s.totals.requests, s.totals.ok, s.totals.cancelled),
+        (2, 1, 1)
+    );
+    assert_eq!(s.engines[0].context_used, Some(last.prompt_tokens + 5));
+}
+
+#[tokio::test]
 async fn engine_crash_is_reported_and_relaunched() {
     let env = Env::new(&["mock-a"], |_| {}).await;
     let r = env

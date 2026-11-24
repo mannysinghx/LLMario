@@ -42,6 +42,8 @@ struct Inner {
 #[derive(Default)]
 pub struct Metrics {
     inner: Mutex<Inner>,
+    /// In-flight and recent requests for the runtime monitor (`GET /llmario/monitor`).
+    pub monitor: crate::monitor::Monitor,
 }
 
 /// Outcome of one request, recorded when its response finishes or is dropped.
@@ -52,7 +54,11 @@ pub struct RequestRecord<'a> {
     pub ttft_s: Option<f64>,
     pub duration_s: f64,
     pub prompt_tokens: u64,
+    /// Prompt tokens the engine served from its cache, when its usage says so.
+    pub cached_tokens: Option<u64>,
     pub completion_tokens: u64,
+    /// Decode speed as the engine timed it (`timings`), when it reports one.
+    pub engine_decode_tok_s: Option<f64>,
 }
 
 /// Longest model label kept, and the most distinct labels the registry holds.
@@ -92,6 +98,7 @@ impl Metrics {
             model = "other".into();
         }
         let r = RequestRecord { model: &model, ..r };
+        self.monitor.finished(&r);
         *g.requests
             .entry((r.model.to_string(), r.outcome.to_string()))
             .or_default() += 1;
@@ -213,7 +220,9 @@ mod tests {
                 ttft_s: None,
                 duration_s: 0.1,
                 prompt_tokens: 0,
+                cached_tokens: None,
                 completion_tokens: 0,
+                engine_decode_tok_s: None,
             });
         }
         let g = m.inner.lock().unwrap();
@@ -232,7 +241,9 @@ mod tests {
             ttft_s: Some(0.07),
             duration_s: 1.2,
             prompt_tokens: 10,
+            cached_tokens: None,
             completion_tokens: 5,
+            engine_decode_tok_s: None,
         });
         m.record(RequestRecord {
             model: "a",
@@ -240,7 +251,9 @@ mod tests {
             ttft_s: None,
             duration_s: 0.3,
             prompt_tokens: 3,
+            cached_tokens: None,
             completion_tokens: 0,
+            engine_decode_tok_s: None,
         });
         let t = m.render(&[]);
         assert!(t.contains("llmario_requests_total{model=\"a\",outcome=\"ok\"} 1"));

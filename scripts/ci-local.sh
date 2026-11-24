@@ -154,7 +154,7 @@ job_macos-desktop() {
   # actions/setup-node@v4 node-version 22 -> the Mac's node (LLMARIO_CI_NODE to override).
   banner "node: $("$NODE_BIN" --version) ($NODE_BIN; the workflow pins 22)"
   export NODE_BIN
-  mstep '"$NODE_BIN" --test apps/desktop/ui/markdown.test.mjs apps/desktop/ui/memory-state.test.mjs'
+  mstep '"$NODE_BIN" --test apps/desktop/ui/markdown.test.mjs apps/desktop/ui/memory-state.test.mjs apps/desktop/ui/monitor-view.test.mjs'
   mstep 'cargo clippy -p llmario-desktop -- -D warnings'
   # if: runner.os == 'macOS'
   mstep 'cargo build --release -p llmario-desktop'

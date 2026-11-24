@@ -1,7 +1,8 @@
 //! Local HTTP gateway.
 //!
 //! Endpoints: `GET /healthz`, `GET /v1/models`, `GET /v1/models/{id}`,
-//! `POST /v1/chat/completions` (streaming and non-streaming), `GET /metrics`.
+//! `POST /v1/chat/completions` (streaming and non-streaming), `GET /metrics`, and
+//! `GET /llmario/monitor` (the runtime monitor's JSON snapshot, see [`monitor`]).
 //!
 //! Security defaults: loopback bind (enforced by config validation), optional bearer key
 //! (required for remote bind), Host-header check against DNS rebinding in loopback mode,
@@ -10,6 +11,7 @@
 
 pub mod chat;
 pub mod metrics;
+pub mod monitor;
 pub mod validate;
 
 use axum::extract::{Request, State};
@@ -47,7 +49,11 @@ impl AppState {
                 .map(Into::into),
             loopback_only: is_loopback_host(&cfg.server.host),
             request_timeout: Duration::from_secs(cfg.runtime.request_timeout_secs),
-            metrics: Arc::new(Metrics::default()),
+            metrics: {
+                let m = Arc::new(Metrics::default());
+                m.monitor.touch();
+                m
+            },
             sup,
         }
     }
@@ -86,6 +92,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/models/{id}", get(get_model))
         .route("/v1/chat/completions", post(chat::chat_completions))
         .route("/metrics", get(metrics_handler))
+        .route("/llmario/monitor", get(monitor_handler))
         .route("/healthz", get(healthz))
         .layer(middleware::from_fn_with_state(state.clone(), guard))
         .with_state(state)
@@ -219,6 +226,10 @@ async fn metrics_handler(State(st): State<AppState>) -> Response {
     let engines = st.sup.loaded().await;
     let body = st.metrics.render(&engines);
     ([("content-type", "text/plain; version=0.0.4")], body).into_response()
+}
+
+async fn monitor_handler(State(st): State<AppState>) -> Json<monitor::Snapshot> {
+    Json(monitor::snapshot(&st).await)
 }
 
 /// Serve the gateway on an ephemeral loopback port in the background (used by `run`,

@@ -11,6 +11,7 @@ axum.workspace = true
 bytes.workspace = true
 futures.workspace = true
 llmario-core.workspace = true
+llmario-hardware.workspace = true
 llmario-registry.workspace = true
 llmario-supervisor.workspace = true
 reqwest.workspace = true

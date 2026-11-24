@@ -4,21 +4,23 @@ Where the work stands, so any session or person can pick it up. Engine milestone
 measurements are in [engine/STATUS.md](engine/STATUS.md); side effects outside the working tree
 are in [OPS_LOG.md](OPS_LOG.md).
 
-## Where it stopped (2026-11-17, 07:00 PST)
+## Where it stopped (2026-11-23)
 
-- `main` is at the 2026-11-17 release of the engine memory work (PR #20, merged) plus an ops-log
-  commit. Branch `ui-engine-memory` (worktree `.claude/worktrees/llmario-performance-optimization-3de13c`,
-  recreated for this work; the earlier branch of that name was deleted) holds the desktop-app
-  follow-up, **committed locally, not pushed**: awaiting the owner's push approval. The pass
-  record is `<git common dir>/ci-local/<sha>.pass`.
-- The follow-up: the desktop app shows the built-in engine's memory state (new Tauri command
-  `engine_memory`, `crates/supervisor/src/engine_stats.rs`, `apps/desktop/ui/memory-state.js`) and
-  the load-time memory warnings (`MemoryPlan.warnings`, `LoadInfo.memory_warnings`). Nothing under
-  `website/` changed, so nothing redeploys.
-- Not seen working in the running app: the UI code is unit-tested (node) and the Rust side is
-  unit-tested; the stats field names were checked against a live engine. The pill appears only
-  after the engine has polled the system level with a conversation cached.
-- Worktree and branch are the owner's to remove after merge.
+- Branch `claude/llmario-model-tracker-dcd7f7` (worktree `.claude/worktrees/llmario-model-tracker-dcd7f7`,
+  build output linked to `/Volumes/LLMarioBuild/llmario-model-tracker-dcd7f7/target`) holds the
+  **runtime monitor**, committed locally, **not pushed**: awaiting the owner's push approval.
+  Nothing under `website/` changed, so nothing redeploys on Railway.
+- The monitor: `GET /llmario/monitor` on the gateway (`crates/api/src/monitor.rs`), a live machine
+  sampler (`crates/hardware/src/live.rs`: CPU, memory, swap, per-process CPU/memory/disk, GPU via
+  `ioreg` or `nvidia-smi`), `llmario top` (`crates/cli/src/top.rs`, ratatui), and the desktop
+  Monitor panel (`apps/desktop/ui/monitor-view.js`, `monitor-panel.js`, Tauri command
+  `runtime_monitor`). Switched on by opening it, off by closing it; nothing is sampled while off.
+- Not seen working in the built desktop app (the panel was checked in the browser preview with
+  the simulated bridge, light and dark; the Rust command passes clippy). `llmario top` was run
+  live against `llmario serve` with Qwen3-1.7B on llama.cpp. Not run against LLMario's own
+  engine live (its `/engine/stats` fields are covered by unit tests with the engine's field names).
+- The earlier `ui-engine-memory` branch (desktop memory pill) is a separate, older piece of work;
+  see git history for its state.
 
 ## Done and verified
 
@@ -34,6 +36,13 @@ are in [OPS_LOG.md](OPS_LOG.md).
 | Local CI, six jobs (Linux and macOS tests, both engine e2e legs, desktop, licenses) | `scripts/ci-local.sh` | PASS on 259ba98 and on the head |
 | Whole workspace | `cargo fmt --all --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test` | clean; 479 passed, 0 failed |
 | Greedy parity with llama.cpp unchanged | `LLMARIO_GOLDEN_DEVICES=cpu LLMARIO_TEST_GGUF=<Qwen3-1.7B> cargo test --release -p llmario-engine --test llama_cpp_golden` | pass (one model; the kernels were not touched) |
+| Runtime monitor endpoint, live request phases, recent ring, fast-poll reuse (`crates/api/src/monitor.rs`) | `cargo test -p llmario-api` | 18 pass |
+| Monitor end to end with a real engine process (mock) | `cargo test -p llmario --test e2e runtime_monitor` | pass |
+| Live sampler (`crates/hardware/src/live.rs`) | `cargo test -p llmario-hardware` | 8 pass |
+| `llmario top` views, keys, small terminals | `cargo test -p llmario --bin llmario top` | 4 pass |
+| Desktop Monitor view logic | `node --test apps/desktop/ui/monitor-view.test.mjs` | 5 pass |
+| `llmario top` live, Qwen3-1.7B on llama.cpp | `llmario serve --port 11597 --preload qwen3-1.7b-gguf-q4km`, then `llmario top --url http://127.0.0.1:11597` | reading → generating seen, 227 tok/s live, cache reuse and decode tok/s from llama.cpp |
+| Whole workspace after the monitor | `cargo fmt --all --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test`, `cargo clippy -p llmario-desktop -- -D warnings` | clean; 494 passed, 0 failed |
 
 ## In flight / interrupted
 
@@ -53,6 +62,10 @@ Nothing half-done in the tree.
 | `cargo deny check bans` fails (duplicate crate versions; not part of CI, which checks advisories, licenses and sources) | `deny.toml` | Info | engineering |
 
 ## Next steps, in order
+
+0. Runtime monitor: owner review, local CI on the head (`scripts/ci-local.sh`), then one push and a
+   PR into `main`. Open questions for the owner: show Apple GPU temperature/power (needs root via
+   `powermetrics`, so not done); a config switch to turn `/llmario/monitor` off entirely.
 
 1. Done: `scripts/ci-local.sh` (first run failed on two things older than this branch, a lint
    new in Rust 1.100 and three advisories against rmcp 3.5.1; both fixed in 259ba98).

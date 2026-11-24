@@ -101,6 +101,8 @@ ipnet = "2.12.2"
 jsonschema = { version = "0.58.6", default-features = false }
 lru = "0.18.5"
 rand = "0.10.3"
+# Terminal dashboard for `llmario top` (MIT); version verified on crates.io 2026-11-23.
+ratatui = { version = "0.30.2", default-features = false, features = ["crossterm", "layout-cache"] }
 rmcp = { version = "3.5.1", default-features = false }
 texting_robots = "0.2.2"
 url = "2.5.8"

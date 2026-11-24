@@ -1,8 +1,10 @@
 //! Hardware discovery. Every value is either measured or explicitly marked as an estimate in
 //! `notes`; we never claim an accelerator or capability we could not observe.
 
+pub mod live;
 mod process;
 
+pub use live::LiveSampler;
 pub use process::process_memory_bytes;
 
 use llmario_core::os::background_command as command;

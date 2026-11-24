@@ -46,6 +46,10 @@
           <button id="unload" class="btn ghost small" type="button" hidden>Unload</button>
           <div class="spacer"></div>
           <span id="profile-chip" class="chip" title="Runtime profile"></span>
+          <button id="toggle-monitor" class="btn ghost small monitor-toggle" type="button" aria-pressed="false" aria-controls="monitor-panel">
+            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M2.5 11h3l2-5 3.5 9 2-4h4.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Monitor
+          </button>
         </header>
 
         <section id="transcript" class="transcript" aria-live="polite"></section>
@@ -61,6 +65,16 @@
           <div class="composer-hint">Runs entirely on this computer · Enter to send, Shift+Enter for a new line</div>
         </footer>
       </main>
+
+      <aside id="monitor-panel" class="monitor" aria-label="Runtime monitor" hidden>
+        <header class="monitor-head">
+          <strong>Monitor</strong>
+          <span id="mon-state" class="pill">Starting…</span>
+          <div class="spacer"></div>
+          <button id="mon-close" class="icon-btn" type="button" aria-label="Turn the monitor off">✕</button>
+        </header>
+        <div id="mon-body" class="monitor-body"></div>
+      </aside>
     </div>
 
     <div id="models-panel" class="overlay" hidden>

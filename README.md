@@ -67,6 +67,13 @@ app, so it needs no separate server and no Ollama.
   **Thinking** section for reasoning models (e.g. Qwen3); first-token latency, tokens/second,
   and token count under each reply.
 - **Stop** — really cancels generation in the engine; it does not just hide the output.
+- **Monitor** — a live panel of everything technical about the running model, switched on and off
+  with the **Monitor** button in the top bar or `⌘⇧M` (Ctrl+Shift+M on Windows) at any time,
+  even mid-reply: model state (idle / reading the prompt / generating / queued / error), live
+  tokens per second, GPU load and memory, CPU, engine storage reads, cache reuse, context fill,
+  engine and system memory, swap, engine details (format, quantization, layers, context, batch,
+  threads, prefill/decode speed, KV disk tier, memory pressure, paging) and the last requests with
+  their timings. Nothing is measured while the panel is off.
 - **Model library** — 37 researched open-model families (Qwen3.8/3.6/3.5, Gemma 4, gpt-oss,
   GLM-4.7, Nemotron 3.5, Mistral, Devstral, Phi-4, Llama, Granite 4.2, LFM2.5, Ornith, Olmo 3,
   SmolLM3 …) with 69 verified downloads. Search and filter by task (chat, reasoning, coding,
@@ -165,6 +172,7 @@ llmario run qwen3-1.7b "Explain KV caches in two sentences."
 llmario run qwen3-1.7b                  # interactive chat (/reset, /exit)
 llmario serve                           # OpenAI-compatible API on 127.0.0.1:11500
 llmario bench -m qwen3-1.7b --concurrency 1,4
+llmario top                             # live dashboard of the running server (q to quit)
 llmario config                          # effective settings and file locations
 ```
 
@@ -181,6 +189,7 @@ llmario config                          # effective settings and file locations
 | `run <model> [prompt] [--system] [--max-tokens] [--temperature]` | Terminal chat through the same path as the API; prints TTFT and tok/s |
 | `serve [--host] [--port] [--api-key] [--allow-remote] [--preload <model>]` | Start the API |
 | `bench -m <model> [--url <base>] [--concurrency] [--runs] [--cache cold\|warm]` | Reproducible benchmark → JSON + Markdown report |
+| `top [--url <base>] [--api-key] [--interval-ms] [--json]` (alias `monitor`) | Live terminal dashboard of a running server: model state, tok/s, GPU, VRAM/unified memory, CPU, engine disk reads, context fill, engine counters, recent requests. Start it any time to switch monitoring on; `q` switches it off (the models keep running). Views: `1` Overview, `2` Requests, `3` Engine, `4` Hardware; `Space` freezes. `--json` prints one snapshot |
 
 Common flags on `run`, `serve` and `bench`: `--profile latency|balanced|throughput`,
 `--context <tokens>`, `--memory-limit-gb <GiB>`, `--backend llamacpp|mlx`. Add `-v` for logs
@@ -210,6 +219,7 @@ print(reply.choices[0].message.content)
 | `POST /v1/chat/completions` | Streaming and non-streaming. `model` may be an exact id or a family name; the response says which model and engine served it (`x-llmario-model`, `x-llmario-backend`) |
 | `GET /healthz` | Liveness, no auth |
 | `GET /metrics` | Prometheus: requests by outcome, tokens, TTFT and duration histograms, engine memory |
+| `GET /llmario/monitor` | Runtime monitor snapshot (JSON) used by `llmario top` and the desktop Monitor panel: live requests and their phase, tok/s, engines, CPU/GPU/memory/disk, recent requests. No prompt or reply text |
 
 Supported: `messages` (text), `stream`, `stream_options.include_usage`, `max_tokens`,
 `temperature`, `top_p`, `top_k`, `min_p`, `stop`, `seed`, penalties. **With LLMario's own engine

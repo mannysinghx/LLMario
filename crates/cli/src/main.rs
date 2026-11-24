@@ -4,6 +4,7 @@ mod bench;
 mod doctor;
 mod models;
 mod run;
+mod top;
 mod util;
 
 use clap::{Args, Parser, Subcommand};
@@ -87,6 +88,10 @@ enum Cmd {
     },
     /// Benchmark a model through llmario, or any OpenAI-compatible server with --url.
     Bench(bench::BenchArgs),
+    /// Live dashboard of a running server: speed, GPU, CPU, memory, disk, engine, requests.
+    /// Start it any time to switch monitoring on; quit (q) to switch it off.
+    #[command(visible_alias = "monitor")]
+    Top(top::TopArgs),
     /// Show the effective configuration and file locations.
     Config,
     /// Internal: deterministic mock engine used by tests.
@@ -165,6 +170,7 @@ async fn main() {
             rt,
         } => serve(host, port, api_key, allow_remote, preload, rt).await,
         Cmd::Bench(a) => bench::run(a).await,
+        Cmd::Top(a) => top::run(a).await,
         Cmd::Config => show_config(),
         Cmd::MockEngine { port, model } => llmario_adapter_mock::run_mock_engine(port, model).await,
     };

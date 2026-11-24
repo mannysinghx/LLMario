@@ -24,6 +24,7 @@ llmario-hardware.workspace = true
 llmario-registry.workspace = true
 llmario-runtime.workspace = true
 llmario-supervisor.workspace = true
+ratatui.workspace = true
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true

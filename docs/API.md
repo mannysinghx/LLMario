@@ -83,3 +83,28 @@ Prometheus text: `llmario_requests_total{model,outcome}`, prompt/completion toke
 `llmario_ttft_seconds` and `llmario_request_duration_seconds` histograms,
 `llmario_loaded_models`, per-engine active requests, measured footprint and estimate.
 Protected by the API key when one is set.
+
+## `GET /llmario/monitor`
+
+One JSON snapshot of the runtime, drawn by `llmario top` and the desktop app's Monitor panel
+(type: `llmario_api::monitor::Snapshot`). Protected by the API key when one is set. It never holds
+prompt or reply text, local file paths or engine ports.
+
+| Field | What it is |
+|---|---|
+| `state` | `idle`, `reading` (a prompt is being processed), `generating`, `queued` (waiting for a slot or a model to load), or `error` (the last request failed in the past 15 s) |
+| `speed_tok_s`, `live[]` | Requests in flight: phase, elapsed time, time to first token, estimated prompt tokens (characters / 4), streamed pieces so far, live tokens per second |
+| `engines[]` | Per loaded model: backend, pid, family, format, architecture, quantization, file size, layers, context per slot and slots, batch, profile, active requests, context in use, load time, idle time, planned and measured memory, CPU %, storage read/write rates, and for LLMario's own engine its `/engine/stats` body (`engine_stats`: device, threads, kernels, prefill/decode speed, cache reuse, KV disk tier, memory pressure, paging) |
+| `recent[]` | The last 64 finished requests, newest first: time, model, outcome, prompt / cached / completion tokens, TTFT, duration, decode tok/s (from the engine's `timings` when it sends them) |
+| `totals` | Since the gateway started: requests by outcome and token counts |
+| `machine` | CPU, OS, core split, unified memory, published memory bandwidth, GPU, runtime profile |
+| `system` | CPU %, cores, load average, memory and swap, and per GPU: utilisation, memory in use (and total for discrete GPUs), temperature, power and limit, PCIe link |
+| `gateway` | The gateway's own process (in the desktop app, the app) |
+
+Readings a machine does not give are `null`, never zero: rates (CPU %, disk bytes per second) are
+measured between two snapshots, so the first one after start has none; Apple GPUs report
+utilisation and memory through `ioreg`, while temperature and power need `powermetrics` with root
+and stay `null`; NVIDIA readings come from `nvidia-smi`. The machine and the engines are read only
+when a snapshot is requested, so the monitor costs nothing while nobody polls it; what the gateway
+always keeps is a fixed ring of the last 64 requests (numbers only) and one atomic counter per
+streamed token of each request in flight.

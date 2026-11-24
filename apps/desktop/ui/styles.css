@@ -318,3 +318,55 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .variant .progress { grid-column: 1 / -1; margin-top: 2px; }
 .variant .progress-text { grid-column: 1 / -1; font-size: 11.5px; color: var(--muted); }
 .empty-lib { text-align: center; color: var(--muted); padding: 30px 0; }
+
+/* Monitor panel: live runtime metrics, a third column while switched on. */
+.app.monitor-on { grid-template-columns: 264px 1fr 360px; }
+.monitor-toggle { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); }
+.monitor-toggle svg { width: 16px; height: 16px; }
+.monitor-toggle[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); }
+.monitor { border-left: 1px solid var(--border); background: var(--sidebar); display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+.monitor[hidden] { display: none; }
+.monitor-head { display: flex; align-items: center; gap: 10px; padding: 10px 12px 10px 16px; border-bottom: 1px solid var(--border); min-height: 54px; }
+.monitor-body { overflow-y: auto; overflow-x: hidden; padding: 12px 14px 18px; display: flex; flex-direction: column; gap: 14px; font-variant-numeric: tabular-nums; }
+.pill.mon-generating, .pill.mon-reading { background: var(--ok-soft); color: var(--ok); }
+.pill.mon-generating::before, .pill.mon-reading::before { animation: pulse 1s ease-in-out infinite; }
+.pill.mon-queued { background: var(--warn-soft); color: var(--warn); }
+.pill.mon-error { background: var(--danger-soft); color: var(--danger); }
+.mon-states { display: flex; flex-wrap: wrap; gap: 4px; font-size: 11.5px; }
+.mon-states span { padding: 2px 8px; border-radius: 999px; color: var(--faint); border: 1px solid transparent; }
+.mon-states span.active { color: var(--text); border-color: var(--border-strong); background: var(--elev); font-weight: 600; }
+.mon-states span.active.mon-generating, .mon-states span.active.mon-reading { color: var(--ok); border-color: var(--ok); }
+.mon-states span.active.mon-queued { color: var(--warn); border-color: var(--warn); }
+.mon-states span.active.mon-error { color: var(--danger); border-color: var(--danger); }
+.mon-states .mon-waiting { color: var(--warn); }
+.mon-tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.mon-tile { background: var(--elev); border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.mon-tile-title { font-size: 11px; color: var(--muted); }
+.mon-tile-value { font-size: 15px; font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mon-tile-sub { font-size: 11px; color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-height: 16px; }
+.mon-spark { width: 100%; height: 26px; margin-top: 4px; display: block; }
+.mon-spark-line { fill: none; stroke: var(--ok); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+.mon-spark-area { fill: var(--ok-soft); stroke: none; }
+.mon-tile .mon-meter { margin-top: 13px; }
+.mon-meter { height: 8px; border-radius: 4px; background: var(--border); overflow: hidden; }
+.mon-meter.empty { opacity: 0.4; }
+.mon-meter-fill { height: 100%; background: var(--ok); border-radius: 4px; transition: width 0.4s ease; }
+.mon-meter.warn .mon-meter-fill { background: var(--warn); }
+.mon-bars { display: flex; flex-direction: column; gap: 9px; }
+.mon-bar-head { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; margin-bottom: 3px; }
+.mon-bar-value { color: var(--muted); white-space: nowrap; }
+.mon-section h3 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--faint); margin: 0 0 6px; }
+.mon-kv { display: grid; grid-template-columns: auto 1fr; gap: 3px 12px; margin: 0; font-size: 12px; }
+.mon-kv dt { color: var(--muted); white-space: nowrap; }
+.mon-kv dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.mon-table { width: 100%; border-collapse: collapse; font-size: 11.5px; }
+.mon-table th { text-align: left; font-weight: 500; color: var(--faint); padding: 2px 4px 4px 0; white-space: nowrap; }
+.mon-table td { padding: 2px 4px 2px 0; white-space: nowrap; }
+.mon-table td.mon-ok { color: var(--ok); }
+.mon-table td.mon-warn { color: var(--warn); }
+.mon-table td.mon-bad { color: var(--danger); }
+.mon-empty { color: var(--muted); font-size: 12.5px; margin: 0; }
+.mon-foot { color: var(--faint); font-size: 11px; margin: 0; }
+@media (max-width: 1100px) {
+  .app.monitor-on { grid-template-columns: 220px 1fr 320px; }
+}

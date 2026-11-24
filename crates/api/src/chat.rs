@@ -45,7 +45,9 @@ pub async fn chat_completions(
                 ttft_s: None,
                 duration_s: started.elapsed().as_secs_f64(),
                 prompt_tokens: 0,
+                cached_tokens: None,
                 completion_tokens: 0,
+                engine_decode_tok_s: None,
             });
             ApiError(e).into_response()
         }
@@ -60,8 +62,13 @@ async fn handle(st: &AppState, v: Value, started: Instant) -> Result<Response, R
             validate::require_native(&req, sel.backend)?;
         }
     }
-    let lease = st.sup.acquire(&req.model).await?;
+    let lease = {
+        // Counted as waiting (for a slot, or for the model to load) until admitted.
+        let _waiting = st.metrics.monitor.waiting();
+        st.sup.acquire(&req.model).await?
+    };
     let engine = lease.engine.clone();
+    let live = st.metrics.begin(&engine.model.id, req.approx_prompt_tokens);
     validate::require_native(&req, engine.backend)?;
     validate::check_limits(&mut req, &engine.profile)?;
 
@@ -88,7 +95,7 @@ async fn handle(st: &AppState, v: Value, started: Instant) -> Result<Response, R
     }
 
     let mut out = if req.stream {
-        let relay = Relay::new(resp, lease, st.metrics.clone(), &req, started);
+        let relay = Relay::new(resp, lease, live, st.metrics.clone(), &req, started);
         let s = futures::stream::unfold(relay, |mut r| async move {
             r.next().await.map(|b| (Ok::<_, Infallible>(b), r))
         });
@@ -116,6 +123,7 @@ async fn handle(st: &AppState, v: Value, started: Instant) -> Result<Response, R
         json["model"] = Value::String(engine.model.id.clone());
         let (p, c) = usage_of(&json).unwrap_or((req.approx_prompt_tokens, 0));
         let dur = started.elapsed().as_secs_f64();
+        drop(live);
         tracing::info!(model = %engine.model.id, backend = %engine.backend, outcome = "ok", duration_ms = (dur * 1000.0) as u64, prompt_tokens = p, completion_tokens = c, "chat request");
         st.metrics.record(RequestRecord {
             model: &engine.model.id,
@@ -123,7 +131,9 @@ async fn handle(st: &AppState, v: Value, started: Instant) -> Result<Response, R
             ttft_s: None,
             duration_s: dur,
             prompt_tokens: p,
+            cached_tokens: cached_of(&json),
             completion_tokens: c,
+            engine_decode_tok_s: timing_tok_s(&json),
         });
         drop(lease);
         Json(json).into_response()
@@ -151,6 +161,20 @@ fn mlx_keep_batchable(body: &mut Value) {
             o.remove("seed");
         }
     }
+}
+
+/// Prompt tokens served from the engine's cache (`usage.prompt_tokens_details.cached_tokens`).
+fn cached_of(v: &Value) -> Option<u64> {
+    v.pointer("/usage/prompt_tokens_details/cached_tokens")
+        .and_then(Value::as_u64)
+}
+
+/// Decode speed from llama-server-style `timings` (the built-in engine and llama.cpp send them).
+fn timing_tok_s(v: &Value) -> Option<f64> {
+    let t = v.get("timings")?;
+    let n = t.get("predicted_n")?.as_f64()?;
+    let ms = t.get("predicted_ms")?.as_f64()?;
+    (n > 0.0 && ms > 0.0).then(|| n * 1000.0 / ms)
 }
 
 fn usage_of(v: &Value) -> Option<(u64, u64)> {
@@ -220,6 +244,7 @@ struct Relay {
     buf: Vec<u8>,
     out: VecDeque<Bytes>,
     lease: Option<Lease>,
+    live: Option<crate::monitor::LiveGuard>,
     metrics: Arc<Metrics>,
     model_id: Arc<str>,
     wants_usage: bool,
@@ -228,6 +253,8 @@ struct Relay {
     first_token: Option<Instant>,
     content_chunks: u64,
     usage: Option<(u64, u64)>,
+    cached: Option<u64>,
+    engine_tok_s: Option<f64>,
     saw_done: bool,
     finished: bool,
     recorded: bool,
@@ -237,6 +264,7 @@ impl Relay {
     fn new(
         resp: reqwest::Response,
         lease: Lease,
+        live: crate::monitor::LiveGuard,
         metrics: Arc<Metrics>,
         req: &ValidatedChat,
         started: Instant,
@@ -247,6 +275,7 @@ impl Relay {
             out: VecDeque::new(),
             model_id: lease.engine.model.id.as_str().into(),
             lease: Some(lease),
+            live: Some(live),
             metrics,
             wants_usage: req.client_wants_usage,
             approx_prompt: req.approx_prompt_tokens,
@@ -254,6 +283,8 @@ impl Relay {
             first_token: None,
             content_chunks: 0,
             usage: None,
+            cached: None,
+            engine_tok_s: None,
             saw_done: false,
             finished: false,
             recorded: false,
@@ -334,8 +365,12 @@ impl Relay {
                 self.out.push_back(Bytes::from(format!("data: {data}\n\n")));
                 continue;
             };
+            if let Some(t) = timing_tok_s(&v) {
+                self.engine_tok_s = Some(t);
+            }
             if let Some(u) = usage_of(&v) {
                 self.usage = Some(u);
+                self.cached = cached_of(&v).or(self.cached);
                 if !self.wants_usage {
                     if let Some(o) = v.as_object_mut() {
                         o.remove("usage");
@@ -364,6 +399,9 @@ impl Relay {
                         .is_some_and(|a| !a.is_empty());
                 if has_text {
                     self.content_chunks += 1;
+                    if let Some(l) = &self.live {
+                        l.token();
+                    }
                     if self.first_token.is_none() {
                         self.first_token = Some(Instant::now());
                     }
@@ -376,6 +414,7 @@ impl Relay {
 
     fn finish(&mut self, outcome: &str) {
         self.finished = true;
+        self.live.take();
         self.record(outcome);
         self.lease.take(); // release the slot as soon as generation ends
     }
@@ -406,7 +445,9 @@ impl Relay {
             ttft_s: ttft,
             duration_s: dur,
             prompt_tokens: p,
+            cached_tokens: self.cached,
             completion_tokens: c,
+            engine_decode_tok_s: self.engine_tok_s,
         });
     }
 }
@@ -424,6 +465,21 @@ impl Drop for Relay {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn reads_cache_reuse_and_engine_timings() {
+        let v = json!({
+            "usage": {"prompt_tokens": 10, "completion_tokens": 4, "prompt_tokens_details": {"cached_tokens": 6}},
+            "timings": {"prompt_n": 4, "prompt_ms": 2.0, "predicted_n": 50, "predicted_ms": 500.0},
+        });
+        assert_eq!(cached_of(&v), Some(6));
+        assert_eq!(timing_tok_s(&v), Some(100.0));
+        assert_eq!(cached_of(&json!({"usage": {}})), None);
+        assert_eq!(
+            timing_tok_s(&json!({"timings": {"predicted_n": 0, "predicted_ms": 0}})),
+            None
+        );
+    }
 
     #[test]
     fn mlx_seed_dropped_only_when_greedy() {

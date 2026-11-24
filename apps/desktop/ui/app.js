@@ -1,6 +1,7 @@
 // LLMario desktop UI. Talks to the Rust side only through Tauri IPC (`invoke` + channels).
 import { renderMarkdown } from "./markdown.js";
 import { describeEngineMemory } from "./memory-state.js";
+import { createMonitor } from "./monitor-panel.js";
 
 const tauri = window.__TAURI__;
 const invoke = tauri?.core?.invoke;
@@ -49,6 +50,9 @@ const store = {
     } catch {}
   },
 };
+
+// The Monitor panel (monitor-panel.js), created once the runtime has started.
+let monitor = null;
 
 const state = {
   overview: null,
@@ -947,6 +951,10 @@ function wire() {
       e.preventDefault();
       newChat();
     }
+    if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === "m") {
+      e.preventDefault();
+      monitor?.toggle();
+    }
     // Windows/Linux webviews reload on F5 / Ctrl+R, which would drop a reply mid-stream.
     if (PLATFORM !== "mac" && (e.key === "F5" || (e.ctrlKey && e.key.toLowerCase() === "r"))) {
       e.preventDefault();
@@ -1019,6 +1027,7 @@ async function boot() {
     toast("LLMario could not start", errMsg(e), true, 15000);
   }
   setInterval(refreshMemoryState, 5000);
+  monitor = createMonitor({ invoke, store });
   $("#input").focus();
 }
 
