@@ -4,25 +4,23 @@ Where the work stands, so any session or person can pick it up. Engine milestone
 measurements are in [engine/STATUS.md](engine/STATUS.md); side effects outside the working tree
 are in [OPS_LOG.md](OPS_LOG.md).
 
-## Where it stopped (2026-11-23)
+## Where it stopped (2026-11-23, 20:25 PST)
 
-- Branch `claude/llmario-model-tracker-dcd7f7` (worktree `.claude/worktrees/llmario-model-tracker-dcd7f7`,
-  build output linked to `/Volumes/LLMarioBuild/llmario-model-tracker-dcd7f7/target`) holds the
-  **runtime monitor**: the feature (4292cc9), the fixes from a multi-agent review (de10980) and a
-  lockfile bump for two advisories (`url` 2.5.9, `cookie` 0.18.3). **Pushed to origin with a pull
-  request into `main`** at the owner's word (2026-11-23); not merged.
-  Nothing under `website/` changed, so nothing redeploys on Railway.
+- `main` holds the **runtime monitor**, released at the owner's word: fast-forward to the head of
+  branch `claude/llmario-model-tracker-dcd7f7` (4292cc9 feature, de10980 fixes from a multi-agent
+  review, e273e9b `url` 2.5.9 / `cookie` 0.18.3 for RUSTSEC-2026-0592 / -0594, then the ops-log
+  commit), which closes PR #21 as merged. Local CI passed all six jobs on the pushed head. Nothing
+  under `website/` changed, so nothing redeployed. Auto-fix is off for PR #21.
 - The monitor: `GET /llmario/monitor` on the gateway (`crates/api/src/monitor.rs`), a live machine
   sampler (`crates/hardware/src/live.rs`: CPU, memory, swap, per-process CPU/memory/disk, GPU via
   `ioreg` or `nvidia-smi`), `llmario top` (`crates/cli/src/top.rs`, ratatui), and the desktop
   Monitor panel (`apps/desktop/ui/monitor-view.js`, `monitor-panel.js`, Tauri command
   `runtime_monitor`). Switched on by opening it, off by closing it; nothing is sampled while off.
-- Not seen working in the built desktop app (the panel was checked in the browser preview with
-  the simulated bridge, light and dark; the Rust command passes clippy). `llmario top` was run
-  live against `llmario serve` with Qwen3-1.7B on llama.cpp. Not run against LLMario's own
-  engine live (its `/engine/stats` fields are covered by unit tests with the engine's field names).
-- The earlier `ui-engine-memory` branch (desktop memory pill) is a separate, older piece of work;
-  see git history for its state.
+- Not seen working in the built desktop app (checked in the browser preview with the simulated
+  bridge, light and dark, 900 and 1180 px; the Rust command passes clippy). `llmario top` was run
+  live against `llmario serve` with Qwen3-1.7B on llama.cpp. Not run live against LLMario's own
+  engine, on Windows, or on an NVIDIA GPU.
+- The worktree and branch `claude/llmario-model-tracker-dcd7f7` are the owner's to remove.
 
 ## Done and verified
 
@@ -67,9 +65,9 @@ Nothing half-done in the tree.
 
 ## Next steps, in order
 
-0. Runtime monitor: owner review and merge of the pull request (branch
-   `claude/llmario-model-tracker-dcd7f7`). The same branch clears RUSTSEC-2026-0592 / -0594, which
-   also failed `licenses` on `main`. Open questions for the owner: show Apple GPU temperature/power (needs root via
+0. Runtime monitor: done and on `main`. Open owner questions: Apple GPU temperature/power (needs
+   root via `powermetrics`); a config switch to turn `/llmario/monitor` off entirely; a live check
+   in the built desktop app and against LLMario's own engine. Open questions for the owner: show Apple GPU temperature/power (needs root via
    `powermetrics`, so not done); a config switch to turn `/llmario/monitor` off entirely.
 
 1. Done: `scripts/ci-local.sh` (first run failed on two things older than this branch, a lint
