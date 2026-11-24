@@ -8,8 +8,9 @@ are in [OPS_LOG.md](OPS_LOG.md).
 
 - Branch `claude/llmario-model-tracker-dcd7f7` (worktree `.claude/worktrees/llmario-model-tracker-dcd7f7`,
   build output linked to `/Volumes/LLMarioBuild/llmario-model-tracker-dcd7f7/target`) holds the
-  **runtime monitor** (two commits: the feature, then the fixes from a multi-agent review),
-  committed locally, **not pushed**: awaiting the owner's push approval.
+  **runtime monitor**: the feature (4292cc9), the fixes from a multi-agent review (de10980) and a
+  lockfile bump for two advisories (`url` 2.5.9, `cookie` 0.18.3). **Pushed to origin with a pull
+  request into `main`** at the owner's word (2026-11-23); not merged.
   Nothing under `website/` changed, so nothing redeploys on Railway.
 - The monitor: `GET /llmario/monitor` on the gateway (`crates/api/src/monitor.rs`), a live machine
   sampler (`crates/hardware/src/live.rs`: CPU, memory, swap, per-process CPU/memory/disk, GPU via
@@ -66,10 +67,9 @@ Nothing half-done in the tree.
 
 ## Next steps, in order
 
-0. Runtime monitor: owner review, then one push and a PR into `main`. Local CI on the head passes
-   every job except `licenses`, which fails identically on `main` (RUSTSEC-2026-0592 `url` 2.5.8,
-   RUSTSEC-2026-0594 `cookie` 0.18.2; patched: `url` 2.5.9, `cookie` 0.18.3, a lockfile-only bump the
-   owner has not yet approved). Open questions for the owner: show Apple GPU temperature/power (needs root via
+0. Runtime monitor: owner review and merge of the pull request (branch
+   `claude/llmario-model-tracker-dcd7f7`). The same branch clears RUSTSEC-2026-0592 / -0594, which
+   also failed `licenses` on `main`. Open questions for the owner: show Apple GPU temperature/power (needs root via
    `powermetrics`, so not done); a config switch to turn `/llmario/monitor` off entirely.
 
 1. Done: `scripts/ci-local.sh` (first run failed on two things older than this branch, a lint
